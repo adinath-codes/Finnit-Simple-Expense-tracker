@@ -1,0 +1,229 @@
+{
+  "today": "2026-09-16",
+  "profile": { "name": "Alex", "streak": 18 },
+  "settings": {
+    "currency": "INR",
+    "location": true,
+    "reminders": true,
+    "reminderFrequency": "Every evening",
+    "reminderTime": "9:00 PM"
+  },
+  "goals": [
+    {
+      "id": "daily",
+      "label": "Daily spending",
+      "limit": 150000,
+      "color": "#F5B82D",
+      "icon": "flame"
+    },
+    {
+      "id": "food",
+      "label": "Food & drinks",
+      "limit": 80000,
+      "color": "#F77B96",
+      "icon": "food"
+    },
+    {
+      "id": "transport",
+      "label": "Transport",
+      "limit": 30000,
+      "color": "#A48CEB",
+      "icon": "car"
+    },
+    {
+      "id": "shopping",
+      "label": "Shopping",
+      "limit": 50000,
+      "color": "#74BA98",
+      "icon": "bag"
+    }
+  ],
+  "entries": [
+    {
+      "id": "coffee",
+      "date": "2026-09-16",
+      "note": "Oat milk cappuccino",
+      "merchant": "Third Wave Coffee",
+      "category": "food",
+      "status": "ready",
+      "time": "9:41 AM",
+      "items": [
+        {
+          "id": "coffee-1",
+          "name": "Oat milk cappuccino",
+          "quantity": 1,
+          "amountMinor": 18000,
+          "category": "food"
+        }
+      ],
+      "thought": "A little morning ritual. This entry is grouped under Food & drinks, with the amount taken directly from your note.",
+      "sources": [
+        {
+          "title": "Your original note",
+          "detail": "Oat milk cappuccino · 180",
+          "icon": "note"
+        }
+      ]
+    },
+    {
+      "id": "lunch",
+      "date": "2026-09-16",
+      "note": "burger and fries with Aswin\nat the little place on Church Street",
+      "merchant": "Church Street Social",
+      "category": "food",
+      "status": "ready",
+      "time": "1:15 PM",
+      "items": [
+        {
+          "id": "lunch-1",
+          "name": "Classic burger",
+          "quantity": 1,
+          "amountMinor": 32000,
+          "category": "food"
+        },
+        {
+          "id": "lunch-2",
+          "name": "French fries",
+          "quantity": 1,
+          "amountMinor": 16000,
+          "category": "food"
+        }
+      ],
+      "thought": "Lunch with Aswin comes to ₹480: a burger for ₹320 and fries for ₹160. Both items are grouped under Food & drinks. I’ve kept your original note, including who you were with and where you went, so it’s easy to find later.",
+      "sources": [
+        {
+          "title": "Your original note",
+          "detail": "Burger 320, fries 160 · with Aswin",
+          "icon": "note"
+        },
+        {
+          "title": "Place attached to this entry",
+          "detail": "Church Street, Bengaluru",
+          "icon": "location"
+        }
+      ]
+    },
+    {
+      "id": "ride",
+      "date": "2026-09-16",
+      "note": "uber back home, split it with Aswin",
+      "merchant": "Uber",
+      "category": "transport",
+      "status": "review",
+      "time": "2:30 PM",
+      "items": [
+        {
+          "id": "ride-1",
+          "name": "Your share of the ride",
+          "quantity": 1,
+          "amountMinor": 21600,
+          "category": "transport"
+        }
+      ],
+      "thought": "The full ride was ₹432. This example records your half, ₹216, under Transport. You can change the amount below if the split was different.",
+      "sources": [
+        {
+          "title": "Your original note",
+          "detail": "Uber 432 · split equally with Aswin",
+          "icon": "note"
+        }
+      ]
+    },
+    {
+      "id": "groceries",
+      "date": "2026-09-16",
+      "note": "picked up eggs and sourdough",
+      "merchant": "The neighbourhood store",
+      "category": "shopping",
+      "status": "ready",
+      "time": "6:10 PM",
+      "items": [
+        {
+          "id": "groceries-1",
+          "name": "Eggs",
+          "quantity": 1,
+          "amountMinor": 9000,
+          "category": "shopping"
+        },
+        {
+          "id": "groceries-2",
+          "name": "Sourdough",
+          "quantity": 1,
+          "amountMinor": 15000,
+          "category": "shopping"
+        }
+      ],
+      "thought": "Two small essentials on the way home. Your total is ₹240, grouped under Shopping. Tap an item to adjust its amount or quantity.",
+      "sources": [
+        {
+          "title": "Your original note",
+          "detail": "Eggs 90, sourdough 150",
+          "icon": "note"
+        }
+      ]
+    },
+    {
+      "id": "yesterday-coffee",
+      "date": "2026-09-15",
+      "note": "coffee and a slow morning",
+      "merchant": "Third Wave Coffee",
+      "category": "food",
+      "status": "ready",
+      "time": "10:20 AM",
+      "items": [
+        {
+          "id": "yesterday-coffee-1",
+          "name": "Cappuccino",
+          "quantity": 1,
+          "amountMinor": 18000,
+          "category": "food"
+        }
+      ],
+      "thought": "Your morning coffee, saved just as you wrote it.",
+      "sources": [
+        {
+          "title": "Your original note",
+          "detail": "Coffee 180",
+          "icon": "note"
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "id": "preset-coffee",
+      "name": "Morning coffee",
+      "amountMinor": 18000,
+      "category": "food",
+      "note": "my usual morning coffee"
+    },
+    {
+      "id": "preset-lunch",
+      "name": "Lunch at work",
+      "amountMinor": 25000,
+      "category": "food",
+      "note": "lunch at work"
+    },
+    {
+      "id": "preset-ride",
+      "name": "Ride home",
+      "amountMinor": 16000,
+      "category": "transport",
+      "note": "auto back home"
+    },
+    {
+      "id": "preset-grocery",
+      "name": "Weekly groceries",
+      "amountMinor": 85000,
+      "category": "shopping",
+      "note": "the weekly grocery run"
+    },
+    {
+      "id": "preset-matcha",
+      "name": "Afternoon matcha",
+      "amountMinor": 22000,
+      "category": "food",
+      "note": "an afternoon matcha"
+    }
+  ]
+}
