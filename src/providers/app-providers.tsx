@@ -1,10 +1,17 @@
 import {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
   useState,
   type PropsWithChildren,
 } from "react";
 import { loadJournalFixture } from "@/storage/journal-repository";
+import {
+  loadPreferences,
+  savePreferences,
+} from "@/storage/preferences-storage";
+import { loadOnboardingSnapshot } from "@/storage/onboarding-repository";
 import type { JournalEntry, Preferences, Preset } from "@/types/domain";
 
 function useMockJournal() {
@@ -13,12 +20,45 @@ function useMockJournal() {
   const [entries, setEntries] = useState(seed.entries);
   const [presets, setPresets] = useState(seed.presets);
   const [settings, setSettings] = useState(seed.settings);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [selectedDate, setSelectedDate] = useState(seed.today);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([loadPreferences(), loadOnboardingSnapshot()])
+      .then(([preferences, onboarding]) => {
+        if (!active) return;
+        setSettings((current) => ({
+          ...current,
+          ...preferences,
+          ...(onboarding.completedAt && onboarding.answers.currency
+            ? { currency: onboarding.answers.currency }
+            : {}),
+        }));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setSettingsReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const updateSettings = useCallback((patch: Partial<Preferences>) => {
+    setSettings((current) => {
+      const next = { ...current, ...patch };
+      void savePreferences(next).catch(() => undefined);
+      return next;
+    });
+  }, []);
+
   return {
     ...seed,
     entries,
     presets,
     settings,
+    settingsReady,
     goals,
     selectedDate,
     setSelectedDate,
@@ -42,8 +82,7 @@ function useMockJournal() {
       ),
     deletePreset: (id: string) =>
       setPresets((current) => current.filter((item) => item.id !== id)),
-    updateSettings: (patch: Partial<Preferences>) =>
-      setSettings((current) => ({ ...current, ...patch })),
+    updateSettings,
   };
 }
 const JournalContext = createContext<ReturnType<typeof useMockJournal> | null>(

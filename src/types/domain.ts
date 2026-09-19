@@ -12,6 +12,11 @@ export type EntrySource = {
   detail: string;
   icon: "note" | "location";
 };
+export type ReceiptPhoto = {
+  uri: string;
+  width: number;
+  height: number;
+};
 export type JournalEntry = {
   id: string;
   date: string;
@@ -23,6 +28,7 @@ export type JournalEntry = {
   items: EntryItem[];
   thought: string;
   sources: EntrySource[];
+  receipt?: ReceiptPhoto;
 };
 export type Preset = {
   id: string;
@@ -37,6 +43,7 @@ export type Preferences = {
   reminders: boolean;
   reminderFrequency: string;
   reminderTime: string;
+  backTapQuickAdd: boolean;
 };
 export type Goal = {
   id: string;

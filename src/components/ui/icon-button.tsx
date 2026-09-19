@@ -7,22 +7,25 @@ export function IconButton({
   onPress,
   color = Finn.ink,
   filled = false,
+  disabled = false,
 }: {
   name: IconName;
   label: string;
   onPress: () => void;
   color?: string;
   filled?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Button
       label={label}
       onPress={onPress}
+      disabled={disabled}
       style={{
         width: 44,
         height: 44,
         borderRadius: 24,
-        backgroundColor: filled ? Finn.purple : Finn.surface,
+        backgroundColor: filled ? Finn.primary : Finn.surface,
         ...Finn.shadow,
       }}
     >

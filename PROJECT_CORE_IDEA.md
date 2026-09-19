@@ -2,7 +2,7 @@
 
 > Canonical product reference for Finn.
 >
-> This document consolidates the complete core-product brief and the complete MVP V1 scope. If the earlier MVP priority notes and the later **MVP V1 — Required Product Scope** differ, treat the later required scope as authoritative for V1 while preserving the earlier notes as product context.
+> This document consolidates the complete core-product brief, the complete MVP V1 scope, and the post-MVP search direction. If the earlier MVP priority notes and the later **MVP V1 — Required Product Scope** differ, treat the later required scope as authoritative for V1 while preserving the earlier notes as product context. Treat **Part III — V2 Advanced Search** as authoritative for search architecture and sequencing.
 
 ---
 
@@ -26,7 +26,7 @@ The system uses AI to quietly understand, structure, organize, summarize, and la
 
 The fundamental product loop is:
 
-**Capture → Understand → Organize → Remember → Ask**
+**Capture → Understand → Organize → Remember → Search**
 
 Everything we build should support this loop.
 
@@ -403,13 +403,20 @@ AI should feel like:
 
 > “I wrote something and the app understood me.”
 
-Explicit AI interaction belongs mainly inside the **Ask** experience.
+AI should remain behind capture, categorization, and later search. The user should
+not need to enter a chatbot experience to benefit from it.
 
 ---
 
-# 10. “Ask your money”
+# 10. Search your money
 
-One major surface is conversational retrieval over the user's financial history.
+Advanced financial search is a **V2 feature after the capture MVP**, not a chatbot
+requirement for V1.
+
+The experience should feel like advanced search over the financial journal. A
+lightweight language model may translate a natural-language query into visible,
+editable filters. The database must perform the retrieval, grouping, comparison,
+and arithmetic.
 
 Example questions:
 
@@ -439,9 +446,33 @@ It must never fabricate financial records.
 
 For numeric answers:
 
-* compute from structured data when possible
+* compute from structured data using deterministic SQL
 * cite or expose the relevant underlying entries
 * let users inspect what transactions contributed to the answer
+* show the interpreted date range and filters
+* allow the user to correct those filters without rewriting the query
+
+Example:
+
+`How much did I spend on Uber with Aswin last month?`
+
+may be interpreted as:
+
+* date range: previous calendar month
+* merchant: Uber
+* person: Aswin
+* transaction type: expense
+* operation: sum
+
+The model does not receive the user's complete journal, generate SQL directly,
+or calculate the total. The backend validates the structured filter plan, runs a
+parameterized query scoped to the authenticated user, and returns the total plus
+the matching source entries.
+
+This is not a RAG-first architecture. Full-text search and structured SQL should
+handle the core product. Embeddings may be considered later only for genuinely
+fuzzy memory retrieval; even then, they may identify candidate entries but must
+never become the source of truth for financial arithmetic.
 
 Trust is extremely important.
 
@@ -583,7 +614,7 @@ Do not make users navigate through complicated forms.
 
 # 15. Product surfaces
 
-For the MVP, think primarily about three areas.
+For the product, think primarily about these focused areas.
 
 ## Journal
 
@@ -601,9 +632,10 @@ Simple views such as:
 
 Keep this lightweight.
 
-## Ask
+## Search
 
-Conversational interface over stored financial data.
+Planned for V2 after the capture MVP. Natural-language advanced search resolves
+to visible filters and deterministic results rather than an open-ended chatbot.
 
 Do NOT prematurely add many navigation tabs.
 
@@ -620,7 +652,7 @@ Priority order:
 ### P0
 
 1. Natural-language financial note entry
-2. AI extraction into structured transactions
+2. Layered extraction into structured transactions, with AI only as fallback
 3. Store raw input
 4. Chronological journal/timeline
 5. Basic editing
@@ -629,12 +661,12 @@ Priority order:
 
 ### P1
 
-8. Ask-your-money chat
-9. Receipt/photo scanning
-10. Better contextual grouping
+8. Receipt/photo scanning
+9. Better contextual grouping
 
 ### Later
 
+* advanced natural-language search
 * voice
 * recurring expense detection
 * subscriptions
@@ -842,7 +874,7 @@ Principles:
 * do not expose financial data unnecessarily
 * clearly define what is sent to AI providers
 * minimize sending unrelated history to models
-* use scoped retrieval for Ask
+* use scoped retrieval for Search
 * never train unrelated systems from private user financial history without explicit consent
 * allow users to delete their information
 * design toward exportability
@@ -879,7 +911,9 @@ Use the LLM for:
 
 * understanding intent
 * interpreting context
-* generating natural-language summaries
+* choosing from an allowed category list when deterministic rules are uncertain
+* converting a later search query into a validated structured filter plan
+* generating short natural-language summaries when they add value
 
 Use deterministic code/database operations for:
 
@@ -895,6 +929,18 @@ This improves:
 * latency
 * cost
 * privacy
+
+The cost and accuracy hierarchy is:
+
+1. deterministic amount, currency, quantity, and date parsing
+2. global merchant aliases and keyword categorization rules
+3. user-specific rules learned from explicit corrections
+4. a small structured-output model only for unresolved or ambiguous cases
+5. a stronger model only for rare, complex fallbacks
+
+AI must never invent a missing amount. Web search, search grounding, menu-price
+lookup, or location-based price guessing must not be used to manufacture a
+transaction value.
 
 ---
 
@@ -926,7 +972,7 @@ Possible entities:
 
 * id
 * journal_entry_id
-* amount
+* amount in integer minor units, nullable when not provided
 * currency
 * transaction_type
 * category
@@ -934,6 +980,18 @@ Possible entities:
 * description
 * effective_date
 * confidence
+* amount_status
+
+  * confirmed
+  * missing
+  * estimated, only if a future explicitly labeled estimate feature exists
+* categorization_source
+
+  * user rule
+  * merchant rule
+  * keyword rule
+  * model fallback
+  * manual correction
 
 ## ContextEntity
 
@@ -1132,6 +1190,24 @@ Do not depend entirely on the LLM for obvious numeric extraction.
 
 Use deterministic parsing where appropriate, with AI used to understand semantic relationships.
 
+If the user does not provide an amount, do not invent one.
+
+Example:
+
+`2 coffees at Starbucks`
+
+should preserve:
+
+* merchant: Starbucks
+* category: Food & Drinks
+* quantity: 2
+* amount: missing
+
+The entry may remain in the journal with a lightweight prompt to add the amount
+later. It must be excluded from confirmed totals until the user supplies an
+actual value. Price estimation, menu lookup, web search, or location must not be
+used to silently convert this into a confirmed transaction.
+
 ---
 
 # 2. Automatic categorization
@@ -1177,6 +1253,28 @@ Start with a small understandable set such as:
 If the product design currently calls for a smaller initial category system, prefer simplicity over completeness.
 
 The UI may surface the user's **top categories** in summaries rather than overwhelming them with a large category breakdown.
+
+Categorization should use the following order:
+
+1. a user-specific rule created from an explicit correction
+2. a normalized merchant and merchant-alias rule
+3. deterministic keyword and phrase rules
+4. a lightweight structured-output model when the earlier layers are uncertain
+5. `Other` or `Uncategorized` when confidence remains low
+
+Examples of normalized merchant rules:
+
+* `UBER *TRIP`, `Uber India`, and `uber` → Uber → Transport
+* `Swiggy`, `Zomato`, and `Starbucks` → Food & Drinks
+* `Netflix` and `Spotify` → Subscriptions
+
+User-specific rules override global defaults. If a user repeatedly corrects
+`Figma` to `Work / Projects`, Finn should remember that preference for that user.
+
+Store the categorization source and confidence so corrections, audits, and later
+improvements remain explainable. A model must choose only from the currently
+allowed category set and return structured data; it must not create arbitrary new
+categories during capture.
 
 ---
 
@@ -1317,6 +1415,9 @@ Location should only be captured when necessary and with permission.
 
 The product must continue working perfectly without location access.
 
+Location may help identify a place, city, trip, or merchant branch. It must not
+be used to guess the amount paid.
+
 ---
 
 # 6. Receipt photo input
@@ -1449,6 +1550,12 @@ Use:
 Avoid repeatedly reprocessing the same journal entry.
 
 Store processed results.
+
+For ordinary text capture, run deterministic parsing and categorization first.
+Call a lightweight model only for unresolved fields or ambiguous relationships.
+Cache the structured result permanently with the entry. A stronger model may be
+used only as a rare fallback, with server-side token caps, per-user rate limits,
+idempotency, and cost monitoring.
 
 For example:
 
@@ -1587,7 +1694,7 @@ Transport ₹220
 
 # Remember everything.
 
-Ask later:
+Search later:
 
 `How much did I spend eating out this month?`
 
@@ -1615,7 +1722,7 @@ The exact monetization model can evolve, but possible premium capabilities inclu
 
 * higher/unlimited AI processing
 * receipt scanning
-* Ask-your-money
+* advanced natural-language search
 * advanced summaries
 * longer financial-memory history
 * more presets
@@ -1691,9 +1798,10 @@ Natural input + financial timeline.
 
 Browse financial history by date.
 
-### Ask
+### Search
 
-Talk to financial history.
+Planned for V2 after the MVP. Do not add an empty chatbot tab to V1 merely to
+reserve navigation space.
 
 ### Settings/Profile
 
@@ -1798,7 +1906,9 @@ Before considering MVP V1 complete, verify:
 * [ ] Paywall/subscription foundation
 * [ ] Editing/correction
 * [ ] Delete entry
-* [ ] Basic Ask-your-money capability if included in V1
+* [ ] Missing-amount entries remain usable but are excluded from confirmed totals
+* [ ] Categorization source and confidence are stored
+* [ ] User category corrections can become personal rules
 
 ---
 
@@ -1847,3 +1957,181 @@ The V1 philosophy remains:
 
 # Complexity underneath. Simplicity on top.
 
+---
+
+## Part III — V2 Advanced Search
+
+# Search comes after the capture MVP
+
+Advanced search is intentionally deferred until V2. It becomes valuable only
+after users have trustworthy structured history to search.
+
+V1 must therefore create search-ready data, but it must not delay the core
+capture, correction, offline reliability, and journal experience in order to ship
+a chatbot or a general-purpose retrieval system.
+
+The V2 experience is:
+
+# Write a question → inspect the filters → see the answer and its sources.
+
+---
+
+# 1. Search product behavior
+
+Search should default to the month currently selected in the journal. The date
+scope must remain visible and editable.
+
+Example:
+
+`uber with Aswin`
+
+may resolve to:
+
+* selected month: September 2026
+* merchant: Uber
+* person: Aswin
+* type: expense
+
+The result should contain:
+
+* the deterministic total
+* number of matching transactions
+* the active date range and filters
+* optional category or merchant breakdowns
+* the exact journal entries that contributed to the result
+
+The user should be able to remove or change a filter directly. Search is an
+answerable, inspectable query experience, not a conversation the user must manage.
+
+---
+
+# 2. Search architecture
+
+The preferred flow is:
+
+Natural-language query
+
+↓
+
+deterministic parser for obvious dates, categories, merchants, and operations
+
+↓
+
+lightweight structured-output model only when the query remains ambiguous
+
+↓
+
+validated search plan containing allowed filters and operations
+
+↓
+
+parameterized, user-scoped SQL
+
+↓
+
+deterministic result plus matching source entries
+
+The model must not:
+
+* receive the user's complete journal by default
+* write or execute arbitrary SQL
+* perform financial arithmetic
+* invent merchants, people, contexts, or records
+* answer from model memory when user data has no matching evidence
+
+If no records match, return an honest empty result and offer filter adjustments.
+
+---
+
+# 3. Search-ready structured data
+
+The backend should preserve and index enough structure to support:
+
+* date ranges
+* transaction direction or type
+* confirmed amount in integer minor units
+* original currency and normalized/base currency where available
+* category
+* normalized merchant and merchant aliases
+* people
+* contexts such as projects, trips, events, and places
+* recurrence or subscription status when implemented
+* lending, borrowing, reimbursement, and repayment relationships
+* the original journal text
+
+The search document may combine raw text with normalized names for PostgreSQL
+full-text search. Relational fields remain authoritative for filters and totals.
+
+Index user and date together, and add appropriate user-scoped indexes for
+category, merchant, people, and contexts. Every query and database policy must
+enforce record ownership. Views and database functions must preserve the same
+row-level security boundary as the underlying data.
+
+---
+
+# 4. Search operations
+
+The first supported operations should be intentionally narrow:
+
+* list matching entries
+* sum spending or income
+* count transactions
+* group by category or merchant
+* compare two explicit periods
+* find the largest transaction, day, or week
+
+Examples:
+
+`food this month`
+
+`Uber with Aswin in August`
+
+`how much did the Bangalore trip cost?`
+
+`largest purchase this year`
+
+`compare transport with last month`
+
+`who still owes me money?`
+
+Every financial result must be reproducible from stored structured records.
+
+---
+
+# 5. Cost and privacy rules
+
+Use deterministic parsing before model calls. Keep the model prompt compact and
+send only the query, current date/timezone, selected period, allowed operations,
+and a bounded set of relevant user-specific entity names when necessary.
+
+Use a low-cost model such as a Flash-Lite class model for query interpretation.
+Escalate only rare unresolved queries to a stronger model. Cache safe repeated
+interpretations, cap input and output tokens, enforce per-user fair-use limits,
+and monitor model cost separately for capture and search.
+
+Do not use Brave Search, Google Search grounding, or general web search for the
+core journal-search flow. External search cannot establish what the user paid and
+adds cost, latency, and privacy exposure without improving the authority of the
+financial result.
+
+---
+
+# 6. V2 search completion checklist
+
+Before considering V2 advanced search complete, verify:
+
+* [ ] Current-month context is the visible default
+* [ ] Users can select another month or custom date range
+* [ ] Obvious queries work without a model call
+* [ ] Ambiguous queries resolve to schema-validated filters
+* [ ] Generated filters are visible and editable
+* [ ] SQL is parameterized and scoped to the authenticated user
+* [ ] Totals use confirmed structured amounts only
+* [ ] Missing and estimated amounts are identified separately
+* [ ] Results expose their contributing journal entries
+* [ ] Empty results do not fabricate an answer
+* [ ] Full-text search covers raw notes and normalized entity names
+* [ ] Search respects offline and degraded-network behavior where feasible
+* [ ] Query parsing is cached and rate-limited
+* [ ] Search cost, latency, and failure rates are observable
+* [ ] RLS and cross-user isolation tests pass

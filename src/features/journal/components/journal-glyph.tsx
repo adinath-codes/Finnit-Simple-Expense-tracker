@@ -6,6 +6,7 @@ const journalNames = {
   settings: "settings",
   mic: "mic",
   plus: "plus",
+  camera: "camera",
   keyboard: "keyboard",
   sparkle: "sparkle",
   more: "more",

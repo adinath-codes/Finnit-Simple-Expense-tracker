@@ -1,2 +1,18 @@
-/** Calendar-specific view models. Implementation intentionally deferred. */
-export {};
+import type { Category } from "@/types/domain";
+
+export type CalendarDay = {
+  date: string;
+  dayNumber: number;
+  totalMinor: number;
+  isToday: boolean;
+  isSelected: boolean;
+  isFuture: boolean;
+};
+
+export type CalendarMonth = {
+  label: string;
+  leadingBlankCount: number;
+  totalMinor: number;
+  categoryTotals: Record<Category, number>;
+  days: CalendarDay[];
+};

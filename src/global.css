@@ -19,9 +19,9 @@ textarea {
   outline: none;
 }
 :focus-visible {
-  outline: 2px solid #a482df;
+  outline: 2px solid #20c878;
   outline-offset: 4px;
 }
 ::selection {
-  background: #eee4fb;
+  background: #eaf8ef;
 }

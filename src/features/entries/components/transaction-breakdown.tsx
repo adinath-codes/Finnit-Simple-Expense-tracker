@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, Categories, JournalType } from "@/constants/theme";
 import { sheetStyles as shared } from "@/components/sheets/app-sheet";
 import type { Category, JournalEntry } from "@/types/domain";
@@ -38,7 +38,7 @@ export function TransactionBreakdown({
               {money(item.amountMinor * item.quantity)}
             </Text>
             <Icon
-              name="down"
+              name={expanded === item.id ? "up" : "down"}
               size={12}
               color={Finn.muted}
             />
@@ -46,25 +46,24 @@ export function TransactionBreakdown({
           {expanded === item.id && (
             <>
               <View style={styles.metadata}>
-                <View>
-                  <Text style={styles.value}>{item.quantity}</Text>
-                  <Text style={styles.label}>Quantity</Text>
-                </View>
-                <View>
-                  <Text style={styles.value}>{money(item.amountMinor)}</Text>
-                  <Text style={styles.label}>Per item</Text>
-                </View>
-                <View>
-                  <Text
-                    style={[
-                      styles.value,
-                      { color: Categories[item.category].color },
-                    ]}
-                  >
-                    {Categories[item.category].label}
-                  </Text>
-                  <Text style={styles.label}>Category</Text>
-                </View>
+                <ItemMetric
+                  accent="#F5B82D"
+                  icon="quantity"
+                  label="Quantity"
+                  value={String(item.quantity)}
+                />
+                <ItemMetric
+                  accent="#F77B96"
+                  icon="wallet"
+                  label="Per item"
+                  value={money(item.amountMinor)}
+                />
+                <ItemMetric
+                  accent={Categories[item.category].color}
+                  icon={Categories[item.category].icon}
+                  label="Category"
+                  value={Categories[item.category].label}
+                />
               </View>
               {editing === item.id ? (
                 <View style={{ padding: 14, gap: 10 }}>
@@ -99,7 +98,7 @@ export function TransactionBreakdown({
                         style={[
                           styles.category,
                           category === key && {
-                            backgroundColor: Finn.purpleSoft,
+                            backgroundColor: Finn.primarySoft,
                           },
                         ]}
                       >
@@ -107,7 +106,7 @@ export function TransactionBreakdown({
                           style={{
                             fontSize: 11,
                             color:
-                              category === key ? Finn.purple : Finn.secondary,
+                              category === key ? Finn.primary : Finn.secondary,
                           }}
                         >
                           {Categories[key].label}
@@ -152,7 +151,7 @@ export function TransactionBreakdown({
                         setEditing(null);
                       }}
                     >
-                      <Text style={{ color: Finn.purple, fontWeight: "600" }}>
+                      <Text style={{ color: Finn.primary, fontWeight: "600" }}>
                         Save changes
                       </Text>
                     </Button>
@@ -169,7 +168,7 @@ export function TransactionBreakdown({
                   }}
                   style={styles.edit}
                 >
-                  <Text style={{ fontSize: 11, color: Finn.purple }}>
+                  <Text style={styles.editText}>
                     Edit amount or category
                   </Text>
                 </Button>
@@ -181,10 +180,32 @@ export function TransactionBreakdown({
     </View>
   );
 }
+
+function ItemMetric({
+  accent,
+  icon,
+  label,
+  value,
+}: {
+  accent: string;
+  icon: IconName;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.metric}>
+      <Text numberOfLines={1} style={styles.value}>{value}</Text>
+      <View style={styles.metricLabel}>
+        <Icon animation={false} color={accent} name={icon} size={11} />
+        <Text style={styles.label}>{label}</Text>
+      </View>
+    </View>
+  );
+}
 const styles = StyleSheet.create({
   card: { borderRadius: 17, backgroundColor: Finn.surface, ...Finn.shadow },
   row: {
-    minHeight: 52,
+    minHeight: 48,
     paddingHorizontal: 16,
     paddingVertical: 13,
     flexDirection: "row",
@@ -205,22 +226,26 @@ const styles = StyleSheet.create({
   },
   metadata: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    paddingBottom: 12,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 14,
   },
+  metric: { alignItems: "center", flex: 1, minWidth: 0 },
   value: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontFamily: JournalType.bold,
+    fontSize: 13,
+    lineHeight: 18,
     textAlign: "center",
     color: Finn.ink,
   },
+  metricLabel: { alignItems: "center", flexDirection: "row", gap: 4, marginTop: 3 },
   label: {
-    fontSize: 9,
+    fontSize: 10,
     color: Finn.secondary,
     textAlign: "center",
-    marginTop: 4,
   },
   edit: { minHeight: 34, borderTopWidth: 1, borderColor: "#F8F4F1" },
+  editText: { color: Finn.primary, fontFamily: JournalType.medium, fontSize: 11 },
   fieldLabel: { fontSize: 10, color: Finn.secondary, marginBottom: 6 },
   categories: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
   category: {

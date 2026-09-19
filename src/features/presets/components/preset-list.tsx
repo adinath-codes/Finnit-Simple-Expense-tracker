@@ -134,7 +134,7 @@ export default function PresetList() {
                 style={[
                   styles.category,
                   form.category === category && {
-                    backgroundColor: Finn.purpleSoft,
+                    backgroundColor: Finn.primarySoft,
                   },
                 ]}
               >
@@ -142,7 +142,7 @@ export default function PresetList() {
                   style={{
                     fontSize: 11,
                     color:
-                      form.category === category ? Finn.purple : Finn.secondary,
+                      form.category === category ? Finn.primary : Finn.secondary,
                   }}
                 >
                   {Categories[category].label}
@@ -176,7 +176,7 @@ export default function PresetList() {
                 setForm(null);
               }}
             >
-              <Text style={{ color: Finn.purple, fontWeight: "600" }}>
+              <Text style={{ color: Finn.primary, fontWeight: "600" }}>
                 Save entry
               </Text>
             </Button>
@@ -224,7 +224,7 @@ export default function PresetList() {
                   styles.addCircle,
                   editing && { backgroundColor: "#FBEAED" },
                   added === preset.id &&
-                    !editing && { backgroundColor: Finn.green },
+                    !editing && { backgroundColor: Finn.primary },
                 ]}
               >
                 <Icon
@@ -248,8 +248,8 @@ export default function PresetList() {
       )}
       {added && (
         <View accessibilityLiveRegion="polite" style={styles.confirmation}>
-          <Icon name="check" color={Finn.green} size={14} />
-          <Text style={{ color: Finn.green, fontSize: 12 }}>
+          <Icon name="check" color={Finn.primary} size={14} />
+          <Text style={{ color: Finn.primary, fontSize: 12 }}>
             Added to your journal
           </Text>
         </View>
@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
   addButton: { width: 44 },
   addCircle: {
     borderRadius: 15,
-    backgroundColor: Finn.purple,
+    backgroundColor: Finn.primary,
     width: 25,
     height: 25,
     alignItems: "center",

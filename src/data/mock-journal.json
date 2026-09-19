@@ -6,7 +6,8 @@
     "location": true,
     "reminders": true,
     "reminderFrequency": "Every evening",
-    "reminderTime": "9:00 PM"
+    "reminderTime": "9:00 PM",
+    "backTapQuickAdd": false
   },
   "goals": [
     {
@@ -27,7 +28,7 @@
       "id": "transport",
       "label": "Transport",
       "limit": 30000,
-      "color": "#A48CEB",
+      "color": "#20C878",
       "icon": "car"
     },
     {

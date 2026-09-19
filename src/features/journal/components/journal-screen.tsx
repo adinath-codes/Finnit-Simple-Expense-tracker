@@ -16,8 +16,12 @@ import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
 import { amountFromNote } from "@/utils/amounts";
 import { money } from "@/utils/currency";
+import type { ReceiptPhoto } from "@/types/domain";
 import { JournalHeader } from "./journal-header";
-import { JournalEntryCard } from "./journal-entry-card";
+import {
+  JournalEntryCard,
+  PendingJournalEntryCard,
+} from "./journal-entry-card";
 import { JournalComposer } from "./journal-composer";
 import { JournalEmptyPrompt } from "./journal-empty-prompt";
 import {
@@ -43,9 +47,14 @@ export default function JournalScreen() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [entryDraft, setEntryDraft] = useState("");
   const [processingEntryDrafts, setProcessingEntryDrafts] = useState<Record<string, string>>({});
+  const [pendingSubmissions, setPendingSubmissions] = useState<
+    { id: string; note: string }[]
+  >([]);
   const [tool, setTool] = useState<"add" | "voice" | "receipt" | null>(null);
   const input = useRef<TextInput>(null);
   const entryInputs = useRef(new Map<string, TextInput>());
+  const lastReturnSubmission = useRef<string | null>(null);
+  const submissionSequence = useRef(0);
   const scroll = useRef<ScrollView>(null);
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -65,8 +74,8 @@ export default function JournalScreen() {
     ),
   );
   const buildPendingEntry = useCallback(
-    (note: string): PendingEntryResult => {
-      const id = `note-${Date.now()}`;
+    (note: string, entryId?: string): PendingEntryResult => {
+      const id = entryId ?? `note-${Date.now()}`;
       const amount = amountFromNote(note);
       const entry = {
         id,
@@ -132,6 +141,99 @@ export default function JournalScreen() {
     buildResult: buildPendingEntry,
     onCommit: commitPendingEntry,
   });
+  const submitDraft = useCallback(
+    (submittedDraft: string) => {
+      const note = submittedDraft.trim();
+      if (!note) return;
+
+      processing.cancel();
+      submissionSequence.current += 1;
+      const id = `note-${Date.now()}-${submissionSequence.current}`;
+      setPendingSubmissions((current) => [...current, { id, note }]);
+      setDraft("");
+      setFocused(true);
+      requestAnimationFrame(() => {
+        input.current?.focus();
+        scroll.current?.scrollToEnd({ animated: false });
+      });
+    },
+    [processing],
+  );
+  const submitOnReturn = useCallback(
+    (submittedDraft: string) => {
+      const note = submittedDraft.trim();
+      if (!note || lastReturnSubmission.current === note) return;
+
+      lastReturnSubmission.current = note;
+      submitDraft(note);
+    },
+    [submitDraft],
+  );
+  const changeDraft = useCallback(
+    (nextDraft: string) => {
+      const [submittedDraft, ...continuation] = nextDraft.split(/\r\n|\r|\n/);
+      if (continuation.length === 0) {
+        lastReturnSubmission.current = null;
+        setDraft(nextDraft);
+        return;
+      }
+
+      submitOnReturn(submittedDraft);
+      const remainingDraft = continuation.join(" ").trimStart();
+      setDraft(remainingDraft);
+    },
+    [submitOnReturn],
+  );
+  const commitSubmittedDraft = useCallback(
+    (submissionId: string, result: PendingEntryResult) => {
+      addEntry(result.entry);
+      setPendingSubmissions((current) =>
+        current.filter((submission) => submission.id !== submissionId),
+      );
+      requestAnimationFrame(() => {
+        scroll.current?.scrollToEnd({ animated: false });
+      });
+    },
+    [addEntry],
+  );
+  const attachReceiptPhoto = useCallback(
+    (receipt: ReceiptPhoto) => {
+      const id = `receipt-${Date.now()}`;
+      addEntry({
+        id,
+        date: selectedDate,
+        note: "Receipt photo",
+        merchant: "Receipt",
+        category: "other",
+        status: "review",
+        time: "Just now",
+        items: [
+          {
+            id: `${id}-item`,
+            name: "Receipt total",
+            quantity: 1,
+            amountMinor: 0,
+            category: "other",
+          },
+        ],
+        thought:
+          "Your receipt photo is attached. Add the total and merchant details while receipt extraction is being connected.",
+        sources: [
+          {
+            title: "Receipt photo",
+            detail: "Captured with Finn",
+            icon: "note",
+          },
+        ],
+        receipt,
+      });
+      setFocused(false);
+      requestAnimationFrame(() => {
+        scroll.current?.scrollToEnd({ animated: false });
+      });
+    },
+    [addEntry, selectedDate],
+  );
   const dayEntries = entries.filter((entry) => entry.date === selectedDate);
   const commitEntryDraft = (
     entry: (typeof entries)[number],
@@ -246,6 +348,9 @@ export default function JournalScreen() {
           contentContainerStyle={styles.paper}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
+          onContentSizeChange={() => {
+            if (focused) scroll.current?.scrollToEnd({ animated: false });
+          }}
           showsVerticalScrollIndicator={false}
         >
           {dayEntries.map((entry) => (
@@ -265,6 +370,16 @@ export default function JournalScreen() {
               inputRef={(node) => setEntryInput(entry.id, node)}
             />
           ))}
+          {pendingSubmissions.map((submission) => (
+            <PendingJournalEntryCard
+              key={submission.id}
+              note={submission.note}
+              buildResult={(note) => buildPendingEntry(note, submission.id)}
+              onCommit={(result) =>
+                commitSubmittedDraft(submission.id, result)
+              }
+            />
+          ))}
           <View style={styles.editor}>
             {dayEntries.length === 0 && draft.length === 0 && !focused && (
               <JournalEmptyPrompt
@@ -275,17 +390,20 @@ export default function JournalScreen() {
             <TextInput
               ref={input}
               accessibilityLabel="Write an expense"
-              accessibilityHint="Pause to save automatically, or use the keyboard button to save now."
+              accessibilityHint="Press Return to start another item, pause to save automatically, or use the keyboard button to save now."
               multiline
               value={draft}
-              onChangeText={setDraft}
+              onChangeText={changeDraft}
+              onKeyPress={(event) => {
+                if (event.nativeEvent.key === "Enter") submitOnReturn(draft);
+              }}
               onFocus={() => setFocused(true)}
               onBlur={() => {
                 if (Platform.OS !== "web") setFocused(false);
               }}
               style={styles.input}
               textAlignVertical="top"
-              selectionColor={Finn.blue}
+              selectionColor={Finn.primary}
             />
             {focused && !!draft && (
               <View style={styles.statusSlot}>
@@ -315,6 +433,7 @@ export default function JournalScreen() {
             input={input}
             onSave={processing.requestManualCommit}
             onInsert={setDraft}
+            onReceiptCaptured={attachReceiptPhoto}
             onDismiss={() => setFocused(false)}
             tool={tool}
             setTool={setTool}

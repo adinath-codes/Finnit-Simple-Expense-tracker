@@ -1,0 +1,158 @@
+import * as Linking from "expo-linking";
+import * as WebBrowser from "expo-web-browser";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Crypto from "expo-crypto";
+import type { Provider, Session } from "@supabase/supabase-js";
+import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
+import { deleteJournalCache } from "@/lib/offline/database";
+
+WebBrowser.maybeCompleteAuthSession();
+
+export type SocialProvider = Extract<Provider, "apple" | "google">;
+
+function requireBackend() {
+  if (!isBackendConfigured()) {
+    throw new Error("Finn’s secure account connection is not configured yet.");
+  }
+  return getSupabase();
+}
+
+function valueFromRedirect(url: string, key: string) {
+  const parsed = new URL(url);
+  const fragment = new URLSearchParams(parsed.hash.replace(/^#/, ""));
+  return parsed.searchParams.get(key) ?? fragment.get(key);
+}
+
+export async function finishAuthRedirect(url: string): Promise<Session | null> {
+  const db = requireBackend();
+  const errorDescription = valueFromRedirect(url, "error_description");
+  if (errorDescription) throw new Error(errorDescription);
+
+  const code = valueFromRedirect(url, "code");
+  if (code) {
+    const { data, error } = await db.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+    return data.session;
+  }
+
+  const accessToken = valueFromRedirect(url, "access_token");
+  const refreshToken = valueFromRedirect(url, "refresh_token");
+  if (!accessToken || !refreshToken) return null;
+  const { data, error } = await db.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (error) throw error;
+  return data.session;
+}
+
+export async function signInWithSocialProvider(provider: SocialProvider) {
+  const db = requireBackend();
+  const redirectTo = Linking.createURL("auth/callback");
+  const { data, error } = await db.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo, skipBrowserRedirect: true },
+  });
+  if (error) throw error;
+  if (!data.url) throw new Error(`Could not start ${provider} sign in.`);
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo, {
+    showInRecents: false,
+  });
+  if (result.type !== "success") return null;
+  return finishAuthRedirect(result.url);
+}
+
+export async function signInWithNativeApple() {
+  const db = requireBackend();
+  const nonce = Crypto.randomUUID();
+  const hashedNonce = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    nonce,
+  );
+  const credential = await AppleAuthentication.signInAsync({
+    nonce: hashedNonce,
+    requestedScopes: [
+      AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+      AppleAuthentication.AppleAuthenticationScope.EMAIL,
+    ],
+  });
+  if (!credential.identityToken) {
+    throw new Error("Apple did not return a valid identity token.");
+  }
+  const { data, error } = await db.auth.signInWithIdToken({
+    provider: "apple",
+    token: credential.identityToken,
+    nonce,
+  });
+  if (error) throw error;
+
+  const givenName = credential.fullName?.givenName;
+  const familyName = credential.fullName?.familyName;
+  if (givenName || familyName) {
+    await db.auth.updateUser({
+      data: {
+        full_name: [givenName, familyName].filter(Boolean).join(" "),
+        given_name: givenName,
+        family_name: familyName,
+      },
+    });
+  }
+  return data.session;
+}
+
+export async function signInWithEmail(email: string, password: string) {
+  const { data, error } = await requireBackend().auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+  if (error) throw error;
+  return data.session;
+}
+
+export async function createAccountWithEmail(
+  email: string,
+  password: string,
+) {
+  const { data, error } = await requireBackend().auth.signUp({
+    email: email.trim().toLowerCase(),
+    password,
+    options: { emailRedirectTo: Linking.createURL("auth/callback") },
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function sendPasswordReset(email: string) {
+  const { error } = await requireBackend().auth.resetPasswordForEmail(
+    email.trim().toLowerCase(),
+    { redirectTo: Linking.createURL("reset-password") },
+  );
+  if (error) throw error;
+}
+
+export async function updatePassword(password: string) {
+  const { error } = await requireBackend().auth.updateUser({ password });
+  if (error) throw error;
+}
+
+export async function signOutCurrentDevice() {
+  const { error } = await requireBackend().auth.signOut({ scope: "local" });
+  if (error) throw error;
+}
+
+export async function deleteCurrentAccount() {
+  const db = requireBackend();
+  const { data, error: sessionError } = await db.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (!data.session) throw new Error("Sign in again before deleting your account.");
+
+  const userId = data.session.user.id;
+  const { error } = await db.functions.invoke("delete-account", {
+    body: { action: "delete_account", confirmation: "DELETE" },
+  });
+  if (error) throw error;
+
+  await deleteJournalCache(userId);
+  await db.auth.signOut({ scope: "local" }).catch(() => undefined);
+}

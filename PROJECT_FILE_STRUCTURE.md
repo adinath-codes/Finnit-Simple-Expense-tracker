@@ -17,26 +17,76 @@ Do not load both canonical product documents for routine maintenance. Search the
 
 ## Implemented UI preview — September 2026
 
-The reference images are recreated with **Finn financial content**, confirmed by the user, and a small vector recreation of the reference’s purple mountain mark. This direct request takes precedence over the earlier inspiration-only guidance in `PRODUCT_DESIGN.md`.
+The reference images are recreated with **Finn financial content**, confirmed by the user, and a small vector recreation of the reference’s green mountain mark. This direct request takes precedence over the earlier inspiration-only guidance in `PRODUCT_DESIGN.md`.
 
 - `src/data/mock-journal.json` owns all seeded journal entries, line items, references, presets, goals, profile values, and preferences. Amounts use integer minor units.
 - `src/storage/journal-repository.ts` is the fixture-loading adapter. Replace this boundary when adding persistence; components never import JSON or call a backend.
-- `src/providers/app-providers.tsx` owns session-only entries, presets, goals, settings, and selected date. Reloading restores the fixture. There is no backend, authentication, notification scheduling, location collection, or recording.
+- `src/providers/app-providers.tsx` owns session-only preview entries, presets, goals, and selected date. Preferences persist locally with AsyncStorage so launch-time routes can honor settings; the remaining preview data resets to the fixture on reload. This screen provider is not connected to the new backend/auth services, notification scheduling, location collection, or recording.
+
 - `src/types/domain.ts` defines typed UI records; `src/utils/amounts.ts`, `currency.ts`, and `dates.ts` supply deterministic totals, formatting, date labels, and the simple trailing-amount demo parser.
 - `src/features/journal/components/journal-glyph.tsx` maps journal controls to the shared native-symbol layer: SF Symbols on iOS and Material Symbols on Android/web. `assets/images/journal/` owns the small reference-inspired header mark and legacy static SVG glyph assets.
 - `assets/sf-pro-display/` contains the supplied SF Pro Display fonts. The root layout loads regular, medium, and bold faces for Android/web before showing the app; iOS uses its native system font. `metro.config.js` registers the supplied uppercase `.OTF` extension.
 - `src/components/ui/icon.tsx` maps SF Symbols on iOS to Material Symbols on Android/web and applies the native one-shot symbol effect requested by the nearest button. `button.tsx` supplies 120ms press feedback, triggers symbol effects, and respects reduced motion. `icon-button.tsx` supplies floating circular controls.
 - `src/components/common/screen.tsx` supplies the warm canvas, optional journal peach-to-lilac gradient, and desktop width limit. `src/components/sheets/app-sheet.tsx` owns sheet chrome, scrolling, dismissal, keyboard avoidance, and footer spacing.
-- Implemented journal components: `journal-screen.tsx`, `journal-header.tsx`, `journal-entry-card.tsx`, `journal-composer.tsx`, `journal-processing-status.tsx`, `journal-glyph.tsx`. The blank paper is the input; focusing it reveals the mic/add/keyboard toolbar, and keyboard dismissal restores the compact totals pill. New notes and in-place edits share the same bouncing-dots, shimmered-status, source, calculation, and result sequence. A 150ms idle pause reveals optimistic processing feedback, one unchanged second starts a cancellable local parsing sequence, and the completed entry auto-saves while keeping the composer ready. The keyboard button can start the same sequence immediately and dismiss after it finishes. The draft dots open note options. Voice and receipt actions are explicitly labeled sample previews.
+- Implemented journal components: `journal-screen.tsx`, `journal-header.tsx`, `journal-entry-card.tsx`, `journal-composer.tsx`, `journal-processing-status.tsx`, `journal-glyph.tsx`, `voice-recording-waveform.tsx`. The blank paper is the input; focusing it reveals the mic/add/camera/keyboard toolbar, and keyboard dismissal restores the compact totals pill. When connectivity is unavailable, a quiet footer pill reports the durable outbox's pending-job count without blocking capture. New notes and in-place edits share the same bouncing-dots, shimmered-status, source, calculation, and result sequence. A 150ms idle pause reveals optimistic processing feedback, one unchanged second starts a cancellable local parsing sequence, and the completed entry auto-saves while keeping the composer ready. The keyboard button can start the same sequence immediately and dismiss after it finishes. The draft dots open note options. Voice is an explicitly labeled sample preview; the waveform loops horizontally, responds to normalized live amplitude when supplied, and provides its own preview envelope when no recorder is connected. The camera action opens the real permission-aware `expo-camera` preview in a compact floating panel, provides torch/flip/capture/review controls, and attaches the accepted local photo to a session entry for manual review.
 - Implemented detail components: `entry-detail-sheet.tsx`, `transaction-breakdown.tsx`. Editing quantities/amounts updates totals; references expand; entries can become saved shortcuts.
 - `features/presets/components/preset-list.tsx` owns search, create/edit/delete, and one-tap journal insertion.
-- `features/settings/components/settings-screen.tsx` owns location/reminder switches, frequency/time controls, notification preview, and saved-entry navigation.
+- `features/settings/components/settings-screen.tsx` owns location/reminder switches, frequency/time controls, saved-entry navigation, iOS Back Tap setup, legal-document links, local sign-out, and confirmed account deletion.
 - `features/summary/components/spending-breakdown-card.tsx` owns the floating total's inline goal breakdown and animated progress bars.
 - `features/calendar/components/calendar-screen.tsx` owns month browsing and selected-day journal navigation.
+- `features/onboarding/` adapts the Life Outside card/progress/slide language into a short Finn flow: two product explainers and three questions covering the user's desired outcome, tracking friction, and default currency. Progress resumes from AsyncStorage, completion gates `/`, and a signed-in or explicitly enabled anonymous Supabase session synchronizes the owner-only result.
 
-Implemented routes in addition to `/`: `src/app/entries/[entryId].tsx`, `src/app/settings/index.tsx`, `src/app/settings/presets.tsx`, and `src/app/calendar.tsx`. All are thin feature wrappers. Native sheets use Expo Router form sheets; the web preview uses Router form sheets.
+Implemented routes in addition to `/`: onboarding; sign-in/reset/callback; privacy and terms; entry, settings and preset sheets; calendar; quick add; and search. Onboarding is always first on a new install, then the session gate presents authentication before any private route. Email/password, Google OAuth, and Apple OAuth share the persisted Supabase session. Native sheets use Expo Router form sheets; the web preview uses Router form sheets. The iOS-only Back Tap flow uses the `finn://quick-add` deep link, a persisted Settings toggle, and the focused quick-capture screen in `src/features/quick-capture/`.
 
 Run the preview with `node node_modules/expo/bin/cli start --web`. Run type checking with `node node_modules/typescript/bin/tsc --noEmit`. Direct Node invocation avoids the colon-in-project-path issue with package-manager executable lookup.
+
+## Implemented text backend — September 19, 2026
+
+The backend below is implemented locally but **not deployed or tested**. Its client
+search page reads authenticated Supabase data through its own hook. The main journal
+provider still uses fixtures; connecting capture/auth/sync UI remains separate. Do not map
+exact backend transaction totals onto the preview's per-item or INR-only arithmetic.
+Read `docs/backend/DEPLOYMENT.md` for deployment, API contracts, monetary semantics,
+limits, and the current integration boundary.
+
+| File | Responsibility |
+| --- | --- |
+| `docs/backend/DEPLOYMENT.md` | Deployment handoff, endpoint/client contracts, accuracy rules, and remaining UI/MVP work. |
+| `supabase/migrations/20260919062838_finn_financial_journal.sql` | Schema/seeds, RLS/grants, atomic revision/idempotency RPCs, private quotas, indexed SQL search and insight views. |
+| `supabase/migrations/20260919071006_finn_search_page.sql` | Recent context totals, bounded catalogs, keyset result pages, serialized journal revision tracking, and owner-scoped interpretation cache. |
+| `supabase/migrations/20260919082754_finn_onboarding_profile.sql` | Bounded onboarding answers, extracted defaults, grants, and owner-only RLS policies. |
+| `supabase/migrations/20260919113403_extra_ai_quota_and_support_requests.sql` | Private expiring AI-call credits, deduplicated support requests, and atomic minute/day/month quota reservations. |
+| `supabase/config.toml` | CLI-generated local project settings and authenticated Edge Function entry points. |
+| `supabase/.gitignore` | Excludes CLI project links, temporary files and local secrets. |
+| `supabase/functions/deno.json` | Server TypeScript runtime and formatting configuration, separate from Expo. |
+| `supabase/functions/_shared/contracts.ts` | Pure shared wire contracts, supported currencies/scales, extraction and search plans. |
+| `supabase/functions/_shared/validation.ts` | Runtime input, exact-money, entity, date and extraction validation. |
+| `supabase/functions/_shared/dates.ts` | Timezone-aware calendar days, relative dates and period boundaries. |
+| `supabase/functions/_shared/parser.ts` | Deterministic amount/quantity/direction parsing, splitting, entities and category precedence. |
+| `supabase/functions/_shared/runtime.ts` | Session verification, RLS/admin clients, request bounds, quotas, catalogs and private-text-free metrics. |
+| `supabase/functions/_shared/gemini.ts` | Bounded Gemini Flash structured output and evidence-grounded interpretation validation. |
+| `supabase/functions/_shared/search.ts` | Deterministic query-to-filter parsing and allowlisted search-plan validation. |
+| `supabase/functions/parse-entry/index.ts` | Durable capture before AI enrichment, extraction caching and retry deduplication. |
+| `supabase/functions/correct-entry/index.ts` | Revision-checked correction/deletion with optional explicit personal category rules. |
+| `supabase/functions/ask-money/index.ts` | Authenticated natural-language/explicit-filter search with SQL-only financial totals. |
+| `supabase/functions/request-quota-review/index.ts` | Authenticated, deduplicated support escalation for accounts that reach the AI allowance. |
+| `supabase/functions/delete-account/index.ts` | Authenticated, server-only deletion of the caller's account and cascading owner data. |
+| `src/features/auth/` | Session provider, email/password auth, Google/Apple OAuth, callback handling, recovery, and reset UI. |
+| `src/features/legal/` | Shared readable legal-document surface used by the bundled privacy policy and terms. |
+| `src/lib/supabase/client.ts` | Lazy publishable-key client, explicit optional anonymous auth and session identity. |
+| `src/lib/supabase/session-storage.ts` | AsyncStorage session persistence adapter. |
+| `src/lib/supabase/database.types.ts` | Shared backend wire type exports; live generated schema types await Finn deployment. |
+| `src/lib/ai/api.ts` | Authenticated Edge requests, session refresh, bounded timeout and typed retry errors. |
+| `src/lib/offline/database.ts` | Serialized account-scoped durable cache/outbox document and subscriptions. |
+| `src/lib/offline/sync-queue.ts` | Ordered retry queue, revision-conflict retention and foreground sync lifecycle. |
+| `src/types/sync.ts` | Cached entry, correction/deletion payload, durable job and cache types. |
+| `src/features/journal/services/journal-service.ts` | Durable capture, local reads, remote refresh and offline catalog caching. |
+| `src/features/entries/services/entry-parser.ts` | Expo re-export of shared pure parser functions, with no server/provider imports. |
+| `src/features/entries/services/entries-service.ts` | Offline correction/deletion queue commands using server revisions. |
+| `src/features/ask/services/ask-service.ts` | Search request and exact per-currency result contracts. |
+| `src/features/summary/services/summary-service.ts` | SQL-based spending summaries and RLS-protected financial insight reads. |
+| `src/features/support/components/quota-reached-modal.tsx` | Calm global quota notice with a support-review action and email fallback. |
+| `src/features/support/services/` | Quota-reached event fan-out and authenticated support-request submission. |
 
 ## Status legend
 
@@ -97,6 +147,8 @@ Finn/
 ├── tsconfig.json
 ├── assets/
 │   ├── expo.icon/
+│   ├── logo/
+│   │   └── long-light-bg.png
 │   ├── sf-pro-display/
 │   └── images/
 │       └── journal/
@@ -110,7 +162,7 @@ Finn/
 │   │   ├── explore.tsx
 │   │   ├── calendar.tsx
 │   │   ├── (auth)/
-│   │   ├── (onboarding)/
+│   │   ├── onboarding/
 │   │   ├── (tabs)/
 │   │   ├── entries/
 │   │   ├── projects/
@@ -130,9 +182,11 @@ Finn/
 │   │   ├── camera/
 │   │   ├── ask/
 │   │   ├── presets/
+│   │   ├── quick-capture/
 │   │   ├── settings/
 │   │   ├── profile/
 │   │   ├── onboarding/
+│   │   ├── support/
 │   │   └── paywall/
 │   ├── data/
 │   │   └── mock-journal.json
@@ -169,6 +223,7 @@ Finn/
 | --- | --- |
 | `src/app/_layout.tsx` | Light theme, mock data provider, gesture root, and native Stack form-sheet navigation. |
 | `src/app/index.tsx` | Thin route to the reference-matched financial journal. |
+| `src/app/onboarding/index.tsx` | Thin route to the implemented first-run Finn onboarding. |
 | `src/app/explore.tsx` | Redirects the old starter URL to the journal. |
 
 ### Intended route map
@@ -177,17 +232,23 @@ Routes not listed in the implemented preview above remain planned. Expo Router r
 
 | Route | Functionality |
 | --- | --- |
-| `src/app/(auth)/sign-in.tsx` | Thin authentication route; composes auth feature UI when auth is implemented. |
-| `src/app/(onboarding)/index.tsx` | Thin route for the short three-part product onboarding. |
+| `src/app/(auth)/sign-in.tsx` | Implemented email/password, Google, and Apple sign-in/create-account route. |
+| `src/app/(auth)/reset-password.tsx` | Password recovery completion route. |
+| `src/app/auth/callback.tsx` | OAuth and email-confirmation callback route. |
+| `src/app/legal/privacy.tsx` | Bundled privacy policy, reachable from sign-in and Settings. |
+| `src/app/legal/terms.tsx` | Bundled terms of service, reachable from sign-in and Settings. |
+| `src/app/onboarding/index.tsx` | Implemented first-run onboarding route; `/` redirects here until local completion is durable. |
 | `src/app/(tabs)/_layout.tsx` | Minimal Journal, Calendar, Ask, and Settings/Profile navigation. Prefer SDK 57-supported Router APIs. |
 | `src/app/(tabs)/index.tsx` | Primary Journal route. |
 | `src/app/(tabs)/calendar.tsx` | Calendar/history navigation route. |
-| `src/app/(tabs)/ask.tsx` | Ask-your-money route. |
+| `src/app/(tabs)/ask.tsx` | Planned legacy Ask route; search is presented by `/search`. |
+| `src/app/search.tsx` | Thin route for the implemented natural-language search page. |
 | `src/app/(tabs)/settings.tsx` | Settings/Profile route. |
 | `src/app/entries/[entryId].tsx` | Deep-linkable entry detail/edit route or sheet presentation. |
 | `src/app/projects/[projectId].tsx` | Deep-linkable project detail route or sheet presentation. |
 | `src/app/settings/presets.tsx` | Preset management route. |
-| `src/app/settings/privacy.tsx` | Privacy, export, and account deletion route. |
+| `src/app/quick-add.tsx` | iOS Back Tap/Shortcut deep-link target for minimal expense-note capture. |
+| `src/app/legal/privacy.tsx` | Privacy policy route; account deletion remains in Settings. |
 
 ## Shared components: `src/components/`
 
@@ -224,11 +285,12 @@ Routes not listed in the implemented preview above remain planned. Expo Router r
 | --- | --- |
 | `components/journal-screen.tsx` | Composes journal header, chronological entries, totals, presets, and composer. |
 | `components/journal-glyph.tsx` | Fixed vector artwork for home toolbar and summary glyphs on every platform. |
-| `components/journal-header.tsx` | Finn mark, selected day/date, calendar entry point, and profile entry point. |
+| `components/journal-header.tsx` | Finn mark, selected date/calendar entry, and adjacent search/settings buttons. |
 | `components/journal-day-section.tsx` | One chronological day group with daily total. |
 | `components/journal-entry-card.tsx` | Human-readable entry with amount and restrained metadata. |
 | `components/journal-empty-prompt.tsx` | Empty-day writing CTA with reduced-motion-aware rotating example text. |
 | `components/journal-composer.tsx` | Primary natural-language input with camera, later voice, and send actions. |
+| `components/voice-recording-waveform.tsx` | Reusable reduced-motion-aware recording waveform with horizontal tick travel and optional normalized live-amplitude response. |
 | `components/journal-processing-status.tsx` | Shared bouncing dots, shimmered clipped Reanimated status carousel, source badges, and emphasized-to-settled entry result. |
 | `hooks/use-journal.ts` | Queries and mutations for journal capture/browsing. |
 | `hooks/use-journal-entry-processing.ts` | Cancellable debounce, parsing phase schedule, and atomic auto-save coordinator. |
@@ -243,6 +305,7 @@ Routes not listed in the implemented preview above remain planned. Expo Router r
 | `components/calendar-screen.tsx` | Calendar history-navigation surface. |
 | `components/calendar-grid.tsx` | Month grid showing days with journal activity and optional totals. |
 | `components/calendar-day-cell.tsx` | Individual date cell and selection state. |
+| `components/calendar-spending-chart.tsx` | Combined monthly total and relative colored category bars with expense emojis. |
 | `hooks/use-calendar-entries.ts` | Loads entries/totals indexed by date range. |
 | `services/calendar-service.ts` | Month range, selected date, and journal jump operations. |
 | `types/calendar.types.ts` | Calendar cells, month ranges, and activity view models. |
@@ -285,21 +348,23 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 
 | File | Functionality |
 | --- | --- |
-| `components/receipt-camera-sheet.tsx` | Compact camera/photo-library sheet matching the sketch. |
-| `components/receipt-review.tsx` | Preview, retake, attach, and confirm state. |
+| `components/receipt-camera-sheet.tsx` | Implemented compact permission-aware camera overlay with live preview, torch, camera flip, shutter, and denied/settings states. |
+| `components/receipt-review.tsx` | Implemented captured-photo preview with retake, close, and attach actions. |
 | `services/receipt-service.ts` | Local attachment creation, upload queueing, and extraction request. |
-| `types/receipt.types.ts` | Receipt source, attachment, upload, and extraction statuses. |
+| `types/receipt.types.ts` | Local receipt-capture type; upload and extraction statuses remain planned. |
 
 ## Ask feature: `src/features/ask/`
 
 | File | Functionality |
 | --- | --- |
-| `components/ask-screen.tsx` | Conversational retrieval screen. |
+| `components/ask-screen.tsx` | Theme-matched search page with recent context cards, editable filters/dates, grounded answer, and Show more sources. |
 | `components/ask-thread.tsx` | User questions and grounded financial answers. |
 | `components/ask-composer.tsx` | Financial-history question input. |
-| `components/source-entry-list.tsx` | Underlying entries/transactions supporting an answer. |
-| `services/ask-service.ts` | Intent parsing, scoped retrieval, deterministic calculation, and response orchestration. |
-| `types/ask.types.ts` | Question, answer, calculation, and source-reference types. |
+| `components/source-entry-list.tsx` | Grouped dated source notes with expandable item/category/merchant/amount details. |
+| `hooks/use-search.ts` | Auth-scoped context and search requests, cancellation, result state, cursor paging, retry, and stale-result handling. |
+| `services/search-format.ts` | Exact BigInt currency presentation and calendar-range formatting. |
+| `services/ask-service.ts` | Typed authenticated search/context calls with a 20-item page default. |
+| `types/ask.types.ts` | Exact-money answer, active context, source item, and cursor request/response contracts. |
 
 ## Presets feature: `src/features/presets/`
 
@@ -314,7 +379,7 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 
 | File | Functionality |
 | --- | --- |
-| `features/settings/components/settings-screen.tsx` | Settings hub for currency, location, presets, subscription, and privacy. |
+| `features/settings/components/settings-screen.tsx` | Settings hub for preferences, legal documents, sign-out, and confirmed account deletion. |
 | `features/settings/components/currency-setting.tsx` | Base currency selection and current value. |
 | `features/settings/components/location-setting.tsx` | Optional location capture and permission status. |
 | `features/settings/services/settings-service.ts` | Settings retrieval/update use cases. |
@@ -323,12 +388,20 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 | `features/profile/components/profile-screen.tsx` | Account, subscription, export, privacy, sign-out, and deletion entry points. |
 | `features/profile/types/profile.types.ts` | Profile presentation models. |
 
+## Quick capture feature: `src/features/quick-capture/`
+
+| File | Functionality |
+| --- | --- |
+| `components/quick-capture-screen.tsx` | Minimal iOS-only Finn logo, prompt, expense-note input, and save/cancel actions opened by `finn://quick-add`. |
+
 ## Onboarding and paywall features
 
 | File | Functionality |
 | --- | --- |
-| `features/onboarding/components/onboarding-screen.tsx` | Short “Your money / Say anything / Remember everything” flow. |
-| `features/onboarding/types/onboarding.types.ts` | Onboarding step models. |
+| `features/onboarding/components/onboarding-screen.tsx` | Reference-adapted welcome, question cards, progress/footer chrome, product explainers, reduced-motion transitions, and completion handoff. |
+| `features/onboarding/data/onboarding-steps.ts` | Finn-specific questions, options, education copy, and flow order. |
+| `features/onboarding/services/onboarding-service.ts` | Local-first progress/completion orchestration and authenticated Supabase restore/sync. |
+| `features/onboarding/types/onboarding.types.ts` | Versioned answer, option, step, and persistence models. |
 | `features/paywall/components/paywall-screen.tsx` | Subscription value shown only after the user understands the product. |
 | `features/paywall/services/subscription-service.ts` | Product/entitlement lookup and purchase boundary. |
 | `features/paywall/types/subscription.types.ts` | Subscription product and entitlement types. |
@@ -354,7 +427,10 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 | `src/services/location-service.ts` | Optional, permission-aware, approximate location captured only for an entry. |
 | `src/services/network-service.ts` | Connectivity changes and reconnect processing triggers. |
 | `src/storage/journal-repository.ts` | Storage contract for raw notes, structured transactions, attachments, and sync status. |
-| `src/storage/settings-repository.ts` | Local/remote user preference storage contract. |
+| `src/storage/onboarding-repository.ts` | Validated AsyncStorage snapshot used for first-run gating and offline-safe onboarding progress. |
+| `src/storage/settings-repository.ts` | Planned local/remote user preference storage contract. |
+| `src/storage/preferences-storage.ts` | Android/web session-only preference adapter that avoids requiring an iOS-only native module. |
+| `src/storage/preferences-storage.ios.ts` | iOS AsyncStorage adapter for persisted preferences and Back Tap state. |
 | `src/store/session-store.ts` | Small cross-feature app/session state boundary; do not duplicate server data here. |
 | `src/types/domain.ts` | Canonical client domain types shared across features. |
 | `src/types/sync.ts` | Queue job, retry, failure, conflict, and sync-state types. |
@@ -374,11 +450,12 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 | `supabase/migrations/` | Versioned database schema, indexes, triggers, grants, and RLS policies. Create files with `supabase migration new <name>`; do not invent migration timestamps. |
 | `supabase/functions/_shared/` | Shared server-only helpers for auth checks, validation, AI providers, responses, and CORS. |
 | `supabase/tests/` | Database/RLS tests proving users cannot access one another's financial data. |
-| `supabase/config.toml` | **Planned/generated:** created by `supabase init` when the CLI is installed. Do not hand-author from memory. |
+| `supabase/config.toml` | CLI-generated project settings and three authenticated text-backend function entry points. |
 | `supabase/seed.sql` | **Planned:** deterministic local-only development data, added when a real schema exists. |
-| `supabase/functions/parse-entry/index.ts` | **Planned:** server-side semantic parsing after deterministic client parsing. |
+| `supabase/functions/parse-entry/index.ts` | Durable deterministic capture and evidence-validated Gemini enrichment. |
 | `supabase/functions/scan-receipt/index.ts` | **Planned:** receipt OCR/extraction without exposing provider secrets. |
-| `supabase/functions/ask-money/index.ts` | **Planned:** scoped retrieval and grounded response generation. |
+| `supabase/functions/ask-money/index.ts` | Bounded context/catalog reads, cached Gemini filter interpretation, SQL totals and cursor-based source pages. |
+| `supabase/functions/delete-account/index.ts` | Verifies the caller and deletes that auth user through a server-only admin client. |
 | `supabase/functions/convert-currency/index.ts` | **Planned only if needed:** trusted exchange-rate proxy/cache. |
 
 Supabase safety requirements:
@@ -394,14 +471,14 @@ Supabase safety requirements:
 
 | File | Functionality |
 | --- | --- |
-| `.env.example` | Documents safe public Expo environment variable names; contains no values. |
+| `.env.example` | Public/server setting names and concrete Gemini/quota defaults; unknown project credentials and API secrets remain blank. |
 | `.gitignore` | Excludes dependencies, generated output, native builds, and all real environment files. |
 | `app.json` | Expo app identity, plugins, platform config, scheme, icons, and experiments. |
 | `package.json` | Scripts and pinned application dependency ranges. |
 | `package-lock.json` | npm dependency lockfile currently present. Choose one package manager before changing dependencies. |
 | `pnpm-lock.yaml` | pnpm dependency lockfile currently present and untracked. Do not maintain two lockfiles long-term. |
 | `pnpm-workspace.yaml` | pnpm workspace configuration currently present and untracked. |
-| `tsconfig.json` | Strict TypeScript configuration and `@/*` aliases. |
+| `tsconfig.json` | Strict Expo TypeScript configuration, `@/*` aliases and pure shared TypeScript imports; excludes Deno entry points. |
 | `README.md` | General repository setup/readme. |
 | `CLAUDE.md` | Existing alternate-agent instructions; keep aligned with project rules if used. |
 | `docs/decisions/` | Short architecture decision records for choices that future contributors must understand. |

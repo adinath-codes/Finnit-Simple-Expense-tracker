@@ -6,9 +6,14 @@ import { useReducedMotion } from "react-native-reanimated";
 import { AppProviders } from "@/providers/app-providers";
 import { Finn } from "@/constants/theme";
 import { useEffect } from "react";
-import { Platform } from "react-native";
+import { Platform, View } from "react-native";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
+import { QuotaReachedModalHost } from "@/features/support/components/quota-reached-modal";
+import {
+  SessionProvider,
+  useSession,
+} from "@/features/auth/providers/session-provider";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -29,22 +34,81 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AppProviders>
-          <ThemeProvider
+        <SessionProvider>
+          <AppProviders>
+            <ThemeProvider
             value={{
               ...DefaultTheme,
               colors: { ...DefaultTheme.colors, background: Finn.canvas },
             }}
           >
             <StatusBar style="dark" />
-            <Stack
+            <RootNavigator reduced={reduced} />
+            <QuotaReachedModalHost />
+          </ThemeProvider>
+        </AppProviders>
+        </SessionProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+function RootNavigator({ reduced }: { reduced: boolean }) {
+  const { session, loading, onboardingComplete } = useSession();
+  if (loading) return <View style={{ flex: 1, backgroundColor: Finn.canvas }} />;
+
+  return (
+    <Stack
               screenOptions={{
                 headerShown: false,
                 contentStyle: { backgroundColor: Finn.canvas },
                 animation: reduced ? "fade" : "default",
               }}
-            >
+    >
+      <Stack.Protected guard={!onboardingComplete}>
+              <Stack.Screen
+                name="onboarding/index"
+                options={{
+                  gestureEnabled: false,
+                  animation: reduced ? "fade" : "default",
+                }}
+              />
+      </Stack.Protected>
+      <Stack.Protected guard={onboardingComplete && !session}>
+        <Stack.Screen
+          name="(auth)/sign-in"
+          options={{ gestureEnabled: false, animation: reduced ? "fade" : "default" }}
+        />
+      </Stack.Protected>
+      <Stack.Protected guard={onboardingComplete}>
+        <Stack.Screen name="auth/callback" />
+        <Stack.Screen name="(auth)/reset-password" />
+        <Stack.Screen
+          name="legal/privacy"
+          options={{
+            presentation: "formSheet",
+            sheetAllowedDetents: [0.92, 1],
+            sheetGrabberVisible: true,
+            sheetCornerRadius: 30,
+          }}
+        />
+        <Stack.Screen
+          name="legal/terms"
+          options={{
+            presentation: "formSheet",
+            sheetAllowedDetents: [0.92, 1],
+            sheetGrabberVisible: true,
+            sheetCornerRadius: 30,
+          }}
+        />
+      </Stack.Protected>
+      <Stack.Protected guard={onboardingComplete && !!session}>
               <Stack.Screen name="index" />
+              <Stack.Screen name="search" />
+              <Stack.Screen
+                name="quick-add"
+                options={{ animation: reduced ? "fade" : "slide_from_bottom" }}
+              />
               <Stack.Screen
                 name="entries/[entryId]"
                 options={{
@@ -81,10 +145,7 @@ export default function RootLayout() {
                   sheetCornerRadius: 30,
                 }}
               />
-            </Stack>
-          </ThemeProvider>
-        </AppProviders>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+      </Stack.Protected>
+    </Stack>
   );
 }

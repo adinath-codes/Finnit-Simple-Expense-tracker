@@ -86,6 +86,10 @@ export function AppSheet({
                >
                     {!headerScrollable && header}
                     <ScrollView
+                         // On Android, let the content consume upward drags until it
+                         // reaches its top edge; only then can the native form sheet
+                         // take over and dismiss.
+                         nestedScrollEnabled={Platform.OS === "android"}
                          keyboardShouldPersistTaps="handled"
                          showsVerticalScrollIndicator={false}
                          contentContainerStyle={[
@@ -159,7 +163,7 @@ export const sheetStyles = StyleSheet.create({
      primary: {
           borderRadius: 24,
           paddingHorizontal: 24,
-          backgroundColor: Finn.purple,
+          backgroundColor: Finn.primary,
           minHeight: 48,
      },
 });

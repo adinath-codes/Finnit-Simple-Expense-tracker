@@ -226,7 +226,9 @@ function StatusLayer({
               size={13}
               color={result?.review ? Finn.amber : Finn.blue}
               colors={
-                result?.review ? undefined : ["#3378DE", "#77B4F4"]
+                result?.review
+                  ? undefined
+                  : [Finn.blueSparkleStart, Finn.blueSparkleEnd]
               }
             />
             <Text
@@ -282,7 +284,7 @@ function SourceStatus({
             style={[
               styles.badge,
               index > 0 && styles.overlappingBadge,
-              { backgroundColor: ["#EDB16D", "#EBC64F", Finn.purple][index] },
+              { backgroundColor: ["#EDB16D", "#EBC64F", Finn.primary][index] },
             ]}
           >
             <Icon
@@ -501,7 +503,7 @@ const styles = StyleSheet.create({
     minHeight: 25,
   },
   dot: {
-    backgroundColor: Finn.purple,
+    backgroundColor: Finn.primary,
     borderRadius: 3,
     height: 5,
     width: 5,

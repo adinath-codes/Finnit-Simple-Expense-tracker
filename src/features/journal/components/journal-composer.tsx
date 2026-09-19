@@ -10,6 +10,7 @@ import {
      View,
 } from "react-native";
 import { router } from "expo-router";
+import * as Network from "expo-network";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReducedMotion } from "react-native-reanimated";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,10 @@ import { useJournal } from "@/providers/app-providers";
 import { entryTotal } from "@/utils/amounts";
 import { currencySymbol, moneyValue } from "@/utils/currency";
 import { SpendingBreakdownCard } from "@/features/summary/components/spending-breakdown-card";
+import { ReceiptCameraSheet } from "@/features/camera/components/receipt-camera-sheet";
+import type { ReceiptPhoto } from "@/types/domain";
+import { subscribePendingJournalChangeCount } from "../services/journal-service";
+import { VoiceRecordingWaveform } from "./voice-recording-waveform";
 
 export function JournalComposer({
      focused,
@@ -28,6 +33,7 @@ export function JournalComposer({
      input,
      onSave,
      onInsert,
+     onReceiptCaptured,
      onDismiss,
      tool,
      setTool,
@@ -37,6 +43,7 @@ export function JournalComposer({
      input: RefObject<TextInput | null>;
      onSave: () => void;
      onInsert: (note: string) => void;
+     onReceiptCaptured: (photo: ReceiptPhoto) => void;
      onDismiss: () => void;
      tool: "add" | "voice" | "receipt" | null;
      setTool: (tool: "add" | "voice" | "receipt" | null) => void;
@@ -44,6 +51,7 @@ export function JournalComposer({
      const { entries, selectedDate, goals, settings } = useJournal();
      const insets = useSafeAreaInsets();
      const reduced = useReducedMotion();
+     const { isOffline, queuedItemCount } = useOfflineQueueStatus();
      const [summaryOpen, setSummaryOpen] = useState(false);
      const dayEntries = entries.filter((entry) => entry.date === selectedDate);
      const total = dayEntries.reduce(
@@ -56,6 +64,13 @@ export function JournalComposer({
           input.current?.blur();
           onDismiss();
           setTool(next);
+     };
+     const openSavedEntries = () => {
+          setSummaryOpen(false);
+          Keyboard.dismiss();
+          input.current?.blur();
+          onDismiss();
+          router.push("/settings/presets");
      };
      const insert = (note: string) => {
           onInsert(note);
@@ -84,140 +99,190 @@ export function JournalComposer({
                     style={[
                          styles.footer,
                          {
-                              paddingHorizontal: focused ? 28 : 36,
+                              paddingHorizontal:
+                                   tool === "voice" ? 16 : focused ? 28 : 36,
                               paddingBottom: 16,
                          },
                     ]}
                >
-                    <SpendingBreakdownCard visible={summaryOpen} />
-                    <View style={styles.toolbar}>
-                         <View style={{ flex: 1 }}>
-                              <Button
-                                   label={
-                                        summaryOpen
-                                             ? "Hide spending breakdown"
-                                             : "View spending breakdown and goals"
-                                   }
-                                   onPress={() => {
-                                        const nextOpen = !summaryOpen;
-                                        if (nextOpen) {
-                                             Keyboard.dismiss();
-                                             input.current?.blur();
-                                             onDismiss();
-                                        }
-                                        setSummaryOpen(nextOpen);
-                                   }}
-                                   style={[
-                                        styles.summary,
-                                        summaryOpen && styles.summaryOpen,
-                                   ]}
-                              >
-                                   <Text style={styles.currencyIcon}>
-                                        {currencySymbol(settings.currency)}
-                                   </Text>
-                                   <Text style={styles.total}>
-                                        {moneyValue(
-                                             focused
-                                                  ? Math.max(
-                                                         0,
-                                                         (goals[0]?.limit ??
-                                                              0) - total,
-                                                    )
-                                                  : total,
-                                        )}
-                                   </Text>
-                                   {focused ? (
-                                        <Text style={styles.remaining}>
-                                             spent
-                                        </Text>
-                                   ) : (
-                                        (
-                                             [
-                                                  "food",
-                                                  "transport",
-                                                  "shopping",
-                                             ] as const
-                                        ).map((category, index) => (
-                                             <View
-                                                  key={category}
-                                                  style={styles.mini}
-                                             >
-                                                  <Text
-                                                       style={styles.separator}
-                                                  >
-                                                       ·
-                                                  </Text>
-                                                  <JournalGlyph
-                                                       name={
-                                                            (
-                                                                 [
-                                                                      "food",
-                                                                      "car",
-                                                                      "bag",
-                                                                 ] as const
-                                                            )[index]
-                                                       }
-                                                       size={11}
-                                                       color={
-                                                            (
-                                                                 [
-                                                                      "#EF7899",
-                                                                      "#EBC64F",
-                                                                      "#CD76DC",
-                                                                 ] as const
-                                                            )[index]
-                                                       }
-                                                  />
-                                                  <Text
-                                                       style={styles.miniValue}
-                                                  >
-                                                       {Math.round(
-                                                            categoryTotal(
-                                                                 category,
-                                                            ) / 100,
-                                                       )}
-                                                  </Text>
-                                             </View>
-                                        ))
-                                   )}
-                              </Button>
-                         </View>
-                         {focused && (
-                              <>
-                                   <ToolbarButton
-                                        name="mic"
-                                        color={Finn.blue}
-                                        label="Open voice preview"
-                                        onPress={() => openTool("voice")}
+                    {tool === "voice" ? (
+                         <VoiceRecordingControls
+                              onConfirm={() =>
+                                   insert("Coffee on the way to work 180")
+                              }
+                              onCancel={() => {
+                                   setTool(null);
+                                   requestAnimationFrame(() =>
+                                        input.current?.focus(),
+                                   );
+                              }}
+                         />
+                    ) : (
+                         <>
+                              <SpendingBreakdownCard visible={summaryOpen} />
+                              {isOffline && (
+                                   <OfflineQueueStatus
+                                        queuedItemCount={queuedItemCount}
                                    />
-                                   <ToolbarButton
-                                        name="plus"
-                                        color="#EDB16D"
-                                        label="Add an entry or use a saved item"
-                                        onPress={() => openTool("add")}
-                                   />
-                                   <ToolbarButton
-                                        name="keyboard"
-                                        label={
-                                             draft.trim()
-                                                  ? "Save note and dismiss keyboard"
-                                                  : "Dismiss keyboard"
-                                        }
-                                        onPress={() => {
-                                             if (draft.trim()) onSave();
-                                             else {
-                                                  input.current?.blur();
-                                                  Keyboard.dismiss();
-                                                  onDismiss();
+                              )}
+                              <View style={styles.toolbar}>
+                                   <View style={{ flex: 1 }}>
+                                        <Button
+                                             label={
+                                                  summaryOpen
+                                                       ? "Hide spending breakdown"
+                                                       : "View spending breakdown and goals"
                                              }
-                                        }}
-                                   />
-                              </>
-                         )}
-                    </View>
+                                             onPress={() => {
+                                                  const nextOpen = !summaryOpen;
+                                                  if (nextOpen) {
+                                                       Keyboard.dismiss();
+                                                       input.current?.blur();
+                                                       onDismiss();
+                                                  }
+                                                  setSummaryOpen(nextOpen);
+                                             }}
+                                             style={[
+                                                  styles.summary,
+                                                  summaryOpen &&
+                                                       styles.summaryOpen,
+                                             ]}
+                                        >
+                                             <Text style={styles.currencyIcon}>
+                                                  {currencySymbol(
+                                                       settings.currency,
+                                                  )}
+                                             </Text>
+                                             <Text style={styles.total}>
+                                                  {moneyValue(
+                                                       focused
+                                                            ? Math.max(
+                                                                   0,
+                                                                   (goals[0]
+                                                                        ?.limit ??
+                                                                        0) -
+                                                                        total,
+                                                              )
+                                                            : total,
+                                                  )}
+                                             </Text>
+                                             {focused ? (
+                                                  <Text style={styles.remaining}>
+                                                       spent
+                                                  </Text>
+                                             ) : (
+                                                  (
+                                                       [
+                                                            "food",
+                                                            "transport",
+                                                            "shopping",
+                                                       ] as const
+                                                  ).map((category, index) => (
+                                                       <View
+                                                            key={category}
+                                                            style={styles.mini}
+                                                       >
+                                                            <Text
+                                                                 style={
+                                                                      styles.separator
+                                                                 }
+                                                            >
+                                                                 ·
+                                                            </Text>
+                                                            <JournalGlyph
+                                                                 name={
+                                                                      (
+                                                                           [
+                                                                                "food",
+                                                                                "car",
+                                                                                "bag",
+                                                                           ] as const
+                                                                      )[index]
+                                                                 }
+                                                                 size={11}
+                                                                 color={
+                                                                      (
+                                                                           [
+                                                                                "#EF7899",
+                                                                                "#EBC64F",
+                                                                                Finn.primary,
+                                                                           ] as const
+                                                                      )[index]
+                                                                 }
+                                                            />
+                                                            <Text
+                                                                 style={
+                                                                      styles.miniValue
+                                                                 }
+                                                            >
+                                                                 {Math.round(
+                                                                      categoryTotal(
+                                                                           category,
+                                                                      ) / 100,
+                                                                 )}
+                                                            </Text>
+                                                       </View>
+                                                  ))
+                                             )}
+                                        </Button>
+                                   </View>
+                                   {focused && (
+                                        <>
+                                             <ToolbarButton
+                                                  name="mic"
+                                                  color={Finn.primary}
+                                                  label="Start voice preview"
+                                                  onPress={() =>
+                                                       openTool("voice")
+                                                  }
+                                             />
+                                             <ToolbarButton
+                                                  name="plus"
+                                                  color="#EDB16D"
+                                                  label="Open saved entries"
+                                                  onPress={openSavedEntries}
+                                             />
+                                             <ToolbarButton
+                                                  name="camera"
+                                                  color={Finn.ink}
+                                                  label="Open receipt camera"
+                                                  onPress={() =>
+                                                       openTool("receipt")
+                                                  }
+                                             />
+                                             <ToolbarButton
+                                                  name="keyboard"
+                                                  label={
+                                                       draft.trim()
+                                                            ? "Save note and dismiss keyboard"
+                                                            : "Dismiss keyboard"
+                                                  }
+                                                  onPress={() => {
+                                                       if (draft.trim())
+                                                            onSave();
+                                                       else {
+                                                            input.current?.blur();
+                                                            Keyboard.dismiss();
+                                                            onDismiss();
+                                                       }
+                                                  }}
+                                             />
+                                        </>
+                                   )}
+                              </View>
+                         </>
+                    )}
                </View>
+               <ReceiptCameraSheet
+                    visible={tool === "receipt"}
+                    onClose={() => setTool(null)}
+                    onUsePhoto={(photo) => {
+                         setTool(null);
+                         onReceiptCaptured(photo);
+                    }}
+               />
                <Modal
-                    visible={tool !== null}
+                    visible={tool === "add"}
                     transparent
                     animationType={reduced ? "none" : "fade"}
                     onRequestClose={() => setTool(null)}
@@ -243,11 +308,7 @@ export function JournalComposer({
                          >
                               <View style={styles.menuHeader}>
                                    <Text style={styles.menuTitle}>
-                                        {tool === "add"
-                                             ? "A little easier to remember"
-                                             : tool === "voice"
-                                               ? "Say what happened"
-                                               : "Add a receipt"}
+                                        A little easier to remember
                                    </Text>
                                    <IconButton
                                         name="close"
@@ -255,92 +316,107 @@ export function JournalComposer({
                                         onPress={() => setTool(null)}
                                    />
                               </View>
-                              {tool === "add" ? (
-                                   <>
-                                        {!!draft.trim() && (
-                                             <MenuRow
-                                                  icon="check"
-                                                  title="Save note"
-                                                  detail="Add this note to your journal"
-                                                  onPress={() => {
-                                                       setTool(null);
-                                                       onSave();
-                                                  }}
-                                             />
-                                        )}
-                                        <MenuRow
-                                             icon="bookmark"
-                                             title="Saved entries"
-                                             detail="Your everyday things, one tap away"
-                                             onPress={() => {
-                                                  setTool(null);
-                                                  router.push(
-                                                       "/settings/presets",
-                                                  );
-                                             }}
-                                        />
-                                        <MenuRow
-                                             icon="mic"
-                                             title="Voice note"
-                                             detail="Try a sample voice entry"
-                                             onPress={() => setTool("voice")}
-                                        />
-                                        <MenuRow
-                                             icon="camera"
-                                             title="Receipt"
-                                             detail="Preview a receipt entry"
-                                             onPress={() => setTool("receipt")}
-                                        />
-                                   </>
-                              ) : (
-                                   <>
-                                        <View style={styles.demoIcon}>
-                                             <Icon
-                                                  name={
-                                                       tool === "voice"
-                                                            ? "mic"
-                                                            : "note"
-                                                  }
-                                                  color={Finn.purple}
-                                                  size={30}
-                                             />
-                                        </View>
-                                        <Text style={styles.demoTitle}>
-                                             {tool === "voice"
-                                                  ? "“Coffee on the way to work, 180”"
-                                                  : "Third Wave Coffee\nCappuccino                       ₹180"}
-                                        </Text>
-                                        <Text style={styles.demoHint}>
-                                             {tool === "voice"
-                                                  ? "Voice preview · no audio is recorded"
-                                                  : "Sample receipt · camera access is not needed"}
-                                        </Text>
-                                        <Button
-                                             label="Use sample entry"
-                                             onPress={() =>
-                                                  insert(
-                                                       "Coffee on the way to work 180",
-                                                  )
-                                             }
-                                             style={styles.useSample}
-                                        >
-                                             <Text
-                                                  style={{
-                                                       color: "#fff",
-                                                       fontWeight: "600",
-                                                  }}
-                                             >
-                                                  Use sample entry
-                                             </Text>
-                                        </Button>
-                                   </>
+                              {!!draft.trim() && (
+                                   <MenuRow
+                                        icon="check"
+                                        title="Save note"
+                                        detail="Add this note to your journal"
+                                        onPress={() => {
+                                             setTool(null);
+                                             onSave();
+                                        }}
+                                   />
                               )}
+                              <MenuRow
+                                   icon="mic"
+                                   title="Voice note"
+                                   detail="Try a sample voice entry"
+                                   onPress={() => setTool("voice")}
+                              />
                          </View>
                     </View>
                </Modal>
           </>
      );
 }
+
+function useOfflineQueueStatus() {
+     const network = Network.useNetworkState();
+     const [queuedItemCount, setQueuedItemCount] = useState(0);
+
+     useEffect(
+          () => subscribePendingJournalChangeCount(setQueuedItemCount),
+          [],
+     );
+
+     return {
+          isOffline:
+               network.isConnected === false ||
+               network.isInternetReachable === false,
+          queuedItemCount,
+     };
+}
+
+function OfflineQueueStatus({ queuedItemCount }: { queuedItemCount: number }) {
+     const itemLabel = queuedItemCount === 1 ? "item" : "items";
+
+     return (
+          <View
+               accessible
+               accessibilityLabel={`Offline. ${queuedItemCount} ${itemLabel} queued for syncing.`}
+               accessibilityLiveRegion="polite"
+               style={styles.offlineStatus}
+          >
+               <Icon name="offline" color="#D59A52" size={16} />
+               <Text
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.82}
+                    numberOfLines={1}
+                    style={styles.offlineStatusText}
+               >
+                    Offline · {queuedItemCount} {itemLabel} queued for syncing
+               </Text>
+          </View>
+     );
+}
+
+function VoiceRecordingControls({
+     onConfirm,
+     onCancel,
+}: {
+     onConfirm: () => void;
+     onCancel: () => void;
+}) {
+     return (
+          <View
+               accessibilityLabel="Voice preview recording"
+               accessibilityLiveRegion="polite"
+               style={styles.voiceControls}
+          >
+               <VoiceRecordingWaveform
+                    accessibilityLabel="Animated voice preview"
+                    accessibilityValueText="No audio is recorded"
+                    style={styles.waveformSurface}
+               />
+               <Button
+                    label="Use voice preview"
+                    accessibilityHint="Adds the sample voice entry to the journal"
+                    onPress={onConfirm}
+                    style={styles.voiceAction}
+               >
+                    <Icon name="check" color={Finn.primary} size={20} />
+               </Button>
+               <Button
+                    label="Cancel voice preview"
+                    onPress={onCancel}
+                    style={styles.voiceAction}
+               >
+                    <Icon name="close" color="#EA5D67" size={19} />
+               </Button>
+          </View>
+     );
+}
+
 function ToolbarButton({
      name,
      label,
@@ -373,7 +449,7 @@ function MenuRow({
      return (
           <Button label={title} onPress={onPress} style={styles.menuRow}>
                <View style={styles.menuIcon}>
-                    <Icon name={icon} color={Finn.purple} />
+                    <Icon name={icon} color={Finn.primary} />
                </View>
                <View style={{ flex: 1 }}>
                     <Text style={styles.menuLabel}>{title}</Text>
@@ -388,6 +464,53 @@ const styles = StyleSheet.create({
           paddingTop: 16,
      },
      toolbar: { flexDirection: "row", alignItems: "center", gap: 12 },
+     offlineStatus: {
+          alignItems: "center",
+          alignSelf: "stretch",
+          backgroundColor: "rgba(255,255,255,0.78)",
+          borderColor: "rgba(255,255,255,0.9)",
+          borderRadius: 22,
+          borderWidth: 1,
+          boxShadow: "0px 8px 24px rgba(161, 125, 75, 0.08)",
+          flexDirection: "row",
+          gap: 9,
+          justifyContent: "center",
+          marginBottom: 12,
+          minHeight: 44,
+          paddingHorizontal: 16,
+     },
+     offlineStatusText: {
+          color: "#D59A52",
+          fontFamily: JournalType.medium,
+          fontSize: 13,
+          flexShrink: 1,
+          includeFontPadding: false,
+          lineHeight: 17,
+     },
+     voiceControls: {
+          alignItems: "center",
+          flexDirection: "row",
+          gap: 10,
+     },
+     waveformSurface: {
+          backgroundColor: "rgba(255,255,255,0.92)",
+          borderColor: "rgba(255,255,255,0.96)",
+          borderRadius: 24,
+          borderWidth: 1,
+          boxShadow: "0px 8px 26px rgba(161, 125, 75, 0.11)",
+          flex: 1,
+          height: 48,
+     },
+     voiceAction: {
+          backgroundColor: "rgba(255,255,255,0.94)",
+          borderColor: "rgba(255,255,255,0.98)",
+          borderRadius: 22,
+          borderWidth: 1,
+          boxShadow: "0px 8px 22px rgba(161, 125, 75, 0.11)",
+          height: 44,
+          minHeight: 44,
+          width: 44,
+     },
      toolButton: {
           width: 44,
           height: 44,
@@ -480,7 +603,7 @@ const styles = StyleSheet.create({
      menuIcon: {
           width: 42,
           height: 42,
-          backgroundColor: Finn.purpleSoft,
+          backgroundColor: Finn.primarySoft,
           borderRadius: 14,
           justifyContent: "center",
           alignItems: "center",
@@ -491,7 +614,7 @@ const styles = StyleSheet.create({
           alignSelf: "center",
           padding: 20,
           borderRadius: 30,
-          backgroundColor: Finn.purpleSoft,
+          backgroundColor: Finn.primarySoft,
           margin: 18,
      },
      demoTitle: {
@@ -507,7 +630,7 @@ const styles = StyleSheet.create({
           marginVertical: 20,
      },
      useSample: {
-          backgroundColor: Finn.purple,
+          backgroundColor: Finn.primary,
           borderRadius: 23,
           marginBottom: Platform.OS === "ios" ? 8 : 0,
      },

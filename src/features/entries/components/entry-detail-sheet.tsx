@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
 import {
   AppSheet,
   SectionLabel,
@@ -15,8 +16,10 @@ import { useJournal } from "@/providers/app-providers";
 import type { EntryItem } from "@/types/domain";
 import { entryTotal } from "@/utils/amounts";
 import { TransactionBreakdown } from "./transaction-breakdown";
+import { ReceiptPreview } from "./receipt-preview";
 
 const BANKNOTE_GREEN = "#20C878";
+const REFERENCE_LINK_BLUE = "#5B9EC2";
 
 export default function EntryDetailSheet() {
   const { entryId } = useLocalSearchParams<{ entryId: string }>();
@@ -26,7 +29,7 @@ export default function EntryDetailSheet() {
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState(entry?.note ?? "");
   const [saved, setSaved] = useState(false);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(true);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -78,7 +81,7 @@ export default function EntryDetailSheet() {
             }}
             style={styles.actionRow}
           >
-            <Icon name="edit" size={15} color={Finn.purple} />
+            <Icon name="edit" size={15} color={Finn.primary} />
             <Text style={styles.actionText}>Edit original note</Text>
           </Button>
           <View style={styles.actionDivider} />
@@ -100,7 +103,7 @@ export default function EntryDetailSheet() {
             <Icon
               name={saved ? "check" : "bookmark"}
               size={15}
-              color={Finn.purple}
+              color={Finn.primary}
             />
             <Text style={styles.actionText}>
               {saved ? "Saved" : "Save entry"}
@@ -138,6 +141,8 @@ export default function EntryDetailSheet() {
         </Text>
       )}
 
+      {entry.receipt && <ReceiptPreview receipt={entry.receipt} />}
+
       <View style={[shared.card, styles.amountCard]}>
         <AmountExpression items={entry.items} currency={settings.currency} />
       </View>
@@ -165,7 +170,7 @@ export default function EntryDetailSheet() {
           onPress={() => setEditing(true)}
           style={styles.correct}
         >
-          <Icon name="edit" size={12} color={Finn.purple} />
+          <Icon name="edit" size={12} color={Finn.primary} />
           <Text style={styles.correctText}>Something off? Click to edit</Text>
         </Button>
       </View>
@@ -184,6 +189,7 @@ export default function EntryDetailSheet() {
                 style={[
                   styles.sourceIcon,
                   { backgroundColor: index ? "#EAF8EF" : "#FFF0D6" },
+                  { zIndex: entry.sources.length - index },
                 ]}
               >
                 <Icon
@@ -198,18 +204,42 @@ export default function EntryDetailSheet() {
             {entry.sources.length}{" "}
             {entry.sources.length === 1 ? "source" : "sources"}
           </Text>
-          <Icon name="down" size={13} color={Finn.muted} />
+          <Icon name={sourcesOpen ? "up" : "down"} size={13} color={Finn.muted} />
         </Button>
         {sourcesOpen &&
-          entry.sources.map((source) => (
-            <View key={source.title} style={styles.source}>
-              <Icon name={source.icon} size={17} color={Finn.amber} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sourceTitle}>{source.title}</Text>
-                <Text style={shared.subtle}>{source.detail}</Text>
-              </View>
-            </View>
-          ))}
+          <ScrollView
+            horizontal
+            contentContainerStyle={styles.sourceLinks}
+            showsHorizontalScrollIndicator={false}
+          >
+            {entry.sources.map((source, index) => {
+              const link = sourceWebsite(source, entry.id);
+              const iconColor = index ? BANKNOTE_GREEN : Finn.amber;
+              return (
+                <Button
+                  key={source.title}
+                  accessibilityHint="Opens this reference"
+                  label={link.accessibilityLabel}
+                  onPress={() => {
+                    if (link.url) void Linking.openURL(link.url);
+                  }}
+                  style={styles.sourceLink}
+                >
+                  <View
+                    style={[
+                      styles.sourceLinkIcon,
+                    ]}
+                  >
+                    <Icon name={source.icon} size={13} color={iconColor} />
+                  </View>
+                  <Text numberOfLines={1} style={styles.sourceLinkText}>
+                    {link.label}
+                  </Text>
+                  <Icon name="arrow" size={12} color={Finn.muted} />
+                </Button>
+              );
+            })}
+          </ScrollView>}
       </View>
 
       {deleting && (
@@ -278,6 +308,25 @@ function unitAmountParts(amountMinor: number, currency: string) {
       .map((part) => part.value)
       .join("")
       .trim(),
+  };
+}
+
+function sourceWebsite(
+  source: { icon: "note" | "location"; detail: string },
+  entryId: string,
+) {
+  if (source.icon === "location") {
+    return {
+      accessibilityLabel: `Open ${source.detail} in Google Maps`,
+      label: "maps.google.com",
+      url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(source.detail)}`,
+    };
+  }
+
+  return {
+    accessibilityLabel: "View original entry note",
+    label: `finn.app/entries/${entryId}`,
+    url: Linking.createURL(`entries/${entryId}`),
   };
 }
 
@@ -385,7 +434,7 @@ const styles = StyleSheet.create({
     minHeight: 28,
   },
   correctText: {
-    color: Finn.purple,
+    color: Finn.primary,
     fontFamily: JournalType.medium,
     fontSize: 12,
   },
@@ -404,7 +453,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     height: 28,
     justifyContent: "center",
-    marginRight: -4,
+    marginRight: -10,
     width: 28,
   },
   sourcesCount: {
@@ -413,17 +462,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
-  source: {
-    alignItems: "center",
+  sourceLinks: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 14,
+    gap: 8,
+    marginTop: 9,
+    paddingRight: 4,
   },
-  sourceTitle: {
-    color: Finn.ink,
+  sourceLink: {
+
+    borderColor: "#EEE7E1",
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    maxWidth: "100%",
+    minHeight: 36,
+    paddingHorizontal: 8,
+  },
+  sourceLinkIcon: {
+    alignItems: "center",
+    borderRadius: 12,
+    height: 24,
+    justifyContent: "center",
+    width: 24,
+  },
+  sourceLinkText: {
+    color: REFERENCE_LINK_BLUE,
     fontFamily: JournalType.medium,
     fontSize: 12,
-    marginBottom: 2,
+    maxWidth: 150,
   },
   actionsMenu: {
     marginBottom: 18,

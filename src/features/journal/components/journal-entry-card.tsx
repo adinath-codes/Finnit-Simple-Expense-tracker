@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -23,6 +23,44 @@ import {
   JournalProcessingDots,
   JournalProcessingStatus,
 } from "./journal-processing-status";
+
+export function PendingJournalEntryCard({
+  note,
+  buildResult,
+  onCommit,
+}: {
+  note: string;
+  buildResult: (note: string) => PendingEntryResult;
+  onCommit: (result: PendingEntryResult) => void;
+}) {
+  const processing = useJournalEntryProcessing({
+    draft: note,
+    enabled: false,
+    buildResult,
+    onCommit: (result) => onCommit(result),
+    preserveActivePipeline: true,
+  });
+
+  useEffect(() => {
+    processing.requestManualCommit({ note, dismissKeyboard: false });
+  }, [note, processing.requestManualCommit]);
+
+  return (
+    <View style={styles.row}>
+      <Text style={styles.note}>{note}</Text>
+      <View style={[styles.meta, styles.loader]}>
+        {processing.phase === "typing" ? (
+          <JournalProcessingDots />
+        ) : (
+          <JournalProcessingStatus
+            phase={processing.phase}
+            result={processing.pendingResult}
+          />
+        )}
+      </View>
+    </View>
+  );
+}
 
 export function JournalEntryCard({
   entry,
@@ -158,7 +196,7 @@ export function JournalEntryCard({
           onChangeText={onChangeDraft}
           onSubmitEditing={handleSubmit}
           scrollEnabled={false}
-          selectionColor={Finn.blue}
+          selectionColor={Finn.primary}
           submitBehavior="submit"
           style={[styles.note, styles.input]}
           textAlignVertical="top"

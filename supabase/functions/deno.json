@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window", "dom", "esnext"]
+  },
+  "fmt": { "singleQuote": false, "lineWidth": 100 }
+}

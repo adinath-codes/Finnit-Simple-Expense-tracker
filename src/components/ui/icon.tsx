@@ -12,13 +12,18 @@ export const SymbolAnimationContext = createContext({
   trigger: 0,
 });
 
-export const BLUE_SPARKLE_COLORS = ["#3378DE", "#77B4F4"];
+export const BLUE_SPARKLE_COLORS = [
+  Finn.blueSparkleStart,
+  Finn.blueSparkleEnd,
+];
 
 const names = {
   plus: ["plus", "add"],
   close: ["xmark", "close"],
   chevron: ["chevron.right", "chevron_right"],
   down: ["chevron.down", "keyboard_arrow_down"],
+  up: ["chevron.up", "keyboard_arrow_up"],
+  quantity: ["list.number", "format_list_numbered"],
   back: ["chevron.left", "chevron_left"],
   settings: ["gearshape.fill", "settings"],
   mic: ["mic.fill", "mic"],
@@ -38,6 +43,10 @@ const names = {
   note: ["doc.text", "description"],
   sparkle: ["sparkles", "auto_awesome"],
   camera: ["camera", "photo_camera"],
+  flash: ["bolt.fill", "flash_on"],
+  flashOff: ["bolt.slash.fill", "flash_off"],
+  flipCamera: ["arrow.triangle.2.circlepath.camera", "flip_camera_android"],
+  refresh: ["arrow.counterclockwise", "refresh"],
   trash: ["trash", "delete"],
   moon: ["moon.fill", "dark_mode"],
   clock: ["clock", "schedule"],
@@ -45,6 +54,7 @@ const names = {
   wallet: ["wallet.bifold", "account_balance_wallet"],
   globe: ["globe", "language"],
   arrow: ["arrow.up.right", "north_east"],
+  offline: ["wifi.slash", "wifi_off"],
 } as const;
 export type IconName = keyof typeof names;
 export function Icon({
