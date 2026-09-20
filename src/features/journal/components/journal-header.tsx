@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { ZoomLink } from "@/components/navigation/zoom-link";
 import { Image } from "expo-image";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -20,28 +20,25 @@ export function JournalHeader() {
           />
         </View>
       </View>
-      <Button
+      <ZoomLink href="/calendar"><Button
         label="Choose journal date"
-        onPress={() => router.push("/calendar")}
         style={styles.today}
       >
         <Text style={styles.todayText}>{dayLabel(selectedDate, today)}</Text>
-      </Button>
+      </Button></ZoomLink>
       <View style={[styles.side, styles.actions]}>
-        <Button
+        <ZoomLink href="/search"><Button
           label="Search your journal"
-          onPress={() => router.push("/search")}
           style={styles.settings}
         >
           <Icon name="search" size={18} />
-        </Button>
-        <Button
+        </Button></ZoomLink>
+        <ZoomLink href="/settings"><Button
           label="Open settings"
-          onPress={() => router.push("/settings")}
           style={styles.settings}
         >
           <JournalGlyph name="settings" size={18} />
-        </Button>
+        </Button></ZoomLink>
       </View>
     </View>
   );

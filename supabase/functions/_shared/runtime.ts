@@ -10,7 +10,7 @@ export type Context = {
   db: SupabaseClient;
   admin: SupabaseClient;
 };
-const cors = {
+export const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, apikey, content-type, x-client-info",
@@ -35,7 +35,7 @@ function key(collection: string, legacy: string) {
   const keys = Deno.env.get(collection);
   return keys ? (object(JSON.parse(keys)).default as string) : env(legacy);
 }
-async function authenticate(request: Request): Promise<Context> {
+export async function authenticate(request: Request): Promise<Context> {
   const authorization = request.headers.get("Authorization");
   if (!authorization?.startsWith("Bearer "))
     throw new ApiError(401, "sign_in_required");

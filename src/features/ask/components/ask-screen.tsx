@@ -10,7 +10,10 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
+import { ZoomLink } from "@/components/navigation/zoom-link";
+import { LoadingState } from "@/components/common/loading-state";
+import { ContentFade, Reveal, DisclosureChevron, MotionLayout } from "@/components/ui/motion";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Screen } from "@/components/common/screen";
 import { Button } from "@/components/ui/button";
@@ -38,6 +41,7 @@ const suggestions = [
 ];
 export default function SearchScreen() {
   const { selectedDate } = useJournal();
+  const screenActive = useIsFocused();
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [range, setRange] = useState(() => monthRange(selectedDate));
@@ -146,11 +150,10 @@ export default function SearchScreen() {
           <Text accessibilityRole="header" style={styles.headerTitle}>
             Search
           </Text>
-          <IconButton
+          <ZoomLink href="/settings"><IconButton
             name="settings"
             label="Open settings"
-            onPress={() => router.push("/settings")}
-          />
+          /></ZoomLink>
         </View>
         <KeyboardAvoidingView
           style={styles.safe}
@@ -167,7 +170,7 @@ export default function SearchScreen() {
             maxToRenderPerBatch={6}
             windowSize={7}
             ListHeaderComponent={
-              <>
+              <MotionLayout>
                 <Text style={styles.eyebrow}>YOUR FINANCIAL MEMORY</Text>
                 <Text style={styles.title}>Find a little clarity.</Text>
                 <Text style={styles.subtitle}>
@@ -222,6 +225,7 @@ export default function SearchScreen() {
                   </Button>
                   <Button
                     label="Change search date range"
+                    accessibilityState={{ expanded: custom }}
                     onPress={() => {
                       setStart(activeRange.start_date);
                       setEnd(offsetDay(activeRange.end_date, -1));
@@ -237,7 +241,7 @@ export default function SearchScreen() {
                         activeRange.end_date,
                       )}
                     </Text>
-                    <Icon name="down" size={10} color={Finn.secondary} />
+                    <DisclosureChevron expanded={custom} size={10} color={Finn.secondary} />
                   </Button>
                   <Button
                     label="Next month"
@@ -249,8 +253,7 @@ export default function SearchScreen() {
                     <Icon name="chevron" size={13} />
                   </Button>
                 </View>
-                {custom && (
-                  <View style={styles.datePanel}>
+                <Reveal open={custom} style={styles.datePanel}>
                     <Text style={styles.small}>
                       Choose your first and last day · YYYY-MM-DD.
                     </Text>
@@ -304,19 +307,11 @@ export default function SearchScreen() {
                     >
                       <Text style={styles.action}>Apply dates</Text>
                     </Button>
-                  </View>
+                </Reveal>
+                {search.loading && !result && (
+                  <LoadingState variant="results" label="Looking through your journal…" active={screenActive} />
                 )}
-                {search.loading && (
-                  <View style={styles.loading} accessibilityLiveRegion="polite">
-                    <ActivityIndicator color={Finn.primary} />
-                    <Text style={styles.body}>
-                      Looking through your journal…
-                    </Text>
-                    <Text style={styles.small}>
-                      Finding the answer and the notes behind it.
-                    </Text>
-                  </View>
-                )}
+                {search.loading && !!result && <Text accessibilityLiveRegion="polite" style={styles.small}>Updating your answer…</Text>}
                 {search.error && (
                   <View style={styles.card}>
                     <Text accessibilityRole="alert" style={styles.body}>
@@ -335,13 +330,8 @@ export default function SearchScreen() {
                       </Text>
                       <Text style={styles.small}>Last 90 days</Text>
                     </View>
-                    {search.loadingContexts ? (
-                      <View style={styles.loading}>
-                        <ActivityIndicator color={Finn.primary} />
-                        <Text style={styles.small}>
-                          Finding your recent contexts…
-                        </Text>
-                      </View>
+                    {search.loadingContexts && !search.contexts ? (
+                      <LoadingState variant="contexts" label="Finding your recent contexts…" active={screenActive} />
                     ) : search.contextError ? (
                       <View style={styles.card}>
                         <Icon
@@ -359,7 +349,7 @@ export default function SearchScreen() {
                         </Button>
                       </View>
                     ) : search.contexts?.contexts.length ? (
-                      search.contexts.contexts.map((context, index) => (
+                      <ContentFade>{search.contexts.contexts.map((context, index) => (
                         <Button
                           key={context.id}
                           label={`See ${context.name} spending`}
@@ -416,7 +406,7 @@ export default function SearchScreen() {
                             </Text>
                           )}
                         </Button>
-                      ))
+                      ))}</ContentFade>
                     ) : (
                       <View style={styles.card}>
                         <Icon
@@ -474,7 +464,7 @@ export default function SearchScreen() {
                   </View>
                 )}
                 {plan && (
-                  <>
+                  <ContentFade>
                     <View style={styles.chips}>
                       {filterChips.map(([key, label]) => (
                         <Button
@@ -579,9 +569,9 @@ export default function SearchScreen() {
                         </Text>
                       </View>
                     )}
-                  </>
+                  </ContentFade>
                 )}
-              </>
+              </MotionLayout>
             }
             ListFooterComponent={
               plan ? (
@@ -594,7 +584,7 @@ export default function SearchScreen() {
                   {result?.has_more && !result.stale && (
                     <Button
                       label="Show more matching items"
-                      disabled={search.loadingMore}
+                      disabled={search.loadingMore || search.loading}
                       onPress={() => void search.more()}
                       style={styles.showMore}
                     >

@@ -11,3 +11,7 @@ export async function loadPreferences(): Promise<Partial<Preferences> | null> {
 export async function savePreferences(preferences: Preferences): Promise<void> {
   await AsyncStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(preferences));
 }
+
+export async function clearLegacyPreferences(): Promise<void> {
+  await AsyncStorage.removeItem(SETTINGS_STORAGE_KEY);
+}

@@ -47,6 +47,7 @@ export function createCaptureInput(
   rawText: string,
   currency = "INR",
   selectedDate?: string,
+  approximatePlace?: string | null,
 ): CaptureInput {
   return capture({
     id: randomUUID(),
@@ -55,6 +56,7 @@ export function createCaptureInput(
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     currency,
     selected_date: selectedDate,
+    ...(approximatePlace ? { approximate_place: approximatePlace } : {}),
   });
 }
 /** Keep this input/id when retrying. Resolve ONLY after note and queue are durable. */
@@ -112,7 +114,7 @@ export function subscribePendingJournalChangeCount(
     void listPendingJournalChanges()
       .then((jobs) => {
         if (active) {
-          listener(jobs.filter((job) => job.state === "pending").length);
+          listener(jobs.filter((job) => job.state !== "blocked").length);
         }
       })
       .catch(() => {
@@ -137,7 +139,7 @@ export async function refreshJournal() {
     let query = db
       .from("journal_entries")
       .select(
-        "id,raw_text,original_text,captured_at,occurred_on,timezone,currency,revision,extraction,deleted_at,capture_request",
+        "id,source_type,raw_text,original_text,captured_at,occurred_on,timezone,currency,revision,extraction,deleted_at,capture_request",
       )
       .eq("user_id", userId)
       .order("id")
@@ -147,6 +149,7 @@ export async function refreshJournal() {
     if (error) throw error;
     await changeJournalCache(userId, (cache) => {
       for (const row of data) {
+        if (row.source_type === "receipt") continue;
         if (cache.jobs.some((j) => j.entryId === row.id)) continue;
         const entry = row as unknown as SavedEntry;
         if ((cache.entries[row.id]?.remote?.revision ?? 0) > entry.revision)

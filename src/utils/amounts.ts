@@ -1,5 +1,7 @@
 import type { JournalEntry } from "@/types/domain";
 export function entryTotal(entry: JournalEntry) {
+  if (entry.accountingTotalMinor !== undefined)
+    return entry.accountingTotalMinor;
   return entry.items.reduce(
     (total, item) => total + item.amountMinor * item.quantity,
     0,

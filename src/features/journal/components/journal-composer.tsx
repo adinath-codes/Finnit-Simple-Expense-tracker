@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
      Keyboard,
      Modal,
@@ -9,11 +9,13 @@ import {
      TextInput,
      View,
 } from "react-native";
-import { router } from "expo-router";
+import { useFocusEffect } from "expo-router";
+import { ZoomLink } from "@/components/navigation/zoom-link";
+import type { CameraOrigin } from "@/features/camera/components/receipt-camera-sheet";
 import * as Network from "expo-network";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReducedMotion } from "react-native-reanimated";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { Finn, JournalType } from "@/constants/theme";
@@ -25,14 +27,12 @@ import { SpendingBreakdownCard } from "@/features/summary/components/spending-br
 import { ReceiptCameraSheet } from "@/features/camera/components/receipt-camera-sheet";
 import type { ReceiptPhoto } from "@/types/domain";
 import { subscribePendingJournalChangeCount } from "../services/journal-service";
-import { VoiceRecordingWaveform } from "./voice-recording-waveform";
 
 export function JournalComposer({
      focused,
      draft,
      input,
      onSave,
-     onInsert,
      onReceiptCaptured,
      onDismiss,
      tool,
@@ -42,17 +42,26 @@ export function JournalComposer({
      draft: string;
      input: RefObject<TextInput | null>;
      onSave: () => void;
-     onInsert: (note: string) => void;
      onReceiptCaptured: (photo: ReceiptPhoto) => void;
      onDismiss: () => void;
-     tool: "add" | "voice" | "receipt" | null;
-     setTool: (tool: "add" | "voice" | "receipt" | null) => void;
+     tool: "add" | "receipt" | null;
+     setTool: (tool: "add" | "receipt" | null) => void;
 }) {
-     const { entries, selectedDate, goals, settings } = useJournal();
+     const { entries, selectedDate, goals, settings, syncStatus } = useJournal();
      const insets = useSafeAreaInsets();
      const reduced = useReducedMotion();
      const { isOffline, queuedItemCount } = useOfflineQueueStatus();
      const [summaryOpen, setSummaryOpen] = useState(false);
+     const cameraButton = useRef<View>(null);
+     const [cameraOrigin, setCameraOrigin] = useState<CameraOrigin | null>(null);
+     const [keepToolbar, setKeepToolbar] = useState(false);
+     const receiptOpen = useRef(tool === "receipt");
+     receiptOpen.current = tool === "receipt";
+     useFocusEffect(useCallback(() => {
+          // Keep the native source mounted until the reverse zoom has settled.
+          const timer = setTimeout(() => { if (!receiptOpen.current) setKeepToolbar(false); }, 400);
+          return () => clearTimeout(timer);
+     }, []));
      const dayEntries = entries.filter((entry) => entry.date === selectedDate);
      const total = dayEntries.reduce(
           (sum, entry) => sum + entryTotal(entry),
@@ -66,16 +75,12 @@ export function JournalComposer({
           setTool(next);
      };
      const openSavedEntries = () => {
+          setKeepToolbar(true);
           setSummaryOpen(false);
           Keyboard.dismiss();
           input.current?.blur();
           onDismiss();
-          router.push("/settings/presets");
-     };
-     const insert = (note: string) => {
-          onInsert(note);
-          setTool(null);
-          input.current?.focus();
+
      };
      const categoryTotal = (category: string) =>
           dayEntries.reduce(
@@ -99,30 +104,25 @@ export function JournalComposer({
                     style={[
                          styles.footer,
                          {
-                              paddingHorizontal:
-                                   tool === "voice" ? 16 : focused ? 28 : 36,
+                              paddingHorizontal: focused ? 28 : 36,
                               paddingBottom: 16,
                          },
                     ]}
                >
-                    {tool === "voice" ? (
-                         <VoiceRecordingControls
-                              onConfirm={() =>
-                                   insert("Coffee on the way to work 180")
-                              }
-                              onCancel={() => {
-                                   setTool(null);
-                                   requestAnimationFrame(() =>
-                                        input.current?.focus(),
-                                   );
-                              }}
-                         />
-                    ) : (
-                         <>
+
                               <SpendingBreakdownCard visible={summaryOpen} />
                               {isOffline && (
                                    <OfflineQueueStatus
                                         queuedItemCount={queuedItemCount}
+                                   />
+                              )}
+                              {!isOffline && syncStatus.pending > 0 && (
+                                   <SyncProgressStatus count={syncStatus.pending} />
+                              )}
+                              {syncStatus.blocked > 0 && (
+                                   <SyncIssueStatus
+                                        conflicts={syncStatus.conflicts}
+                                        failed={syncStatus.failed}
                                    />
                               )}
                               <View style={styles.toolbar}>
@@ -226,29 +226,27 @@ export function JournalComposer({
                                              )}
                                         </Button>
                                    </View>
-                                   {focused && (
+                                   {(focused || keepToolbar) && (
                                         <>
-                                             <ToolbarButton
-                                                  name="mic"
-                                                  color={Finn.primary}
-                                                  label="Start voice preview"
-                                                  onPress={() =>
-                                                       openTool("voice")
-                                                  }
-                                             />
-                                             <ToolbarButton
+                                             <ZoomLink href="/settings/presets"><ToolbarButton
                                                   name="plus"
                                                   color="#EDB16D"
                                                   label="Open saved entries"
                                                   onPress={openSavedEntries}
-                                             />
+                                             /></ZoomLink>
                                              <ToolbarButton
+                                                  ref={cameraButton}
                                                   name="camera"
                                                   color={Finn.ink}
                                                   label="Open receipt camera"
-                                                  onPress={() =>
-                                                       openTool("receipt")
-                                                  }
+                                                  onPress={() => {
+                                                       const show = () => { setKeepToolbar(true); openTool("receipt"); };
+                                                       if (!cameraButton.current) { setCameraOrigin(null); show(); return; }
+                                                       cameraButton.current.measureInWindow((x, y, width, height) => {
+                                                            setCameraOrigin(width && height ? { x, y, width, height } : null);
+                                                            show();
+                                                       });
+                                                  }}
                                              />
                                              <ToolbarButton
                                                   name="keyboard"
@@ -270,11 +268,12 @@ export function JournalComposer({
                                         </>
                                    )}
                               </View>
-                         </>
-                    )}
+
                </View>
                <ReceiptCameraSheet
                     visible={tool === "receipt"}
+                    origin={cameraOrigin}
+                    onDismissed={() => setKeepToolbar(false)}
                     onClose={() => setTool(null)}
                     onUsePhoto={(photo) => {
                          setTool(null);
@@ -327,12 +326,6 @@ export function JournalComposer({
                                         }}
                                    />
                               )}
-                              <MenuRow
-                                   icon="mic"
-                                   title="Voice note"
-                                   detail="Try a sample voice entry"
-                                   onPress={() => setTool("voice")}
-                              />
                          </View>
                     </View>
                </Modal>
@@ -380,60 +373,50 @@ function OfflineQueueStatus({ queuedItemCount }: { queuedItemCount: number }) {
      );
 }
 
-function VoiceRecordingControls({
-     onConfirm,
-     onCancel,
-}: {
-     onConfirm: () => void;
-     onCancel: () => void;
-}) {
+function SyncProgressStatus({ count }: { count: number }) {
+     const changeLabel = count === 1 ? "change" : "changes";
      return (
-          <View
-               accessibilityLabel="Voice preview recording"
-               accessibilityLiveRegion="polite"
-               style={styles.voiceControls}
-          >
-               <VoiceRecordingWaveform
-                    accessibilityLabel="Animated voice preview"
-                    accessibilityValueText="No audio is recorded"
-                    style={styles.waveformSurface}
-               />
-               <Button
-                    label="Use voice preview"
-                    accessibilityHint="Adds the sample voice entry to the journal"
-                    onPress={onConfirm}
-                    style={styles.voiceAction}
-               >
-                    <Icon name="check" color={Finn.primary} size={20} />
-               </Button>
-               <Button
-                    label="Cancel voice preview"
-                    onPress={onCancel}
-                    style={styles.voiceAction}
-               >
-                    <Icon name="close" color="#EA5D67" size={19} />
-               </Button>
+          <View accessible accessibilityLiveRegion="polite" style={styles.offlineStatus}>
+               <Icon name="refresh" color={Finn.muted} size={16} />
+               <Text style={[styles.offlineStatusText, styles.syncProgressText]}>
+                    {count} journal {changeLabel} waiting to sync
+               </Text>
           </View>
      );
 }
 
-function ToolbarButton({
-     name,
-     label,
-     onPress,
-     color = Finn.ink,
+function SyncIssueStatus({
+     failed,
+     conflicts,
 }: {
-     name: JournalGlyphName;
-     label: string;
-     onPress: () => void;
-     color?: string;
+     failed: number;
+     conflicts: number;
 }) {
+     const parts = [
+          conflicts > 0
+               ? `${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"} to resolve`
+               : null,
+          failed > 0
+               ? `${failed} failed ${failed === 1 ? "change" : "changes"} to retry`
+               : null,
+     ].filter(Boolean);
      return (
-          <Button label={label} onPress={onPress} style={styles.toolButton}>
-               <JournalGlyph name={name} color={color} size={20} />
-          </Button>
+          <View accessible accessibilityLiveRegion="polite" style={[styles.offlineStatus, styles.syncIssueStatus]}>
+               <Icon name="offline" color={Finn.danger} size={16} />
+               <Text style={[styles.offlineStatusText, { color: Finn.danger }]}>
+                    {parts.join(" · ")}
+               </Text>
+          </View>
      );
 }
+
+const ToolbarButton = forwardRef<View, Omit<ButtonProps, "children"> & {
+     name: JournalGlyphName; color?: string;
+}>(function ToolbarButton({ name, color = Finn.ink, ...props }, ref) {
+     return <Button {...props} ref={ref} style={styles.toolButton}>
+          <JournalGlyph name={name} color={color} size={20} />
+     </Button>;
+});
 
 function MenuRow({
      icon,
@@ -487,30 +470,8 @@ const styles = StyleSheet.create({
           includeFontPadding: false,
           lineHeight: 17,
      },
-     voiceControls: {
-          alignItems: "center",
-          flexDirection: "row",
-          gap: 10,
-     },
-     waveformSurface: {
-          backgroundColor: "rgba(255,255,255,0.92)",
-          borderColor: "rgba(255,255,255,0.96)",
-          borderRadius: 24,
-          borderWidth: 1,
-          boxShadow: "0px 8px 26px rgba(161, 125, 75, 0.11)",
-          flex: 1,
-          height: 48,
-     },
-     voiceAction: {
-          backgroundColor: "rgba(255,255,255,0.94)",
-          borderColor: "rgba(255,255,255,0.98)",
-          borderRadius: 22,
-          borderWidth: 1,
-          boxShadow: "0px 8px 22px rgba(161, 125, 75, 0.11)",
-          height: 44,
-          minHeight: 44,
-          width: 44,
-     },
+     syncIssueStatus: { backgroundColor: "rgba(255,244,242,0.92)" },
+     syncProgressText: { color: Finn.muted },
      toolButton: {
           width: 44,
           height: 44,

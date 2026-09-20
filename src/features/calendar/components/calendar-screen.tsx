@@ -1,3 +1,5 @@
+import { ContentFade } from "@/components/ui/motion";
+import { Motion } from "@/constants/motion";
 import { useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -32,7 +34,7 @@ export default function CalendarScreen() {
             label="Previous month"
             onPress={() => setMonth((current) => moveMonth(current, -1))}
           />
-          <Text style={styles.month}>{calendar.label}</Text>
+          <ContentFade key={calendar.label} duration={Motion.month}><Text style={styles.month}>{calendar.label}</Text></ContentFade>
           <IconButton
             name="chevron"
             label="Next month"
@@ -41,13 +43,13 @@ export default function CalendarScreen() {
             onPress={() => setMonth((current) => moveMonth(current, 1))}
           />
         </View>
-        <View style={[shared.card, styles.calendarCard]}>
+        <ContentFade key={calendar.label} duration={Motion.month} style={[shared.card, styles.calendarCard]}>
           <CalendarGrid
             calendar={calendar}
             currency={settings.currency}
             onSelect={setSelectedDate}
           />
-        </View>
+        </ContentFade>
         <CalendarSpendingChart
           categoryTotals={calendar.categoryTotals}
           currency={settings.currency}

@@ -550,7 +550,9 @@ Potential line items:
 
 Then creates a journal entry.
 
-The receipt image should remain attached to the entry.
+The receipt image is a transient parsing input. Keep it locally only until
+extraction succeeds; persist the extracted text and structured financial data,
+not the image.
 
 Do not build the entire application around OCR.
 
@@ -964,7 +966,7 @@ Possible entities:
   * text
   * receipt
   * voice
-* receipt_attachment
+* receipt_extraction
 * AI processing status
 * metadata/context
 
@@ -1458,12 +1460,12 @@ The journal may create:
 > ₹780 · Food & Drinks
 > 3 items
 
-and preserve the receipt image as an attachment.
+and preserve the extracted receipt text and structured values.
 
 If extraction confidence is poor:
 
 * never fabricate details
-* preserve the image
+* preserve the locally queued image until retry or manual correction succeeds
 * extract only what is reasonably certain
 * make correction easy
 
@@ -1891,7 +1893,7 @@ Before considering MVP V1 complete, verify:
 * [ ] Quantity extraction
 * [ ] Optional location context
 * [ ] Location permission/settings
-* [ ] Receipt photo capture/upload
+* [ ] Receipt photo capture/transient parsing
 * [ ] Receipt information extraction
 * [ ] Local caching
 * [ ] Offline capture

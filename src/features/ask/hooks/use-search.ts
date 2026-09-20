@@ -133,7 +133,18 @@ export function useSearch() {
   }, []);
   const run = useCallback(
     async (input: SearchInput) => {
+      // Keep an existing answer visible only when refreshing the same request.
+      // A different question must never display the previous question's totals.
+      const sameRequest = JSON.stringify(lastInput.current) === JSON.stringify(input);
+      const sameFilters = "filters" in input &&
+        JSON.stringify(resultRef.current?.applied_filters) === JSON.stringify(input.filters);
+      const previous = sameRequest || sameFilters ? resultRef.current : null;
       reset();
+      if (previous) {
+        const retained = previous;
+        setResult(retained);
+        resultRef.current = retained;
+      }
       lastInput.current = input;
       if (!isBackendConfigured()) {
         setError(
@@ -178,6 +189,8 @@ export function useSearch() {
     const current = resultRef.current;
     if (
       moreBusy.current ||
+      current?.stale ||
+      loading ||
       !current?.next_cursor ||
       !current.applied_filters ||
       !current.revision ||
@@ -224,7 +237,7 @@ export function useSearch() {
         moreBusy.current = false;
       }
     }
-  }, [userId]);
+  }, [userId, loading]);
   return {
     contexts,
     result,

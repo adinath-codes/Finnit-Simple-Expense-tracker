@@ -2,8 +2,15 @@ import type {
   CaptureInput,
   Catalog,
   Extraction,
+  ReceiptAttachment,
+  ReceiptCorrectionInput,
+  ReceiptLine,
+  ManualReceiptInput,
+  ReceiptScanRequest,
+  ReceiptScanStatus,
   SavedEntry,
 } from "@/lib/supabase/database.types";
+import type { Goal, Preferences, Preset } from "@/types/domain";
 export type CorrectionInput = {
   action: "correct";
   operation_id: string;
@@ -18,13 +25,31 @@ export type DeleteInput = {
   id: string;
   expected_revision: number;
 };
+export type SettingsSyncInput = { settings: Preferences };
+export type PresetSyncInput = { preset: Preset };
+export type PresetDeleteInput = { presetId: string };
 export type SyncJob = {
   id: string;
   userId: string;
   entryId: string;
-  endpoint: "parse-entry" | "correct-entry";
-  payload: CaptureInput | CorrectionInput | DeleteInput;
-  state: "pending" | "blocked";
+  endpoint:
+    | "parse-entry"
+    | "correct-entry"
+    | "scan-receipt"
+    | "sync-settings"
+    | "sync-preset"
+    | "delete-preset";
+  payload:
+    | CaptureInput
+    | CorrectionInput
+    | ReceiptCorrectionInput
+    | ManualReceiptInput
+    | DeleteInput
+    | SettingsSyncInput
+    | PresetSyncInput
+    | PresetDeleteInput
+    | ReceiptScanRequest;
+  state: "pending" | "running" | "blocked";
   attempts: number;
   nextAttemptAt: number;
   error?: string;
@@ -36,9 +61,30 @@ export type CachedEntry = {
   sync: "pending" | "synced" | "blocked";
   deleted?: boolean;
 };
+export type CachedReceipt = {
+  request: ReceiptScanRequest;
+  localUri?: string;
+  width: number;
+  height: number;
+  prepared: boolean;
+  status: ReceiptScanStatus;
+  lines: ReceiptLine[];
+  attachment?: ReceiptAttachment;
+  remote?: SavedEntry;
+  deleted?: boolean;
+  error?: string;
+};
 export type JournalCache = {
-  version: 1;
+  version: 2;
   entries: Record<string, CachedEntry>;
+  receipts: Record<string, CachedReceipt>;
   jobs: SyncJob[];
   catalog?: Catalog;
+  local: {
+    settings: Preferences;
+    presets: Preset[];
+    goals: Goal[];
+    settingsInitialized: boolean;
+    legacyPreferencesImported: boolean;
+  };
 };

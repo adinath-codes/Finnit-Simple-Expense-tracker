@@ -3,55 +3,313 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type PropsWithChildren,
 } from "react";
-import { loadJournalFixture } from "@/storage/journal-repository";
+import { AppState } from "react-native";
+import { createEmptyJournal } from "@/storage/journal-repository";
 import {
+  clearLegacyPreferences,
   loadPreferences,
   savePreferences,
 } from "@/storage/preferences-storage";
 import { loadOnboardingSnapshot } from "@/storage/onboarding-repository";
 import type { JournalEntry, Preferences, Preset } from "@/types/domain";
+import type { JournalCache } from "@/types/sync";
+import { useSession } from "@/features/auth/providers/session-provider";
+import {
+  captureJournalNote,
+  createCaptureInput,
+  refreshJournal,
+  refreshJournalCatalog,
+} from "@/features/journal/services/journal-service";
+import {
+  correctedTextExtraction,
+  journalEntriesFromCache,
+} from "@/features/journal/services/journal-adapter";
+import {
+  deleteJournalEntry,
+  correctJournalEntry,
+} from "@/features/entries/services/entries-service";
+import {
+  deleteReceipt,
+  correctReceiptEntry,
+  refreshRemoteReceipts,
+  recoverPreparingReceipts,
+} from "@/features/camera/services/receipt-service";
+import {
+  deletePresetForAccount,
+  refreshPresetsForAccount,
+  savePresetForAccount,
+} from "@/features/presets/services/presets-service";
+import { capturePreset as capturePresetEntry } from "@/features/presets/services/preset-capture-service";
+import {
+  initializeAccountSettings,
+  refreshSettingsForAccount,
+  saveSettingsForAccount,
+  updateGoalForAccount,
+} from "@/features/settings/services/settings-service";
+import { readJournalCache, subscribeJournalCache } from "@/lib/offline/database";
+import { startJournalSync } from "@/lib/offline/sync-queue";
+import { captureApproximatePlace } from "@/services/location-service";
+import {
+  acceptRemoteEntryVersion,
+  keepLocalEntryVersion,
+  retryEntrySync,
+} from "@/features/journal/services/sync-recovery-service";
 
-function useMockJournal() {
-  const [seed] = useState(loadJournalFixture);
-  const [goals, setGoals] = useState(seed.goals);
-  const [entries, setEntries] = useState(seed.entries);
-  const [presets, setPresets] = useState(seed.presets);
-  const [settings, setSettings] = useState(seed.settings);
-  const [settingsReady, setSettingsReady] = useState(false);
+function errorMessage(error: unknown) {
+  if (!(error instanceof Error)) return "Couldn’t save that change on this device.";
+  return error.message
+    .replaceAll("_", " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function useJournalState() {
+  const { session } = useSession();
+  const [seed] = useState(createEmptyJournal);
+  const [cache, setCache] = useState<JournalCache | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [preAuthSettings, setPreAuthSettings] = useState(seed.settings);
+  const [settingsBootstrapReady, setSettingsBootstrapReady] = useState(false);
   const [selectedDate, setSelectedDate] = useState(seed.today);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     void Promise.all([loadPreferences(), loadOnboardingSnapshot()])
       .then(([preferences, onboarding]) => {
         if (!active) return;
-        setSettings((current) => ({
-          ...current,
-          ...preferences,
+        setPreAuthSettings({
+          ...seed.settings,
           ...(onboarding.completedAt && onboarding.answers.currency
             ? { currency: onboarding.answers.currency }
             : {}),
-        }));
+          ...preferences,
+        });
       })
       .catch(() => undefined)
       .finally(() => {
-        if (active) setSettingsReady(true);
+        if (active) setSettingsBootstrapReady(true);
       });
+    return () => { active = false; };
+  }, [seed.settings]);
+
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) {
+      setCache(null);
+      setOwnerId(null);
+      setMutationError(null);
+      return;
+    }
+
+    let active = true;
+    let lastRefresh = 0;
+    let unsubscribeCache: () => void = () => undefined;
+    let stopSync: () => void = () => undefined;
+    const load = async () => {
+      const next = await readJournalCache(userId);
+      if (active) {
+        setCache(next);
+        setOwnerId(userId);
+      }
+    };
+    const refreshAll = () => {
+      lastRefresh = Date.now();
+      void Promise.allSettled([
+        refreshJournal(),
+        refreshJournalCatalog(),
+        refreshRemoteReceipts(),
+        recoverPreparingReceipts(),
+        refreshSettingsForAccount(userId),
+        refreshPresetsForAccount(userId),
+      ]);
+    };
+
+    setCache(null);
+    setOwnerId(null);
+    void Promise.all([loadPreferences(), loadOnboardingSnapshot()])
+      .then(([legacy, onboarding]) =>
+        initializeAccountSettings(
+          userId,
+          legacy,
+          onboarding.completedAt ? onboarding.answers.currency : undefined,
+        ).then(() => legacy ? clearLegacyPreferences() : undefined),
+      )
+      .then(load)
+      .then(async () => {
+        await Promise.allSettled([
+          refreshSettingsForAccount(userId),
+          refreshPresetsForAccount(userId),
+        ]);
+      })
+      .then(load)
+      .then(() => {
+        if (!active) return;
+        unsubscribeCache = subscribeJournalCache(() => { void load(); }, userId);
+        stopSync = startJournalSync();
+        refreshAll();
+      })
+      .catch((error) => {
+        if (active) setMutationError(errorMessage(error));
+      });
+
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state === "active" && Date.now() - lastRefresh > 15_000) refreshAll();
+    });
     return () => {
       active = false;
+      unsubscribeCache();
+      stopSync();
+      appState.remove();
     };
+  }, [session?.user.id]);
+
+  const ownedCache = ownerId === session?.user.id ? cache : null;
+  const entries = useMemo(
+    () => ownedCache ? journalEntriesFromCache(ownedCache) : [],
+    [ownedCache],
+  );
+  const settings = ownedCache?.local.settings ?? preAuthSettings;
+  const presets = ownedCache?.local.presets ?? [];
+  const goals = ownedCache?.local.goals ?? [];
+  const settingsReady = settingsBootstrapReady && (!session || !!ownedCache);
+
+  const runMutation = useCallback(async <T,>(operation: () => Promise<T>) => {
+    setMutationError(null);
+    try {
+      return await operation();
+    } catch (error) {
+      setMutationError(errorMessage(error));
+      throw error;
+    }
   }, []);
 
-  const updateSettings = useCallback((patch: Partial<Preferences>) => {
-    setSettings((current) => {
-      const next = { ...current, ...patch };
-      void savePreferences(next).catch(() => undefined);
-      return next;
-    });
-  }, []);
+  const captureNote = useCallback((note: string, date: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before saving this note.");
+      const approximatePlace = settings.location
+        ? await captureApproximatePlace()
+        : null;
+      const input = createCaptureInput(
+        note.trim(),
+        settings.currency,
+        date,
+        approximatePlace,
+      );
+      await captureJournalNote(input);
+      return input.id;
+    }), [runMutation, session, settings.currency, settings.location]);
+
+  const capturePreset = useCallback((preset: Preset, date: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before using a saved entry.");
+      return capturePresetEntry(preset, date, settings.currency);
+    }), [runMutation, session, settings.currency]);
+
+  const updateEntry = useCallback((entry: JournalEntry) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before changing this entry.");
+      if (entry.receipt) return correctReceiptEntry(entry);
+      const currentCache = await readJournalCache(session.user.id);
+      const current = currentCache.entries[entry.id];
+      if (!current) throw new Error("This journal entry is no longer available.");
+      if (!current.remote) {
+        throw new Error("This note is saved. Let its first sync finish before editing it.");
+      }
+      const input = { ...current.input, raw_text: entry.note.trim() };
+      await correctJournalEntry(input, correctedTextExtraction(current, entry));
+    }), [runMutation, session]);
+
+  const deleteEntry = useCallback((id: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before removing this entry.");
+      const currentCache = await readJournalCache(session.user.id);
+      if (currentCache.receipts[id]) return deleteReceipt(id);
+      if (!currentCache.entries[id]?.remote) {
+        throw new Error("This note is saved. Let its first sync finish before removing it.");
+      }
+      await deleteJournalEntry(id);
+    }), [runMutation, session]);
+
+  const savePreset = useCallback((preset: Preset) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before saving this shortcut.");
+      await savePresetForAccount(session.user.id, preset);
+    }), [runMutation, session]);
+
+  const deletePreset = useCallback((id: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before removing this shortcut.");
+      await deletePresetForAccount(session.user.id, id);
+    }), [runMutation, session]);
+
+  const updateSettings = useCallback((patch: Partial<Preferences>) =>
+    runMutation(async () => {
+      const next = { ...settings, ...patch };
+      if (session) await saveSettingsForAccount(session.user.id, next);
+      else {
+        await savePreferences(next);
+        setPreAuthSettings(next);
+      }
+    }), [runMutation, session, settings]);
+
+  const updateGoal = useCallback((id: string, limit: number) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before changing a goal.");
+      await updateGoalForAccount(session.user.id, id, limit);
+    }), [runMutation, session]);
+
+  const retrySync = useCallback((entryId: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before retrying this sync.");
+      await retryEntrySync(entryId);
+    }), [runMutation, session]);
+
+  const keepLocalVersion = useCallback((entryId: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before resolving this conflict.");
+      await keepLocalEntryVersion(entryId);
+    }), [runMutation, session]);
+
+  const acceptRemoteVersion = useCallback((entryId: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before resolving this conflict.");
+      await acceptRemoteEntryVersion(entryId);
+    }), [runMutation, session]);
+
+  const syncStatus = useMemo(() => {
+    const journalJobs = ownedCache?.jobs.filter((job) =>
+      job.endpoint === "parse-entry" ||
+      job.endpoint === "correct-entry" ||
+      job.endpoint === "scan-receipt",
+    ) ?? [];
+    const conflicts = journalJobs.filter((job) =>
+      job.state === "blocked" && job.endpoint === "correct-entry" &&
+      job.error === "revision_or_idempotency_conflict",
+    ).length;
+    const failedJobs = journalJobs.filter((job) =>
+      job.state === "blocked" && !(job.endpoint === "correct-entry" &&
+        job.error === "revision_or_idempotency_conflict"),
+    ).length;
+    const failedReceipts =
+      (ownedCache
+        ? Object.values(ownedCache.receipts).filter(
+            (receipt) =>
+              !receipt.deleted &&
+              receipt.status === "failed" &&
+              !ownedCache.jobs.some((job) => job.entryId === receipt.request.entry_id),
+          ).length
+        : 0);
+    return {
+      pending: journalJobs.filter((job) => job.state !== "blocked").length,
+      failed: failedJobs + failedReceipts,
+      conflicts,
+      blocked: failedJobs + failedReceipts + conflicts,
+    };
+  }, [ownedCache]);
 
   return {
     ...seed,
@@ -61,40 +319,34 @@ function useMockJournal() {
     settingsReady,
     goals,
     selectedDate,
+    syncStatus,
+    mutationError,
+    clearMutationError: () => setMutationError(null),
     setSelectedDate,
-    updateGoal: (id: string, limit: number) =>
-      setGoals((current) =>
-        current.map((goal) => (goal.id === id ? { ...goal, limit } : goal)),
-      ),
-    addEntry: (entry: JournalEntry) =>
-      setEntries((current) => [...current, entry]),
-    updateEntry: (entry: JournalEntry) =>
-      setEntries((current) =>
-        current.map((item) => (item.id === entry.id ? entry : item)),
-      ),
-    deleteEntry: (id: string) =>
-      setEntries((current) => current.filter((item) => item.id !== id)),
-    savePreset: (preset: Preset) =>
-      setPresets((current) =>
-        current.some((item) => item.id === preset.id)
-          ? current.map((item) => (item.id === preset.id ? preset : item))
-          : [...current, preset],
-      ),
-    deletePreset: (id: string) =>
-      setPresets((current) => current.filter((item) => item.id !== id)),
+    updateGoal,
+    captureNote,
+    capturePreset,
+    updateEntry,
+    deleteEntry,
+    savePreset,
+    deletePreset,
     updateSettings,
+    retrySync,
+    keepLocalVersion,
+    acceptRemoteVersion,
   };
 }
-const JournalContext = createContext<ReturnType<typeof useMockJournal> | null>(
-  null,
-);
+
+const JournalContext = createContext<ReturnType<typeof useJournalState> | null>(null);
+
 export function AppProviders({ children }: PropsWithChildren) {
   return (
-    <JournalContext.Provider value={useMockJournal()}>
+    <JournalContext.Provider value={useJournalState()}>
       {children}
     </JournalContext.Provider>
   );
 }
+
 export function useJournal() {
   const context = useContext(JournalContext);
   if (!context) throw new Error("useJournal must be used within AppProviders");

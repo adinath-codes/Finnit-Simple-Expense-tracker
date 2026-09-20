@@ -1,3 +1,5 @@
+import { LoadingState } from "@/components/common/loading-state";
+import { ContentFade } from "@/components/ui/motion";
 import { useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -15,12 +17,13 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
-import { amountFromNote } from "@/utils/amounts";
 
 export default function QuickCaptureScreen() {
-  const { addEntry, setSelectedDate, settings, settingsReady, today } =
+  const { captureNote, setSelectedDate, settings, settingsReady, today } =
     useJournal();
   const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const input = useRef<TextInput>(null);
   const available = Platform.OS === "ios" && settings.backTapQuickAdd;
 
@@ -34,47 +37,26 @@ export default function QuickCaptureScreen() {
     return () => clearTimeout(focusTimer);
   }, [available, settingsReady]);
 
-  const save = () => {
+  const save = async () => {
     const trimmedNote = note.trim();
-    if (!trimmedNote) return;
-    const id = `quick-note-${Date.now()}`;
-    const amount = amountFromNote(trimmedNote);
-    addEntry({
-      id,
-      date: today,
-      note: trimmedNote,
-      merchant: "Quick note",
-      category: "other",
-      status: amount ? "ready" : "review",
-      time: "Just now",
-      items: [
-        {
-          id: `${id}-item`,
-          name: trimmedNote,
-          quantity: 1,
-          amountMinor: amount,
-          category: "other",
-        },
-      ],
-      thought: amount
-        ? "Saved from Back Tap. The amount at the end of your note was added locally."
-        : "Saved from Back Tap. Add an amount in the entry details whenever you’re ready.",
-      sources: [
-        {
-          title: "Back Tap quick note",
-          detail: trimmedNote,
-          icon: "note",
-        },
-      ],
-    });
-    setSelectedDate(today);
-    router.replace("/");
+    if (!trimmedNote || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await captureNote(trimmedNote, today);
+      setSelectedDate(today);
+      router.replace("/");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Couldn’t save this note on your device.");
+      setSaving(false);
+    }
   };
 
-  if (!settingsReady || !available) return <View style={styles.loading} />;
+  if (!settingsReady) return <LoadingState variant="capture" label="Getting your note ready…" />;
+  if (!available) return <View style={styles.loading} />;
 
   return (
-    <Screen journal>
+    <ContentFade style={{ flex: 1 }}><Screen journal>
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
         <KeyboardAvoidingView
           style={styles.keyboardView}
@@ -121,17 +103,22 @@ export default function QuickCaptureScreen() {
             </Button>
             <Button
               label="Save expense note"
-              disabled={!note.trim()}
-              onPress={save}
+              disabled={!note.trim() || saving}
+              onPress={() => void save()}
               style={styles.saveButton}
             >
-              <Text style={styles.saveText}>Save note</Text>
+              <Text style={styles.saveText}>{saving ? "Saving…" : "Save note"}</Text>
               <Icon name="send" color="#FFFFFF" size={16} />
             </Button>
           </View>
+          {saveError && (
+            <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+              {saveError}
+            </Text>
+          )}
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </Screen>
+    </Screen></ContentFade>
   );
 }
 
@@ -217,5 +204,13 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontFamily: JournalType.medium,
     fontSize: 15,
+  },
+  errorText: {
+    color: Finn.danger,
+    fontFamily: JournalType.regular,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
+    textAlign: "center",
   },
 });

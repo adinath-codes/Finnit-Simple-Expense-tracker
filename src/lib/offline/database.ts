@@ -1,19 +1,25 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { JournalCache } from "@/types/sync";
+import {
+  emptyJournalCache,
+  journalCacheKey,
+  legacyJournalCacheKey,
+  normalizeJournalCache,
+} from "./cache-schema";
 
 // One document per account makes local entry + outbox changes a single durable
 // write. Never acknowledge a note until setItem succeeds. This is not encryption.
 const locks = new Map<string, Promise<unknown>>();
-const listeners = new Set<() => void>();
-const key = (userId: string) => `finn.journal.v1.${userId}`;
-const empty = (): JournalCache => ({ version: 1, entries: {}, jobs: [] });
+const listeners = new Set<{ userId?: string; listener: () => void }>();
 async function read(userId: string): Promise<JournalCache> {
-  const raw = await AsyncStorage.getItem(key(userId));
-  if (!raw) return empty();
-  const cache = JSON.parse(raw) as JournalCache;
-  if (cache.version !== 1 || !cache.entries || !Array.isArray(cache.jobs))
-    throw new Error("Journal cache requires recovery.");
-  return cache;
+  const current = await AsyncStorage.getItem(journalCacheKey(userId));
+  if (current) return normalizeJournalCache(JSON.parse(current));
+  const legacy = await AsyncStorage.getItem(legacyJournalCacheKey(userId));
+  if (!legacy) return emptyJournalCache();
+  const migrated = normalizeJournalCache(JSON.parse(legacy));
+  await AsyncStorage.setItem(journalCacheKey(userId), JSON.stringify(migrated));
+  await AsyncStorage.removeItem(legacyJournalCacheKey(userId));
+  return migrated;
 }
 export async function readJournalCache(userId: string) {
   await locks.get(userId)?.catch(() => undefined);
@@ -21,8 +27,22 @@ export async function readJournalCache(userId: string) {
 }
 export async function deleteJournalCache(userId: string) {
   await locks.get(userId)?.catch(() => undefined);
-  await AsyncStorage.removeItem(key(userId));
-  for (const listener of listeners) listener();
+  await AsyncStorage.multiRemove([
+    journalCacheKey(userId),
+    legacyJournalCacheKey(userId),
+  ]);
+  notify(userId);
+}
+
+function notify(userId: string) {
+  for (const subscription of listeners) {
+    if (subscription.userId && subscription.userId !== userId) continue;
+    try {
+      subscription.listener();
+    } catch {
+      /* Cache deletion is authoritative even if a subscriber fails. */
+    }
+  }
 }
 export function changeJournalCache<T>(
   userId: string,
@@ -33,10 +53,11 @@ export function changeJournalCache<T>(
     .then(async () => {
       const cache = await read(userId);
       const result = change(cache);
-      await AsyncStorage.setItem(key(userId), JSON.stringify(cache));
-      for (const listener of listeners) {
+      await AsyncStorage.setItem(journalCacheKey(userId), JSON.stringify(cache));
+      for (const subscription of listeners) {
+        if (subscription.userId && subscription.userId !== userId) continue;
         try {
-          listener();
+          subscription.listener();
         } catch {
           /* A subscriber cannot undo a durable save. */
         }
@@ -51,9 +72,10 @@ export function changeJournalCache<T>(
     .catch(() => undefined);
   return pending;
 }
-export function subscribeJournalCache(listener: () => void) {
-  listeners.add(listener);
+export function subscribeJournalCache(listener: () => void, userId?: string) {
+  const subscription = { userId, listener };
+  listeners.add(subscription);
   return () => {
-    listeners.delete(listener);
+    listeners.delete(subscription);
   };
 }

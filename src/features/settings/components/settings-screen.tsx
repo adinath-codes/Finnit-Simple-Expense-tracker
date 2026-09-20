@@ -1,3 +1,5 @@
+import { ZoomLink } from "@/components/navigation/zoom-link";
+import type { Href } from "expo-router";
 import { useState, type ReactNode } from "react";
 import { Alert, Platform, StyleSheet, Switch, Text, View } from "react-native";
 import { router } from "expo-router";
@@ -14,13 +16,11 @@ import {
 import {
   clearOnboardingSnapshot,
 } from "@/storage/onboarding-repository";
-
-const CURRENCIES = [
-  { code: "INR", label: "Indian Rupee", symbol: "₹" },
-  { code: "USD", label: "US Dollar", symbol: "$" },
-  { code: "EUR", label: "Euro", symbol: "€" },
-  { code: "GBP", label: "British Pound", symbol: "£" },
-] as const;
+import { useLocationSetting } from "./location-setting";
+import {
+  CurrencyPicker,
+  currencyDisplay,
+} from "@/components/forms/currency-picker";
 
 const FREQUENCIES = ["Every evening", "Twice a day", "Weekdays only"];
 const TIMES = ["7:00 PM", "8:00 PM", "9:00 PM", "10:00 PM"];
@@ -28,17 +28,27 @@ const TIMES = ["7:00 PM", "8:00 PM", "9:00 PM", "10:00 PM"];
 type Picker = "frequency" | "time" | "currency" | null;
 
 export default function SettingsScreen() {
-  const { presets, settings, updateSettings } = useJournal();
+  const {
+    presets,
+    settings,
+    updateSettings,
+    mutationError,
+    clearMutationError,
+  } = useJournal();
   const { session, setOnboardingComplete } = useSession();
   const [picker, setPicker] = useState<Picker>(null);
   const [accountBusy, setAccountBusy] = useState<"sign-out" | "delete" | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
-  const selectedCurrency =
-    CURRENCIES.find(({ code }) => code === settings.currency) ?? CURRENCIES[0];
 
   const togglePicker = (next: Exclude<Picker, null>) => {
     setPicker((current) => (current === next ? null : next));
   };
+  const applySettings = (patch: Parameters<typeof updateSettings>[0]) =>
+    updateSettings(patch);
+  const location = useLocationSetting(
+    settings.location,
+    (enabled) => applySettings({ location: enabled }),
+  );
 
   const signOut = async () => {
     if (accountBusy) return;
@@ -85,6 +95,14 @@ export default function SettingsScreen() {
 
   return (
     <AppSheet title="Settings" bodyStyle={styles.body}>
+      {mutationError && (
+        <View accessibilityLiveRegion="polite" style={[styles.group, styles.saveError]}>
+          <Text style={styles.saveErrorText}>{mutationError}</Text>
+          <Button label="Dismiss settings error" onPress={clearMutationError}>
+            <Text style={styles.saveErrorAction}>Dismiss</Text>
+          </Button>
+        </View>
+      )}
       <SectionLabel style={styles.sectionLabel}>Saved entries</SectionLabel>
       <View style={styles.group}>
         <SettingsRow
@@ -92,7 +110,7 @@ export default function SettingsScreen() {
           color={Finn.amber}
           title="Manage saved entries"
           subtitle={`${presets.length} saved ${presets.length === 1 ? "entry" : "entries"}`}
-          onPress={() => router.push("/settings/presets")}
+          href="/settings/presets"
         />
       </View>
 
@@ -102,19 +120,29 @@ export default function SettingsScreen() {
           icon="location"
           color="#05C65A"
           title="Use location for journal entries"
-          subtitle={
-            settings.location
-              ? "Bengaluru, India · sample"
-              : "Journal works normally without it"
-          }
+          subtitle={location.subtitle}
           accessory={
             <FinnSwitch
               label="Use location for journal entries"
               value={settings.location}
-              onValueChange={(location) => updateSettings({ location })}
+              onValueChange={(enabled) => {
+                if (location.busy) return;
+                void location.setEnabled(enabled).catch(() => undefined);
+              }}
             />
           }
         />
+        {location.needsSettings && (
+          <>
+            <Divider />
+            <SettingsRow
+              title="Open location settings"
+              value="Allow While Using"
+              disclosure="chevron"
+              onPress={location.openSettings}
+            />
+          </>
+        )}
       </View>
       <Text style={styles.helperText}>
         Adds approximate place context only when you save an entry. Finn never
@@ -135,7 +163,7 @@ export default function SettingsScreen() {
                   label="Back Tap quick add"
                   value={settings.backTapQuickAdd}
                   onValueChange={(backTapQuickAdd) =>
-                    updateSettings({ backTapQuickAdd })
+                    applySettings({ backTapQuickAdd })
                   }
                 />
               }
@@ -177,7 +205,7 @@ export default function SettingsScreen() {
               label="Daily journal reminder"
               value={settings.reminders}
               onValueChange={(reminders) => {
-                updateSettings({ reminders });
+                applySettings({ reminders });
                 if (!reminders) setPicker(null);
               }}
             />
@@ -197,7 +225,7 @@ export default function SettingsScreen() {
                 values={FREQUENCIES}
                 selected={settings.reminderFrequency}
                 onSelect={(reminderFrequency) => {
-                  updateSettings({ reminderFrequency });
+                  applySettings({ reminderFrequency });
                   setPicker(null);
                 }}
               />
@@ -214,7 +242,7 @@ export default function SettingsScreen() {
                 values={TIMES}
                 selected={settings.reminderTime}
                 onSelect={(reminderTime) => {
-                  updateSettings({ reminderTime });
+                  applySettings({ reminderTime });
                   setPicker(null);
                 }}
               />
@@ -229,15 +257,15 @@ export default function SettingsScreen() {
           icon="globe"
           color="#D529D7"
           title="Base currency"
-          value={`${selectedCurrency.code} ${selectedCurrency.symbol}`}
+          value={currencyDisplay(settings.currency)}
           disclosure="down"
           onPress={() => togglePicker("currency")}
         />
         {picker === "currency" && (
-          <CurrencyOptions
+          <CurrencyPicker
             selected={settings.currency}
             onSelect={(currency) => {
-              updateSettings({ currency });
+              applySettings({ currency });
               setPicker(null);
             }}
           />
@@ -254,8 +282,8 @@ export default function SettingsScreen() {
       </View>
 
       <Text style={styles.preview}>
-        Preferences are saved on this device. Reminder scheduling and location
-        collection are not connected yet.
+        Preferences sync privately with your Finn account. Reminder scheduling
+        is still not connected.
       </Text>
 
       <SectionLabel style={styles.sectionLabel}>Privacy & legal</SectionLabel>
@@ -347,6 +375,7 @@ function SettingsRow({
   accessory,
   disclosure = "chevron",
   onPress,
+  href,
 }: {
   icon?: IconName;
   color?: string;
@@ -357,6 +386,7 @@ function SettingsRow({
   accessory?: ReactNode;
   disclosure?: "chevron" | "down" | "none";
   onPress?: () => void;
+  href?: Href;
 }) {
   const contents = (
     <>
@@ -381,6 +411,7 @@ function SettingsRow({
     </>
   );
 
+  if (href) return <ZoomLink href={href}><Button label={title} onPress={onPress} style={styles.row}>{contents}</Button></ZoomLink>;
   return onPress ? (
     <Button label={title} onPress={onPress} style={styles.row}>
       {contents}
@@ -429,44 +460,17 @@ function Options({
   );
 }
 
-function CurrencyOptions({
-  selected,
-  onSelect,
-}: {
-  selected: string;
-  onSelect: (currency: string) => void;
-}) {
-  return (
-    <View style={styles.options}>
-      {CURRENCIES.map(({ code, label, symbol }) => (
-        <Button
-          key={code}
-          label={`${label}, ${code}`}
-          onPress={() => onSelect(code)}
-          style={styles.option}
-        >
-          <View>
-            <Text
-              style={[
-                styles.optionLabel,
-                selected === code && styles.optionLabelSelected,
-              ]}
-            >
-              {label}
-            </Text>
-            <Text style={styles.optionDetail}>{`${code} ${symbol}`}</Text>
-          </View>
-          {selected === code && (
-            <Icon name="check" color={Finn.primary} size={15} />
-          )}
-        </Button>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   body: { paddingBottom: 6 },
+  saveError: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 8,
+    padding: 12,
+  },
+  saveErrorText: { color: Finn.danger, flex: 1, fontSize: 12, lineHeight: 17 },
+  saveErrorAction: { color: Finn.danger, fontSize: 11, fontWeight: "600" },
   sectionLabel: {
     fontFamily: JournalType.regular,
     fontSize: 13,
@@ -580,12 +584,6 @@ const styles = StyleSheet.create({
   optionLabelSelected: {
     color: Finn.primary,
     fontFamily: JournalType.medium,
-  },
-  optionDetail: {
-    color: Finn.muted,
-    fontFamily: JournalType.regular,
-    fontSize: 10,
-    marginTop: 2,
   },
   webSwitch: { width: 43, height: 26 },
   preview: {

@@ -9,7 +9,7 @@
           "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.adinathcodes.Finn",
+      "bundleIdentifier": "com.finnit.app",
       "usesAppleSignIn": true
           },
           "android": {
@@ -29,6 +29,14 @@
     "plugins": [
       "expo-router",
       "expo-apple-authentication",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Finn to choose a receipt photo for your journal",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
                [
                     "expo-camera",
                     {
@@ -36,6 +44,12 @@
                          "microphonePermission": false,
                          "recordAudioAndroid": false,
                          "barcodeScannerEnabled": false
+                    }
+               ],
+               [
+                    "expo-location",
+                    {
+                         "locationWhenInUsePermission": "Allow Finn to add an approximate place to entries you choose to save."
                     }
                ],
                [

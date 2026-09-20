@@ -5,6 +5,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from "react-native";
@@ -17,6 +18,7 @@ import { useJournal } from "@/providers/app-providers";
 import { amountFromNote } from "@/utils/amounts";
 import { money } from "@/utils/currency";
 import type { ReceiptPhoto } from "@/types/domain";
+import { captureReceipt } from "@/features/camera/services/receipt-service";
 import { JournalHeader } from "./journal-header";
 import {
   JournalEntryCard,
@@ -37,10 +39,13 @@ export default function JournalScreen() {
   const {
     entries,
     selectedDate,
-    addEntry,
+    captureNote,
     updateEntry,
     deleteEntry,
     settings,
+    mutationError,
+    clearMutationError,
+    retrySync,
   } = useJournal();
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
@@ -50,7 +55,9 @@ export default function JournalScreen() {
   const [pendingSubmissions, setPendingSubmissions] = useState<
     { id: string; note: string }[]
   >([]);
-  const [tool, setTool] = useState<"add" | "voice" | "receipt" | null>(null);
+  const [failedSubmissions, setFailedSubmissions] = useState<Record<string, boolean>>({});
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [tool, setTool] = useState<"add" | "receipt" | null>(null);
   const input = useRef<TextInput>(null);
   const entryInputs = useRef(new Map<string, TextInput>());
   const lastReturnSubmission = useRef<string | null>(null);
@@ -115,11 +122,15 @@ export default function JournalScreen() {
     [selectedDate, settings.currency],
   );
   const commitPendingEntry = useCallback(
-    (
+    async (
       result: PendingEntryResult,
       { dismissKeyboard }: { dismissKeyboard: boolean },
     ) => {
-      addEntry(result.entry);
+      try {
+        await captureNote(result.entry.note, result.entry.date);
+      } catch {
+        return;
+      }
       setDraft("");
       if (dismissKeyboard) {
         setFocused(false);
@@ -133,7 +144,7 @@ export default function JournalScreen() {
         scroll.current?.scrollToEnd({ animated: false });
       });
     },
-    [addEntry],
+    [captureNote],
   );
   const processing = useJournalEntryProcessing({
     draft,
@@ -141,6 +152,27 @@ export default function JournalScreen() {
     buildResult: buildPendingEntry,
     onCommit: commitPendingEntry,
   });
+  const persistSubmittedDraft = useCallback(
+    async (submissionId: string, note: string) => {
+      try {
+        await captureNote(note, selectedDate);
+      } catch {
+        setFailedSubmissions((current) => ({ ...current, [submissionId]: true }));
+        return;
+      }
+      setFailedSubmissions((current) => {
+        const { [submissionId]: _failed, ...remaining } = current;
+        return remaining;
+      });
+      setPendingSubmissions((current) =>
+        current.filter((submission) => submission.id !== submissionId),
+      );
+      requestAnimationFrame(() => {
+        scroll.current?.scrollToEnd({ animated: false });
+      });
+    },
+    [captureNote, selectedDate],
+  );
   const submitDraft = useCallback(
     (submittedDraft: string) => {
       const note = submittedDraft.trim();
@@ -150,6 +182,7 @@ export default function JournalScreen() {
       submissionSequence.current += 1;
       const id = `note-${Date.now()}-${submissionSequence.current}`;
       setPendingSubmissions((current) => [...current, { id, note }]);
+      void persistSubmittedDraft(id, note);
       setDraft("");
       setFocused(true);
       requestAnimationFrame(() => {
@@ -157,7 +190,7 @@ export default function JournalScreen() {
         scroll.current?.scrollToEnd({ animated: false });
       });
     },
-    [processing],
+    [persistSubmittedDraft, processing],
   );
   const submitOnReturn = useCallback(
     (submittedDraft: string) => {
@@ -184,65 +217,30 @@ export default function JournalScreen() {
     },
     [submitOnReturn],
   );
-  const commitSubmittedDraft = useCallback(
-    (submissionId: string, result: PendingEntryResult) => {
-      addEntry(result.entry);
-      setPendingSubmissions((current) =>
-        current.filter((submission) => submission.id !== submissionId),
-      );
-      requestAnimationFrame(() => {
-        scroll.current?.scrollToEnd({ animated: false });
-      });
-    },
-    [addEntry],
-  );
   const attachReceiptPhoto = useCallback(
     (receipt: ReceiptPhoto) => {
-      const id = `receipt-${Date.now()}`;
-      addEntry({
-        id,
-        date: selectedDate,
-        note: "Receipt photo",
-        merchant: "Receipt",
-        category: "other",
-        status: "review",
-        time: "Just now",
-        items: [
-          {
-            id: `${id}-item`,
-            name: "Receipt total",
-            quantity: 1,
-            amountMinor: 0,
-            category: "other",
-          },
-        ],
-        thought:
-          "Your receipt photo is attached. Add the total and merchant details while receipt extraction is being connected.",
-        sources: [
-          {
-            title: "Receipt photo",
-            detail: "Captured with Finn",
-            icon: "note",
-          },
-        ],
-        receipt,
-      });
       setFocused(false);
+      setReceiptError(null);
+      void captureReceipt(receipt, selectedDate, settings.currency).catch((error) => {
+        setReceiptError(
+          error instanceof Error ? error.message : "Couldn’t save this receipt on your device.",
+        );
+      });
       requestAnimationFrame(() => {
         scroll.current?.scrollToEnd({ animated: false });
       });
     },
-    [addEntry, selectedDate],
+    [selectedDate, settings.currency],
   );
   const dayEntries = entries.filter((entry) => entry.date === selectedDate);
-  const commitEntryDraft = (
+  const commitEntryDraft = async (
     entry: (typeof entries)[number],
     nextDraft: string,
   ) => {
     const note = nextDraft.trim();
     if (!note) {
-      deleteEntry(entry.id);
-      return;
+      try { await deleteEntry(entry.id); } catch { return false; }
+      return true;
     }
 
     const parsedAmount = amountFromNote(note);
@@ -251,7 +249,12 @@ export default function JournalScreen() {
         ? { ...source, detail: note }
         : source,
     );
-    updateEntry({
+    if (entry.receipt) {
+      try { await updateEntry({ ...entry, note, merchant: note, sources }); }
+      catch { return false; }
+      return true;
+    }
+    try { await updateEntry({
       ...entry,
       note,
       sources,
@@ -269,18 +272,19 @@ export default function JournalScreen() {
             ],
           }
         : {}),
-    });
+    }); } catch { return false; }
+    return true;
   };
-  const startEditingEntry = (entry: (typeof entries)[number]) => {
+  const startEditingEntry = async (entry: (typeof entries)[number]) => {
     if (editingEntryId && editingEntryId !== entry.id) {
       const activeEntry = entries.find((item) => item.id === editingEntryId);
-      if (activeEntry) commitEntryDraft(activeEntry, entryDraft);
+      if (activeEntry && !(await commitEntryDraft(activeEntry, entryDraft))) return;
     }
     setEditingEntryId(entry.id);
     setEntryDraft(processingEntryDrafts[entry.id] ?? entry.note);
   };
-  const finishEditingEntry = (entry: (typeof entries)[number]) => {
-    commitEntryDraft(entry, entryDraft);
+  const finishEditingEntry = async (entry: (typeof entries)[number]) => {
+    if (!(await commitEntryDraft(entry, entryDraft))) return;
     setEditingEntryId((current) =>
       current === entry.id ? null : current,
     );
@@ -318,8 +322,8 @@ export default function JournalScreen() {
     [dayEntries],
   );
   const commitProcessedEdit = useCallback(
-    (entry: (typeof entries)[number], finishEditing: boolean) => {
-      updateEntry(entry);
+    async (entry: (typeof entries)[number], finishEditing: boolean) => {
+      try { await updateEntry(entry); } catch { return; }
       setProcessingEntryDrafts((current) => {
         if (!(entry.id in current)) return current;
         const { [entry.id]: _processedDraft, ...remaining } = current;
@@ -353,6 +357,17 @@ export default function JournalScreen() {
           }}
           showsVerticalScrollIndicator={false}
         >
+          {(mutationError || receiptError) && (
+            <View accessibilityLiveRegion="polite" style={styles.saveError}>
+              <Text style={styles.saveErrorText}>{mutationError ?? receiptError}</Text>
+              <Button label="Dismiss save error" onPress={() => {
+                clearMutationError();
+                setReceiptError(null);
+              }}>
+                <Text style={styles.saveErrorAction}>Dismiss</Text>
+              </Button>
+            </View>
+          )}
           {dayEntries.map((entry) => (
             <JournalEntryCard
               key={entry.id}
@@ -368,6 +383,7 @@ export default function JournalScreen() {
               onProcessingStarted={startEntryProcessing}
               onReturn={advanceEditingEntry}
               inputRef={(node) => setEntryInput(entry.id, node)}
+              onRetrySync={() => { void retrySync(entry.id).catch(() => undefined); }}
             />
           ))}
           {pendingSubmissions.map((submission) => (
@@ -375,9 +391,9 @@ export default function JournalScreen() {
               key={submission.id}
               note={submission.note}
               buildResult={(note) => buildPendingEntry(note, submission.id)}
-              onCommit={(result) =>
-                commitSubmittedDraft(submission.id, result)
-              }
+              autoCommit={false}
+              failed={!!failedSubmissions[submission.id]}
+              onRetry={() => void persistSubmittedDraft(submission.id, submission.note)}
             />
           ))}
           <View style={styles.editor}>
@@ -432,7 +448,6 @@ export default function JournalScreen() {
             draft={draft}
             input={input}
             onSave={processing.requestManualCommit}
-            onInsert={setDraft}
             onReceiptCaptured={attachReceiptPhoto}
             onDismiss={() => setFocused(false)}
             tool={tool}
@@ -445,6 +460,18 @@ export default function JournalScreen() {
 }
 const styles = StyleSheet.create({
   paper: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 0 },
+  saveError: {
+    alignItems: "center",
+    backgroundColor: "#FFF4F2",
+    borderRadius: 14,
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  saveErrorText: { color: Finn.danger, flex: 1, fontSize: 12, lineHeight: 17 },
+  saveErrorAction: { color: Finn.danger, fontSize: 11, fontWeight: "600" },
   editor: { flex: 1, flexDirection: "row", minHeight: 160 },
   statusSlot: {
     alignItems: "flex-end",

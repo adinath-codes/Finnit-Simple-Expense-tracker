@@ -17,8 +17,13 @@ const SYMBOLS: Record<string, string> = {
   "¥": "JPY",
   "₩": "KRW",
 };
-const AMOUNT =
-  /(?:(₹|\$|€|£|¥|₩|\b(?:INR|USD|EUR|GBP|JPY|KRW|KWD|BHD|OMR|AED|SAR|CAD|AUD|SGD|CHF|CNY|HKD|NZD|THB|MYR|IDR|PHP|VND|Rs)\.?)\s*)?(\d+(?:[,.]\d+)*)(?:[ \t]*([kK])\b)?\s*(INR|USD|EUR|GBP|JPY|KRW|KWD|BHD|OMR|AED|SAR|CAD|AUD|SGD|CHF|CNY|HKD|NZD|THB|MYR|IDR|PHP|VND|rs)?/gi;
+const CURRENCY_CODE_PATTERN = Object.keys(CURRENCIES).join("|");
+const AMOUNT = new RegExp(
+  `(?:(₹|\\$|€|£|¥|₩|\\b(?:${CURRENCY_CODE_PATTERN}|Rs)\\.?)\\s*)?` +
+    `(\\d+(?:[,.]\\d+)*)(?:[ \\t]*([kK])\\b)?\\s*` +
+    `(${CURRENCY_CODE_PATTERN}|rs)?`,
+  "gi",
+);
 const UNITS =
   /^(?:\s*(?:coffees?|notebooks?|tickets?|items?|people|persons?|friends|days?|months?|years?|hours?|minutes?|km|kilometres?|litres?|kg|shirts?|books?|sandwiches?|bottles?|meals?)\b)/i;
 export type MoneyToken = {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -16,24 +16,38 @@ import {
   type CameraType,
 } from "expo-camera";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReducedMotion } from "react-native-reanimated";
+import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
+import { Motion } from "@/constants/motion";
+import { ContentFade } from "@/components/ui/motion";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import type { ReceiptCapture } from "../types/receipt.types";
 import { ReceiptReview } from "./receipt-review";
+import { pickReceiptFromGallery } from "../services/receipt-service";
+
+export type CameraOrigin = { x: number; y: number; width: number; height: number };
 
 export function ReceiptCameraSheet({
   visible,
   onClose,
   onUsePhoto,
+  origin = null,
+  onDismissed,
 }: {
   visible: boolean;
+  origin?: CameraOrigin | null;
+  onDismissed?: () => void;
   onClose: () => void;
   onUsePhoto: (photo: ReceiptCapture) => void;
 }) {
   const camera = useRef<CameraView>(null);
   const autoRequestStarted = useRef(false);
+  const captureBusy = useRef(false);
+  const captureSession = useRef(0);
+  useEffect(() => { captureSession.current += 1; captureBusy.current = false; }, [visible]);
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>("back");
   const [torch, setTorch] = useState(false);
@@ -43,13 +57,51 @@ export function ReceiptCameraSheet({
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<ReceiptCapture | null>(null);
   const insets = useSafeAreaInsets();
-  const reduced = useReducedMotion();
+  const reduced = useMotionPreference();
+  const [present, setPresent] = useState(visible);
+  const [laidOut, setLaidOut] = useState(false);
+  const surface = useRef<View>(null);
+  const progress = useSharedValue(0);
+  const originX = useSharedValue(0);
+  const originY = useSharedValue(0);
+  const isVisible = useRef(visible);
+  const dismissed = useRef(onDismissed);
+  isVisible.current = visible;
+  dismissed.current = onDismissed;
+  const finishDismissal = useCallback(() => {
+    if (isVisible.current) return;
+    setPresent(false);
+    setLaidOut(false);
+    dismissed.current?.();
+  }, []);
+  useEffect(() => {
+    cancelAnimation(progress);
+    if (visible) {
+      if (!present) { originX.set(0); originY.set(0); }
+      setPresent(true);
+      if (laidOut) progress.set(withTiming(1, { duration: reduced ? Motion.fade : Motion.panelEnter, easing: Motion.easeOut }));
+    } else if (present) {
+      progress.set(withTiming(0, { duration: reduced ? Motion.fade : Motion.panelExit, easing: Motion.easeOut }, (finished) => {
+        if (finished) scheduleOnRN(finishDismissal);
+      }));
+    }
+    return () => cancelAnimation(progress);
+  }, [visible, laidOut, present, reduced, progress, originX, originY, finishDismissal]);
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.get() }));
+  const surfaceStyle = useAnimatedStyle(() => ({
+    opacity: progress.get(),
+    transform: [
+      { translateX: reduced ? 0 : (1 - progress.get()) * originX.get() },
+      { translateY: reduced ? 0 : (1 - progress.get()) * originY.get() },
+      { scale: reduced ? 1 : 0.95 + progress.get() * 0.05 },
+    ],
+  }));
   const { height, width } = useWindowDimensions();
   const surfaceHeight = Math.min(Math.max(height * 0.54, 370), 560);
   const surfaceWidth = Math.min(width - 28, 470);
 
   useEffect(() => {
-    if (!visible) {
+    if (!present) {
       autoRequestStarted.current = false;
       setCameraReady(false);
       setCapturing(false);
@@ -62,7 +114,7 @@ export function ReceiptCameraSheet({
     }
 
     if (
-      !permission ||
+      !visible || !permission ||
       permission.granted ||
       !permission.canAskAgain ||
       autoRequestStarted.current
@@ -77,16 +129,15 @@ export function ReceiptCameraSheet({
         setError("Finn could not request camera access.");
       })
       .finally(() => setRequestingPermission(false));
-  }, [permission, requestPermission, visible]);
+  }, [permission, requestPermission, visible, present]);
 
-  if (!visible) return null;
+  if (!present) return null;
 
-  const close = () => {
-    setPhoto(null);
-    onClose();
-  };
+  const close = () => { if (isVisible.current) onClose(); };
   const takePhoto = async () => {
-    if (!camera.current || !cameraReady || capturing) return;
+    if (!isVisible.current || !camera.current || !cameraReady || captureBusy.current) return;
+    const session = captureSession.current;
+    captureBusy.current = true;
     setCapturing(true);
     setError(null);
     try {
@@ -95,15 +146,16 @@ export function ReceiptCameraSheet({
         quality: 0.86,
         shutterSound: true,
       });
+      if (!isVisible.current || session !== captureSession.current) return;
       setPhoto({
         uri: result.uri,
         width: result.width,
         height: result.height,
       });
     } catch {
-      setError("The photo did not save. Please try again.");
+      if (isVisible.current && session === captureSession.current) setError("The photo did not save. Please try again.");
     } finally {
-      setCapturing(false);
+      if (session === captureSession.current) { captureBusy.current = false; setCapturing(false); }
     }
   };
   const askAgain = async () => {
@@ -117,10 +169,19 @@ export function ReceiptCameraSheet({
       setRequestingPermission(false);
     }
   };
+  const pickFromGallery = async () => {
+    setError(null);
+    try {
+      const selected = await pickReceiptFromGallery();
+      if (selected && isVisible.current) setPhoto(selected);
+    } catch {
+      setError("Finn could not open that photo. Please try another image.");
+    }
+  };
 
   return (
     <Modal
-      animationType={reduced ? "none" : "fade"}
+      animationType="none"
       hardwareAccelerated
       navigationBarTranslucent
       onRequestClose={close}
@@ -130,23 +191,40 @@ export function ReceiptCameraSheet({
     >
       <View
         accessibilityViewIsModal
+        accessibilityElementsHidden={!visible}
+        importantForAccessibility={visible ? "auto" : "no-hide-descendants"}
+        pointerEvents={visible ? "auto" : "none"}
         style={[
           styles.backdrop,
           { paddingBottom: Math.max(insets.bottom, 16) },
         ]}
       >
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(39, 28, 24, 0.18)" }, backdropStyle]} />
         <Pressable
           accessibilityLabel="Close camera"
           accessibilityRole="button"
           onPress={close}
           style={StyleSheet.absoluteFill}
         />
-        <View
+        <Animated.View
+          ref={surface}
+          onLayout={() => {
+            surface.current?.measureInWindow((x, y, width, height) => {
+              // Scaling around the center preserves this measured center; translation starts at zero.
+              if (!laidOut) {
+                originX.set(origin ? origin.x + origin.width / 2 - (x + width / 2) : 0);
+                originY.set(origin ? origin.y + origin.height / 2 - (y + height / 2) : 16);
+                setLaidOut(true);
+              }
+            });
+          }}
           style={[
             styles.surface,
             { height: surfaceHeight, width: surfaceWidth },
+            surfaceStyle,
           ]}
         >
+          <ContentFade key={photo?.uri ?? (permission?.granted ? "camera" : "permission")} style={{ flex: 1 }}>
           {photo ? (
             <ReceiptReview
               photo={photo}
@@ -196,6 +274,7 @@ export function ReceiptCameraSheet({
                     current === "back" ? "front" : "back",
                   );
                 }}
+                onGallery={() => void pickFromGallery()}
                 onToggleTorch={() => setTorch((current) => !current)}
               />
             </View>
@@ -206,9 +285,11 @@ export function ReceiptCameraSheet({
               loading={!permission || requestingPermission}
               onAllow={() => void askAgain()}
               onClose={close}
+              onGallery={() => void pickFromGallery()}
             />
           )}
-        </View>
+          </ContentFade>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -220,12 +301,14 @@ function PermissionState({
   loading,
   onAllow,
   onClose,
+  onGallery,
 }: {
   canAskAgain: boolean;
   error: string | null;
   loading: boolean;
   onAllow: () => void;
   onClose: () => void;
+  onGallery: () => void;
 }) {
   return (
     <View style={styles.permissionState}>
@@ -263,6 +346,9 @@ function PermissionState({
           </Text>
         </Button>
       )}
+      <Button label="Choose a receipt from photos" onPress={onGallery} style={styles.notNow}>
+        <Text style={styles.notNowText}>Choose from photos</Text>
+      </Button>
       <Button label="Close camera" onPress={onClose} style={styles.notNow}>
         <Text style={styles.notNowText}>Not now</Text>
       </Button>
@@ -278,6 +364,7 @@ function CameraControls({
   onCapture,
   onClose,
   onFlip,
+  onGallery,
   onToggleTorch,
 }: {
   cameraReady: boolean;
@@ -287,12 +374,14 @@ function CameraControls({
   onCapture: () => void;
   onClose: () => void;
   onFlip: () => void;
+  onGallery: () => void;
   onToggleTorch: () => void;
 }) {
   return (
     <>
       <View style={styles.leftControls}>
         <RoundControl icon="back" label="Close camera" onPress={onClose} />
+        <RoundControl icon="gallery" label="Choose receipt from photos" onPress={onGallery} />
       </View>
       <Button
         disabled={!cameraReady || capturing}
@@ -339,7 +428,6 @@ function RoundControl({
 const styles = StyleSheet.create({
   backdrop: {
     alignItems: "center",
-    backgroundColor: "rgba(26, 20, 18, 0.28)",
     flex: 1,
     justifyContent: "flex-end",
     paddingHorizontal: 14,
@@ -391,6 +479,7 @@ const styles = StyleSheet.create({
   },
   leftControls: {
     bottom: 22,
+    gap: 10,
     left: 20,
     position: "absolute",
   },

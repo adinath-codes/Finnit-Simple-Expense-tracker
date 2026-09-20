@@ -1,12 +1,12 @@
-# Finn text backend deployment
+# Finn journal and receipt backend deployment
 
-The Text → Money → Categories → Search backend and onboarding profile schema are implemented locally. No database
-migration, Edge Function, or secret has been deployed. Deployment is not evidence that
-the financial interpretation is correct; ambiguous records deliberately require
-review.
+The Text → Money → Categories → Search backend is deployed to the linked Finn
+Supabase project. Receipt scanning is implemented in this repository but must be
+deployed in the ordered release below. Ambiguous records deliberately require review.
 
-The existing screen provider still loads `mock-journal.json`. The search page at `/search` now reads real authenticated backend data.
-The capture/calendar provider still uses preview data. Onboarding now leads into
+The journal starts empty; no example transactions, presets, goals, or profile data are bundled.
+The search page at `/search` and the journal use the same account-scoped durable
+cache/outbox. Onboarding now leads into
 the Supabase-backed sign-in screen, with email/password, Google OAuth, and Apple
 OAuth options. Search requires an existing Supabase session; it never treats
 the preview entries as synced financial records. In particular, do not feed the backend's mixed-currency records into
@@ -19,10 +19,11 @@ was used for project discovery and current documentation. The connected account
 only listed “life outside”; that project was not assumed to belong to Finn and
 was not changed.
 
-`.env.example` contains the variable names and concrete non-secret defaults. Fill
-the project's public URL/publishable key and project reference once available.
-Copy the public Expo settings to an ignored `.env` file. The publishable key must
-start with `sb_publishable_`; do not use an admin key.
+Set the project's public URL and publishable key in an ignored local `.env` file.
+The Expo app uses only `EXPO_PUBLIC_SUPABASE_URL`,
+`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and the optional
+`EXPO_PUBLIC_FINN_ANONYMOUS_AUTH`. The publishable key must start with
+`sb_publishable_`; do not use an admin key.
 
 Create an ignored `.env.server` containing only the following server settings,
 using your Gemini API key:
@@ -63,7 +64,7 @@ npx supabase login
 npx supabase link --project-ref YOUR_FINN_PROJECT_REF
 npx supabase db push
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry ask-money request-quota-review delete-account --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry ask-money request-quota-review delete-account scan-receipt --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 Apply all migrations in filename order:
@@ -72,14 +73,20 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260919071006_finn_search_page.sql`: context cards, bounded search catalogs, cursor pages, journal revision tracking, and interpretation caching.
 - `supabase/migrations/20260919082754_finn_onboarding_profile.sql`: the bounded, owner-only onboarding profile synchronized after local completion.
 - `supabase/migrations/20260919113403_extra_ai_quota_and_support_requests.sql`: private, expiring per-user AI-call credits, deduplicated quota-review requests, and atomic minute/day/month guards.
+- `supabase/migrations/20260919155015_receipt_scanning.sql`: receipt source records, extracted lines, signed discounts, receipt correction RPCs, and receipt-aware search display.
+- `supabase/migrations/20260920030847_discard_receipt_images.sql`: removes persisted receipt-image fields and Storage access so only extracted receipt text/financial structure remains.
+- `supabase/migrations/20260920090000_account_preferences_and_presets.sql`: owner-scoped settings and saved-entry presets, both synchronized through the authenticated Data API.
+- `supabase/migrations/20260920160000_expand_spendable_iso_currencies.sql`: adds the current spendable ISO 4217 codes and exact minor-unit scales before clients can select them.
 
 No separate seed step is needed. If the base backend is already deployed, push
-the remaining migrations and redeploy `ask-money`; onboarding uses the Data API
-directly with authenticated, owner-scoped RLS and does not require an Edge Function.
+the currency migration first, then redeploy `parse-entry`, `correct-entry`,
+`ask-money`, and `scan-receipt` before shipping the expanded picker. Onboarding,
+settings, and presets use the Data API directly with authenticated, owner-scoped
+RLS and do not require their own Edge Function.
 CLI configuration was generated with `supabase init`, and the migration filename
 was generated with `supabase migration new`.
 
-Deploy all five functions, not only the database. They are responsible for auth,
+Deploy all six functions, not only the database. They are responsible for auth,
 validation, quotas, parsing, and correction. `verify_jwt=false` in `config.toml`
 supports modern API keys; it does **not** make these public APIs. Every handler
 requires a bearer session token and validates it with `auth.getUser()` before any
@@ -96,7 +103,9 @@ requires a web OAuth client ID and secret whose authorized callback is the
 Supabase callback shown in the dashboard. Apple requires an App ID/Services ID,
 team and key details, and a periodically rotated OAuth client secret. Add the
 same `finn://` redirect URLs above to Supabase; provider consoles still redirect
-to Supabase's own `/auth/v1/callback`. Provider credentials are external secrets
+to Supabase's own `/auth/v1/callback`. For Finn, list
+`com.finnit.app.service` before `com.finnit.app` in Apple Client IDs; the latter
+is the shared iOS bundle ID and Android package. Provider credentials are external secrets
 and intentionally do not belong in this repository.
 
 Existing sessions can capture offline after their first sign-in. Signing out is
@@ -106,8 +115,28 @@ authenticated user with the server-only admin client, and relies on the schema's
 `ON DELETE CASCADE` ownership links. The app then clears that account's local
 journal cache and onboarding answers.
 
-Rebuild the native development app if needed for the newly installed SDK 57
-`expo-crypto` module. Restart Expo after setting public environment variables.
+Rebuild the native development app for the SDK 57 `expo-image-picker`,
+`expo-image-manipulator`, `expo-file-system`, and `expo-crypto` modules. Restart
+Expo after setting public environment variables.
+
+### Receipt release order
+
+1. If `receipt-images` was ever used, empty and delete it through the Supabase
+   Storage API or Dashboard before the privacy migration. Never delete Storage
+   rows with SQL because that orphans the physical files.
+2. Push `20260919155015_receipt_scanning.sql`, then
+   `20260920030847_discard_receipt_images.sql`.
+3. Deploy `correct-entry` and `scan-receipt`, then verify the existing Gemini
+   and quota secrets.
+4. Run `npx supabase db lint --linked --level warning` and the Supabase Security
+   and Performance advisors. Test two authenticated users cannot read the other
+   user's extracted receipt metadata or lines.
+5. Release the rebuilt Expo client.
+
+`scan-receipt` accepts the normalized JPEG as transient authenticated multipart
+data and forwards it to Gemini without writing it to Storage, Postgres, logs, or
+the response. Do not send `GEMINI_API_KEY` to Expo. Receipt images, OCR text, and
+model responses must not be written to ordinary application logs.
 
 ### Quota increases and support review
 
@@ -144,9 +173,13 @@ The client helper `callBackend` supplies them and refreshes expiring sessions.
   "raw_text": "lunch with Aswin 340 and Uber 280 yesterday",
   "captured_at": "2026-09-19T10:00:00+05:30",
   "timezone": "Asia/Kolkata",
-  "currency": "INR"
+  "currency": "INR",
+  "approximate_place": "Chennai, Tamil Nadu, India"
 }
 ```
+
+`approximate_place` is optional, entry-scoped city/region/country context. The
+client never sends coordinates, a street address, or background location data.
 
 Optional `selected_date` is the reference date selected in the journal. Omit it
 to use capture time in the given timezone. Original text is preserved verbatim.
@@ -194,6 +227,35 @@ prevents an old capture retry from resurrecting it. It retains the private sourc
 and audit data; account erasure/retention controls are separate future work.
 Conflicting revisions return 409. Clients must show/reconcile the newer version,
 not automatically overwrite it. The local queue keeps blocked mutations intact.
+
+Receipt corrections use `action: "correct_receipt"`, the current entry revision,
+merchant/printed-total metadata, and the full ordered line list. Description,
+quantity, amount, category, adjustment kind, and add/remove changes are validated
+and reconciled deterministically without another model call. A failed scan can use
+`action: "create_receipt_manual"`; it commits only the manually entered receipt
+text and structured values, with no image dependency.
+
+### Streaming receipt scan: `scan-receipt`
+
+The authenticated multipart request contains a small JSON capture descriptor and
+one normalized JPEG. The image exists only for the lifetime of that request and
+the Gemini call. The response is NDJSON: zero or more `{ "type": "item" }` events
+followed by one authoritative `{ "type": "final" }`, or a retryable/non-retryable
+warning.
+
+Gemini only transcribes and classifies visible receipt evidence into strict JSON.
+The server parses money, signs explicit discounts, validates categories and
+quantities, and performs all arithmetic. Exactly reconciled rows become individual
+transactions. A mismatch keeps every line for review but uses the printed receipt
+total as the single temporary accounting transaction, preventing double counting.
+Low-confidence lines remain visible and are excluded from confirmed aggregates.
+The selected journal date always owns the entry; a printed date is metadata only.
+
+Scans are idempotent by entry ID plus the capture descriptor. A retry after server
+commit returns stored lines without a second Gemini call. The device keeps the
+normalized image only while an offline/retryable scan is pending and deletes it
+after extraction or manual entry succeeds. Deletion tombstones the text entry and
+removes any remaining local image; there is no backend image cleanup job.
 
 ### Search: `ask-money`
 
@@ -265,9 +327,10 @@ whole journal, or calculate financial answers.
 
 ## 4. App integration boundary
 
-The UI's current provider and four-category preview models are intentionally
-separate from the backend's exact-money contracts. Search has its own authenticated hook and displays exact backend money. The
-remaining service entry points support the separate live capture/auth integration:
+The journal provider now adapts the account-scoped durable cache into the
+four-category UI model while preserving exact backend category IDs for later
+corrections. Search keeps its own authenticated hook and displays exact backend
+money. The live capture/auth integration uses these service entry points:
 
 - `SessionProvider` restores the persisted Supabase session and gates onboarding,
   authentication, and private routes.
@@ -280,15 +343,20 @@ remaining service entry points support the separate live capture/auth integratio
 - `refreshJournal()` fetches remote data without overwriting pending local edits.
 - `refreshJournalCatalog()` caches personal rules and names for offline parsing.
 - `correctJournalEntry()` / `deleteJournalEntry()` queue revision-checked writes.
+- Saved-entry CRUD and settings use the account cache as an offline-first source
+  and reconcile through owner-scoped Data API tables; applying a saved entry
+  creates a normal outbox-backed capture. Goals remain device-local.
 - `searchJournal()` / `spendingSummary()` return server-computed money; `recentSearchContexts()` loads the search landing cards.
 - `financialInsight()` reads the RLS-protected SQL insight views.
 
 The outbox uses a single account-scoped AsyncStorage document for entry+job
 durability, serialized writes, exponential backoff, stable IDs and per-entry
 ordering. It is not an encrypted or multi-process database. A cache read/storage
-failure rejects capture; the calling composer must keep the draft. Corrections
-are accepted after the prior change for that entry has synchronized. These
-contracts avoid silently losing edits; the UI still needs sync/conflict affordances.
+failure rejects capture; journal and quick-capture callers keep the draft and
+show a retryable local error. Corrections are accepted after the prior change
+for that entry has synchronized. Pending and permanently blocked jobs remain
+visible in the journal. Pending and failed changes are labeled in place, retries
+are entry-scoped, and revision conflicts offer an explicit local-or-synced choice.
 
 ## 5. Financial rules and deliberate limits
 
@@ -316,8 +384,8 @@ contracts avoid silently losing edits; the UI still needs sync/conflict affordan
   comma-decimal locales, unsupported currencies, fractional quantities, verbal
   amounts and complex date expressions can require correction. Prices are never
   estimated from menus/location/web search.
-- Receipt OCR, FX-rate ingestion, precise location, presets/settings cloud sync,
-  paywall and live capture UI are outside this text-backend pass.
+- FX-rate ingestion, precise location, paywall and remaining live capture UI are
+  outside this text-backend pass.
   They remain separate MVP work; no stub pretends to perform them.
 
 ## 6. Observability and follow-up validation

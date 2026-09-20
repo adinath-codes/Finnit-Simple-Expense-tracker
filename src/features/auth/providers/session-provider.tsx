@@ -9,8 +9,7 @@ import {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
-import { loadOnboardingSnapshot } from "@/storage/onboarding-repository";
-import { syncCompletedOnboarding } from "@/features/onboarding/services/onboarding-service";
+import { restoreOnboarding } from "@/features/onboarding/services/onboarding-service";
 
 type SessionContextValue = {
   session: Session | null;
@@ -28,17 +27,17 @@ export function SessionProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     let active = true;
-    let unsubscribe = () => undefined;
+    let unsubscribe: () => void = () => undefined;
 
-    void Promise.all([
-      loadOnboardingSnapshot(),
-      isBackendConfigured()
-        ? getSupabase().auth.getSession()
-        : Promise.resolve({ data: { session: null }, error: null }),
-    ])
-      .then(([onboarding, auth]) => {
+    void (isBackendConfigured()
+      ? getSupabase().auth.getSession()
+      : Promise.resolve({ data: { session: null }, error: null })
+    )
+      .then(async (auth) => {
         if (!active) return;
         if (auth.error) throw auth.error;
+        const onboarding = await restoreOnboarding();
+        if (!active) return;
         setOnboardingComplete(onboarding.completedAt !== null);
         setSession(auth.data.session);
       })
@@ -53,7 +52,16 @@ export function SessionProvider({ children }: PropsWithChildren) {
       const { data } = getSupabase().auth.onAuthStateChange((_event, next) => {
         if (!active) return;
         setSession(next);
-        if (next) void syncCompletedOnboarding();
+        if (next) {
+          setOnboardingComplete(false);
+          void restoreOnboarding().then((onboarding) => {
+            if (active) setOnboardingComplete(onboarding.completedAt !== null);
+          });
+        } else {
+          void restoreOnboarding().then((onboarding) => {
+            if (active) setOnboardingComplete(onboarding.completedAt !== null);
+          });
+        }
       });
       unsubscribe = () => data.subscription.unsubscribe();
     }

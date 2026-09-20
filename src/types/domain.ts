@@ -5,7 +5,14 @@ export type EntryItem = {
   name: string;
   quantity: number;
   amountMinor: number;
+  amountMissing?: boolean;
   category: Category;
+  /** Preserves backend categories that the four-category journal UI collapses. */
+  categoryId?: string;
+  kind?: "item" | "tax" | "tip" | "fee" | "discount";
+  confidence?: number;
+  needsReview?: boolean;
+  provisional?: boolean;
 };
 export type EntrySource = {
   title: string;
@@ -13,9 +20,20 @@ export type EntrySource = {
   icon: "note" | "location";
 };
 export type ReceiptPhoto = {
-  uri: string;
+  uri?: string;
   width: number;
   height: number;
+  status?:
+    | "preparing"
+    | "queued"
+    | "scanning"
+    | "needs_review"
+    | "complete"
+    | "failed";
+  error?: string;
+  itemCount?: number;
+  printedTotalMinor?: number | null;
+  purchaseDateText?: string | null;
 };
 export type JournalEntry = {
   id: string;
@@ -29,6 +47,10 @@ export type JournalEntry = {
   thought: string;
   sources: EntrySource[];
   receipt?: ReceiptPhoto;
+  accountingTotalMinor?: number;
+  syncState?: "pending" | "synced" | "blocked";
+  syncError?: string;
+  syncIssue?: "failed" | "conflict";
 };
 export type Preset = {
   id: string;

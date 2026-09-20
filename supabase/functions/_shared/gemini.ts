@@ -48,7 +48,9 @@ export async function generate(
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
           maxOutputTokens: positiveEnv("GEMINI_MAX_OUTPUT_TOKENS", 4096, 8192),
-          responseFormat: { text: { mimeType: "application/json", schema } },
+          // The REST v1beta wire enum is APPLICATION_JSON. Client SDKs accept
+          // the human MIME string and translate it, but raw fetch does not.
+          responseFormat: { text: { mimeType: "APPLICATION_JSON", schema } },
         },
       }),
     },

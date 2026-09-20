@@ -1,12 +1,18 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Preferences } from "@/types/domain";
 
-/**
- * Android keeps the preview's existing session-only preference behavior.
- * The Back Tap feature is iOS-only, and isolating its native persistence keeps
- * older Android development builds from requiring an unrelated native rebuild.
- */
+const SETTINGS_STORAGE_KEY = "finn.preferences.v1";
+
+/** Legacy device-wide preferences, retained only for account-cache migration. */
 export async function loadPreferences(): Promise<Partial<Preferences> | null> {
-  return null;
+  const saved = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
+  return saved ? (JSON.parse(saved) as Partial<Preferences>) : null;
 }
 
-export async function savePreferences(_preferences: Preferences): Promise<void> {}
+export async function savePreferences(preferences: Preferences): Promise<void> {
+  await AsyncStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(preferences));
+}
+
+export async function clearLegacyPreferences(): Promise<void> {
+  await AsyncStorage.removeItem(SETTINGS_STORAGE_KEY);
+}

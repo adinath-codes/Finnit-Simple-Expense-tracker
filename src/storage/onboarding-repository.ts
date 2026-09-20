@@ -6,6 +6,9 @@ import {
 } from "@/features/onboarding/types/onboarding.types";
 
 const ONBOARDING_STORAGE_KEY = "@finn/onboarding/v1";
+// Kept only so account deletion can remove completion markers written by older
+// versions. New onboarding state is never used as a device-wide completion gate.
+const ONBOARDING_COMPLETION_KEY = "@finn/onboarding/completion/v1";
 
 export function createEmptyOnboardingSnapshot(): OnboardingSnapshot {
   return {
@@ -14,6 +17,7 @@ export function createEmptyOnboardingSnapshot(): OnboardingSnapshot {
     answers: {},
     completedAt: null,
     remoteSynced: false,
+    accountId: null,
   };
 }
 
@@ -21,20 +25,41 @@ function validAnswers(value: unknown): OnboardingAnswers {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const source = value as Record<string, unknown>;
   const answers: OnboardingAnswers = {};
-  if (typeof source.goal === "string") answers.goal = source.goal;
-  if (typeof source.friction === "string") answers.friction = source.friction;
+  if (typeof source.desiredOutcome === "string") {
+    answers.desiredOutcome = source.desiredOutcome;
+  }
+  if (typeof source.blindSpot === "string") answers.blindSpot = source.blindSpot;
+  if (typeof source.futureQuestion === "string") {
+    answers.futureQuestion = source.futureQuestion;
+  }
+  if (typeof source.memoryContext === "string") {
+    answers.memoryContext = source.memoryContext;
+  }
+  if (typeof source.captureStyle === "string") {
+    answers.captureStyle = source.captureStyle;
+  }
   if (typeof source.currency === "string") answers.currency = source.currency;
   return answers;
 }
 
-export async function loadOnboardingSnapshot(): Promise<OnboardingSnapshot> {
-  const raw = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
-  if (!raw) return createEmptyOnboardingSnapshot();
+function parseSnapshot(raw: string | null): OnboardingSnapshot | null {
+  if (!raw) return null;
 
   try {
     const parsed = JSON.parse(raw) as Partial<OnboardingSnapshot>;
+    const completedAt =
+      typeof parsed.completedAt === "string" ? parsed.completedAt : null;
+    // Keep established users out of a revised questionnaire, but intentionally
+    // discard unfinished old drafts whose step indexes are no longer reliable.
     if (parsed.flowVersion !== FINN_ONBOARDING_FLOW_VERSION) {
-      return createEmptyOnboardingSnapshot();
+      if (!completedAt) return null;
+      return {
+        ...createEmptyOnboardingSnapshot(),
+        stepIndex: 0,
+        completedAt,
+        remoteSynced: true,
+        accountId: typeof parsed.accountId === "string" ? parsed.accountId : null,
+      };
     }
     return {
       flowVersion: FINN_ONBOARDING_FLOW_VERSION,
@@ -43,21 +68,38 @@ export async function loadOnboardingSnapshot(): Promise<OnboardingSnapshot> {
           ? Math.max(0, parsed.stepIndex)
           : 0,
       answers: validAnswers(parsed.answers),
-      completedAt:
-        typeof parsed.completedAt === "string" ? parsed.completedAt : null,
+      completedAt,
       remoteSynced: parsed.remoteSynced === true,
+      accountId: typeof parsed.accountId === "string" ? parsed.accountId : null,
     };
   } catch {
-    return createEmptyOnboardingSnapshot();
+    return null;
   }
+}
+
+export async function loadOnboardingDraftSnapshot() {
+  const raw = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
+  return parseSnapshot(raw);
+}
+
+export async function loadOnboardingSnapshot(): Promise<OnboardingSnapshot> {
+  return (await loadOnboardingDraftSnapshot()) ?? createEmptyOnboardingSnapshot();
 }
 
 export async function saveOnboardingSnapshot(snapshot: OnboardingSnapshot) {
   await AsyncStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(snapshot));
 }
 
-export async function clearOnboardingSnapshot() {
+/** Removes every locally held answer and progress value after the account owns it. */
+export async function clearOnboardingDraft() {
   await AsyncStorage.removeItem(ONBOARDING_STORAGE_KEY);
+}
+
+export async function clearOnboardingSnapshot() {
+  await AsyncStorage.multiRemove([
+    ONBOARDING_STORAGE_KEY,
+    ONBOARDING_COMPLETION_KEY,
+  ]);
 }
 
 export async function hasCompletedOnboarding() {

@@ -1,22 +1,36 @@
+import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
+import { Motion } from "@/constants/motion";
+import { ContentFade, Reveal, MotionLayout } from "@/components/ui/motion";
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 import { AppSheet, sheetStyles as shared } from "@/components/sheets/app-sheet";
 import { Icon } from "@/components/ui/icon";
-import { IconButton } from "@/components/ui/icon-button";
 import { Button } from "@/components/ui/button";
 import { Finn, Categories } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
 import { money } from "@/utils/currency";
 import type { Category, Preset } from "@/types/domain";
 export default function PresetList() {
-  const { presets, savePreset, deletePreset, addEntry, selectedDate } =
-    useJournal();
+  const {
+    presets,
+    savePreset,
+    deletePreset,
+    capturePreset,
+    selectedDate,
+    mutationError,
+    clearMutationError,
+  } = useJournal();
   const [search, setSearch] = useState("");
+  const reduced = useMotionPreference();
+  const [animateList, setAnimateList] = useState(false);
+  const [success, setSuccess] = useState({ trigger: 0, message: "" });
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Preset | null>(null);
   const [amount, setAmount] = useState("");
   const [added, setAdded] = useState<string | null>(null);
   const beginEdit = (preset?: Preset) => {
+    setAnimateList(true);
     setForm(
       preset ?? {
         id: `preset-${Date.now()}`,
@@ -28,30 +42,10 @@ export default function PresetList() {
     );
     setAmount(preset ? String(preset.amountMinor / 100) : "");
   };
-  const add = (preset: Preset) => {
-    const id = `entry-${Date.now()}`;
-    addEntry({
-      id,
-      note: preset.note || preset.name,
-      date: selectedDate,
-      category: preset.category,
-      merchant: preset.name,
-      status: "ready",
-      time: "Just now",
-      items: [
-        {
-          id: `${id}-item`,
-          name: preset.name,
-          quantity: 1,
-          amountMinor: preset.amountMinor,
-          category: preset.category,
-        },
-      ],
-      thought:
-        "Added from your saved entries. Your usual amount and category are already filled in. You can still change anything.",
-      sources: [{ title: "Saved entry", detail: preset.name, icon: "note" }],
-    });
+  const add = async (preset: Preset) => {
+    try { await capturePreset(preset, selectedDate); } catch { return; }
     setAdded(preset.id);
+    setSuccess((current) => ({ trigger: current.trigger + 1, message: "Added to your journal" }));
   };
   const filtered = presets.filter((preset) =>
     `${preset.name} ${preset.note}`
@@ -68,6 +62,7 @@ export default function PresetList() {
               editing ? "Finish editing saved entries" : "Edit saved entries"
             }
             onPress={() => {
+              setAnimateList(true);
               setEditing(!editing);
               setForm(null);
             }}
@@ -92,18 +87,26 @@ export default function PresetList() {
           placeholder="Search saved entries"
           placeholderTextColor={Finn.muted}
           value={search}
-          onChangeText={setSearch}
+          onFocus={() => setAnimateList(false)}
+          onChangeText={(value) => { setAnimateList(false); setSearch(value); }}
           style={styles.searchInput}
         />
         {search ? (
-          <Button label="Clear search" onPress={() => setSearch("")}>
+          <Button label="Clear search" onPress={() => { setAnimateList(false); setSearch(""); }}>
             <Icon name="close" size={14} color={Finn.muted} />
           </Button>
         ) : null}
       </View>
       <Text style={styles.intro}>The everyday things. Already remembered.</Text>
-      {form && (
-        <View style={[shared.card, { marginBottom: 18, gap: 12 }]}>
+      {mutationError && (
+        <View accessibilityLiveRegion="polite" style={styles.error}>
+          <Text style={styles.errorText}>{mutationError}</Text>
+          <Button label="Dismiss saved-entry error" onPress={clearMutationError}>
+            <Text style={styles.errorAction}>Dismiss</Text>
+          </Button>
+        </View>
+      )}
+      <Reveal open={!!form} style={[shared.card, { marginBottom: 18, gap: 12 }]}>{form && <>
           <Text style={styles.formTitle}>
             {presets.some((item) => item.id === form.id)
               ? "Edit saved entry"
@@ -167,13 +170,17 @@ export default function PresetList() {
                 !/^\d+(\.\d{1,2})?$/.test(amount) ||
                 Number(amount) <= 0
               }
-              onPress={() => {
-                savePreset({
-                  ...form,
-                  name: form.name.trim(),
-                  amountMinor: Math.round(Number(amount) * 100),
-                });
+              onPress={async () => {
+                setAnimateList(true);
+                try {
+                  await savePreset({
+                    ...form,
+                    name: form.name.trim(),
+                    amountMinor: Math.round(Number(amount) * 100),
+                  });
+                } catch { return; }
                 setForm(null);
+                setSuccess((current) => ({ trigger: current.trigger + 1, message: "Saved to your shortcuts" }));
               }}
             >
               <Text style={{ color: Finn.primary, fontWeight: "600" }}>
@@ -181,11 +188,13 @@ export default function PresetList() {
               </Text>
             </Button>
           </View>
-        </View>
-      )}
-      <View style={{ gap: 11 }}>
+      </>}</Reveal>
+      <MotionLayout animate={animateList} style={{ gap: 11 }}>
         {filtered.map((preset) => (
-          <View key={preset.id} style={styles.preset}>
+          <Animated.View key={preset.id} style={styles.preset}
+            layout={animateList && !reduced ? LinearTransition.duration(Motion.layout).easing(Motion.easeOut) : undefined}
+            entering={animateList ? FadeIn.duration(Motion.fade) : undefined}
+            exiting={animateList ? FadeOut.duration(Motion.fade) : undefined}>
             <View style={{ flex: 1 }}>
               <Button
                 label={`Edit saved entry ${preset.name}`}
@@ -216,7 +225,12 @@ export default function PresetList() {
                   ? `Delete saved entry ${preset.name}`
                   : `Add ${preset.name} to journal`
               }
-              onPress={() => (editing ? deletePreset(preset.id) : add(preset))}
+              onPress={async () => {
+                if (editing) {
+                  setAnimateList(true);
+                  try { await deletePreset(preset.id); } catch { return; }
+                } else await add(preset);
+              }}
               style={styles.addButton}
             >
               <View
@@ -231,14 +245,15 @@ export default function PresetList() {
                   name={
                     editing ? "trash" : added === preset.id ? "check" : "plus"
                   }
+                  animation={false}
                   size={16}
                   color={editing ? Finn.danger : "#fff"}
                 />
               </View>
             </Button>
-          </View>
+          </Animated.View>
         ))}
-      </View>
+      </MotionLayout>
       {!filtered.length && (
         <Text style={styles.empty}>
           {search
@@ -246,13 +261,13 @@ export default function PresetList() {
             : "Save your first everyday expense using +."}
         </Text>
       )}
-      {added && (
-        <View accessibilityLiveRegion="polite" style={styles.confirmation}>
-          <Icon name="check" color={Finn.primary} size={14} />
-          <Text style={{ color: Finn.primary, fontSize: 12 }}>
-            Added to your journal
-          </Text>
-        </View>
+      {success.trigger > 0 && (
+        <ContentFade key={success.trigger}>
+          <View accessibilityLiveRegion="polite" style={styles.confirmation}>
+            <Icon name="check" color={Finn.primary} size={14} animation="bounce" animationTrigger={success.trigger} />
+            <Text style={{ color: Finn.primary, fontSize: 12 }}>{success.message}</Text>
+          </View>
+        </ContentFade>
       )}
       <Text style={styles.hint}>
         Tap + to add it to your day. Tap a name to edit.
@@ -278,6 +293,17 @@ const styles = StyleSheet.create({
     marginBottom: 25,
     textAlign: "center",
   },
+  error: {
+    alignItems: "center",
+    backgroundColor: "#FFF4F2",
+    borderRadius: 14,
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+    padding: 10,
+  },
+  errorText: { color: Finn.danger, flex: 1, fontSize: 12 },
+  errorAction: { color: Finn.danger, fontSize: 11, fontWeight: "600" },
   preset: {
     flexDirection: "row",
     alignItems: "center",

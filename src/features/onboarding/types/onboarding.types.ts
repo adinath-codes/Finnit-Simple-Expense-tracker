@@ -1,8 +1,15 @@
 import type { IconName } from "@/components/ui/icon";
+import type { CharacterAnimationType } from "@/components/character/character-animations";
 
-export const FINN_ONBOARDING_FLOW_VERSION = "2026-09-19.1";
+export const FINN_ONBOARDING_FLOW_VERSION = "2026-09-20.4";
 
-export type OnboardingQuestionId = "goal" | "friction" | "currency";
+export type OnboardingQuestionId =
+  | "desiredOutcome"
+  | "blindSpot"
+  | "futureQuestion"
+  | "memoryContext"
+  | "captureStyle"
+  | "currency";
 
 export type OnboardingAnswers = Partial<
   Record<OnboardingQuestionId, string>
@@ -27,9 +34,33 @@ export type WelcomeStep = SharedStep & {
   continueLabel: string;
 };
 
+export type InitialStoryVariant =
+  | "life"
+  | "overwhelm"
+  | "forgotten"
+  | "natural-note"
+  | "organized"
+  | "journal"
+  | "ask"
+  | "handoff";
+
+export type InitialStoryStep = SharedStep & {
+  kind: "story";
+  variant: InitialStoryVariant;
+  continueLabel: string;
+};
+
+export type ConversationStep = {
+  id: string;
+  kind: "conversation";
+  lines: readonly [string, string, string];
+  continueLabel: string;
+};
+
 export type QuestionStep = SharedStep & {
   kind: "question";
   questionId: OnboardingQuestionId;
+  animType: CharacterAnimationType;
   options: OnboardingOption[];
 };
 
@@ -39,7 +70,12 @@ export type EducationStep = SharedStep & {
   continueLabel: string;
 };
 
-export type OnboardingStep = WelcomeStep | QuestionStep | EducationStep;
+export type OnboardingStep =
+  | WelcomeStep
+  | InitialStoryStep
+  | ConversationStep
+  | QuestionStep
+  | EducationStep;
 
 export type OnboardingSnapshot = {
   flowVersion: string;
@@ -47,4 +83,6 @@ export type OnboardingSnapshot = {
   answers: OnboardingAnswers;
   completedAt: string | null;
   remoteSynced: boolean;
+  /** Set once an authenticated account claims this local pre-sign-in draft. */
+  accountId: string | null;
 };

@@ -4,13 +4,14 @@ export default function PrivacyPolicyRoute() {
   return (
     <LegalDocumentScreen
       title="Privacy Policy"
-      effectiveDate="September 19, 2026"
+      effectiveDate="September 20, 2026"
       intro="Finn is a private financial journal. This policy explains what the app handles, why it is needed, and the choices you have."
       sections={[
         {
           heading: "Information you provide",
           paragraphs: [
-            "Finn processes account details such as your email address and the financial notes, amounts, categories, people, places, receipt images, and preferences you choose to save.",
+            "Finn processes account details such as your email address and the financial notes, amounts, categories, people, places, extracted receipt text, and preferences you choose to save.",
+            "A receipt image is kept on your device only while parsing or retry is pending, sent as a transient authenticated request, and deleted after extraction succeeds. Finn does not store receipt images in its backend.",
             "Location is optional. When enabled, Finn may attach approximate place context when you save an entry; it is not intended for continuous tracking.",
           ],
         },
@@ -18,7 +19,7 @@ export default function PrivacyPolicyRoute() {
           heading: "How Finn uses information",
           paragraphs: [
             "Your information is used to authenticate you, save and sync your journal, organize entries, calculate totals, answer searches about your own history, prevent abuse, and keep the service reliable.",
-            "AI may receive the note or the limited context needed to structure an entry or interpret a search. Deterministic records—not an AI model—remain the source of truth for financial totals.",
+            "AI may receive a note, a transient receipt image, or the limited context needed to structure an entry or interpret a search. Deterministic records—not an AI model—remain the source of truth for financial totals.",
           ],
         },
         {

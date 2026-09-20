@@ -89,6 +89,9 @@ export function capture(value: unknown): CaptureInput {
     timezone,
     captured_at: new Date(captured).toISOString(),
     ...(v.selected_date ? { selected_date: date(v.selected_date) } : {}),
+    ...(v.approximate_place === undefined
+      ? {}
+      : { approximate_place: text(v.approximate_place, 160).trim() }),
   };
 }
 export function extraction(

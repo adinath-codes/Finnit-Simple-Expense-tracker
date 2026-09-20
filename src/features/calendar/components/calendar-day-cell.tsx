@@ -1,3 +1,5 @@
+import Animated from "react-native-reanimated";
+import { Motion } from "@/constants/motion";
 import { StyleSheet, Text } from "react-native";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
@@ -24,6 +26,7 @@ export function CalendarDayCell({
       accessibilityHint={
         day.isFuture ? undefined : "Shows this date in the journal behind the calendar."
       }
+      accessibilityState={{ selected: day.isSelected }}
       disabled={day.isFuture}
       onPress={() => onSelect(day.date)}
       hitSlop={1}
@@ -34,6 +37,11 @@ export function CalendarDayCell({
         day.isFuture && styles.future,
       ]}
     >
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, {
+        backgroundColor: Finn.primarySoft, borderRadius: 10,
+        opacity: day.isSelected ? 1 : 0, transitionProperty: "opacity",
+        transitionDuration: Motion.press, transitionTimingFunction: Motion.cssEaseOut,
+      }]} />
       <Text
         style={[
           styles.dayNumber,
@@ -75,7 +83,6 @@ const styles = StyleSheet.create({
     borderColor: Finn.primary,
   },
   selected: {
-    backgroundColor: Finn.primarySoft,
     borderColor: Finn.primary,
     borderWidth: 1.5,
   },

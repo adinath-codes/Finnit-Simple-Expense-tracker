@@ -428,6 +428,10 @@ entrypoint = "./functions/parse-entry/index.ts"
 verify_jwt = false
 entrypoint = "./functions/correct-entry/index.ts"
 
+[functions.scan-receipt]
+verify_jwt = false
+entrypoint = "./functions/scan-receipt/index.ts"
+
 [functions.ask-money]
 verify_jwt = false
 entrypoint = "./functions/ask-money/index.ts"

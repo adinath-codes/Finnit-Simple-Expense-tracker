@@ -10,6 +10,14 @@ import {
 } from "../_shared/runtime.ts";
 import type { SavedEntry } from "../_shared/contracts.ts";
 
+function withApproximatePlace<T extends { contexts: string[] }>(
+  value: T,
+  approximatePlace?: string,
+) {
+  if (!approximatePlace || value.contexts.includes(approximatePlace)) return value;
+  return { ...value, contexts: [...value.contexts.slice(0, 19), approximatePlace] };
+}
+
 serve(async (body, ctx) => {
   const input = capture(body);
   await requireQuota(ctx);
@@ -46,7 +54,7 @@ serve(async (body, ctx) => {
   }
   const candidates = await catalog(ctx);
   const parsed = extraction(
-    parseNote(input, candidates),
+    withApproximatePlace(parseNote(input, candidates), input.approximate_place),
     candidates.categories.map((c) => c.id),
     candidates.merchants.map((m) => m.id),
   );
@@ -76,16 +84,17 @@ serve(async (body, ctx) => {
   if (!claimed) return { entry, cached: true };
   try {
     const { result, modelResult } = await enrich(ctx, input, candidates);
+    const resultWithPlace = withApproximatePlace(result, input.approximate_place);
     entry = await rpc(ctx.admin, "finn_commit_entry", {
       p_user: ctx.userId,
       p_input: input,
-      p_extraction: result,
+      p_extraction: resultWithPlace,
       p_expected_revision: 1,
       p_audit: {
         event: "llm_extraction",
         parser_result: parsed,
         llm_result: modelResult,
-        validated_result: result,
+        validated_result: resultWithPlace,
         model: Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash",
       },
     });

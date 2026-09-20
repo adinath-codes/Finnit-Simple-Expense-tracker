@@ -5,6 +5,7 @@ import {
   type AnimationSpec,
   type SymbolViewProps,
 } from "expo-symbols";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { Finn } from "@/constants/theme";
 
 export const SymbolAnimationContext = createContext({
@@ -43,6 +44,7 @@ const names = {
   note: ["doc.text", "description"],
   sparkle: ["sparkles", "auto_awesome"],
   camera: ["camera", "photo_camera"],
+  gallery: ["photo.on.rectangle", "photo_library"],
   flash: ["bolt.fill", "flash_on"],
   flashOff: ["bolt.slash.fill", "flash_off"],
   flipCamera: ["arrow.triangle.2.circlepath.camera", "flip_camera_android"],
@@ -62,18 +64,24 @@ export function Icon({
   size = 20,
   color = Finn.ink,
   colors,
-  animation = "bounce",
+  animation = name === "search" || name === "camera" ? "pulse" : name === "bookmark" ? "scale" : false,
+  animationTrigger,
 }: {
   name: IconName;
   size?: number;
   color?: string;
   colors?: string[];
   animation?: NonNullable<AnimationSpec["effect"]>["type"] | false;
+  /** Increment after a successful operation; overrides the nearest button trigger. */
+  animationTrigger?: number;
 }) {
   const [ios, other] = names[name];
-  const { reduceMotion, trigger } = useContext(SymbolAnimationContext);
+  const context = useContext(SymbolAnimationContext);
+  const reduced = useMotionPreference();
+  const reduceMotion = reduced || context.reduceMotion;
+  const trigger = animationTrigger ?? context.trigger;
   const animationSpec: AnimationSpec | undefined =
-    animation && trigger > 0 && !reduceMotion
+    Platform.OS === "ios" && animation && trigger > 0 && !reduceMotion
       ? {
           effect: {
             type: animation,
