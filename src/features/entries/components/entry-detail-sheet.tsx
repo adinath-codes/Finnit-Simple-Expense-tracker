@@ -1,8 +1,8 @@
-import { ContentFade, Reveal, DisclosureChevron, MotionLayout } from "@/components/ui/motion";
+import { ContentFade } from "@/components/ui/motion";
 import { Fragment, useState } from "react";
-import { Alert, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import * as Linking from "expo-linking";
+import { Image } from "expo-image";
 import {
   AppSheet,
   SectionLabel,
@@ -14,15 +14,17 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
-import type { EntryItem } from "@/types/domain";
+import type { EntryAllocationRow, EntryAmountTerm } from "@/types/domain";
 import { entryTotal } from "@/utils/amounts";
-import { money } from "@/utils/currency";
+import { currencySymbol, moneyValue } from "@/utils/currency";
 import { TransactionBreakdown } from "./transaction-breakdown";
 import { ReceiptPreview } from "./receipt-preview";
 import { retryReceipt } from "@/features/camera/services/receipt-service";
+import { FinnCorrectionComposer } from "./finn-correction-composer";
+import { useSession } from "@/features/auth/providers/session-provider";
+import { amountBreakdownText } from "@/features/entries/services/breakdown-service";
 
 const BANKNOTE_GREEN = "#20C878";
-const REFERENCE_LINK_BLUE = "#5B9EC2";
 
 export default function EntryDetailSheet() {
   const { entryId } = useLocalSearchParams<{ entryId: string }>();
@@ -37,13 +39,20 @@ export default function EntryDetailSheet() {
     retrySync,
     keepLocalVersion,
     acceptRemoteVersion,
+    askFinnToCorrectEntry,
   } = useJournal();
+  const { session } = useSession();
   const entry = entries.find((item) => item.id === entryId);
   const [editing, setEditing] = useState(false);
-  const [note, setNote] = useState(entry?.note ?? "");
+  const [note, setNote] = useState(
+    entry?.receipt ? entry.merchant : entry?.note ?? "",
+  );
   const [saved, setSaved] = useState(false);
-  const [confirmation, setConfirmation] = useState<{ kind: "note" | "shortcut"; trigger: number } | null>(null);
-  const [sourcesOpen, setSourcesOpen] = useState(true);
+  const [confirmation, setConfirmation] = useState<{
+    kind: "note" | "merchant" | "shortcut";
+    trigger: number;
+  } | null>(null);
+  const [correctionOpen, setCorrectionOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [printedTotal, setPrintedTotal] = useState(
@@ -63,11 +72,20 @@ export default function EntryDetailSheet() {
   }
 
   const total = entryTotal(entry);
+  const mixedCurrencies = new Set(entry.items.map((item) => item.currency ?? settings.currency)).size > 1;
   const saveEditedNote = async () => {
-    if (note.trim()) {
-      try { await updateEntry({ ...entry, note: note.trim() }); }
+    const value = note.trim();
+    if (entry.receipt || value) {
+      try {
+        await updateEntry(entry.receipt
+          ? { ...entry, merchant: value }
+          : { ...entry, note: value });
+      }
       catch { return; }
-      setConfirmation((current) => ({ kind: "note", trigger: (current?.trigger ?? 0) + 1 }));
+      setConfirmation((current) => ({
+        kind: entry.receipt ? "merchant" : "note",
+        trigger: (current?.trigger ?? 0) + 1,
+      }));
     }
     setEditing(false);
   };
@@ -107,11 +125,24 @@ export default function EntryDetailSheet() {
       headerLayout="leading"
       headerScrollable
       bodyStyle={styles.body}
+      stickyFooter={correctionOpen}
+      footer={correctionOpen ? (
+        <FinnCorrectionComposer
+          disabled={entry.syncState === "pending"}
+          onSubmit={async (instruction) => {
+            await askFinnToCorrectEntry(entry.id, instruction);
+            setCorrectionOpen(false);
+            Keyboard.dismiss();
+          }}
+        />
+      ) : undefined}
       right={
         <View style={styles.headerActions}>
           <IconButton
             name={editing ? "check" : "more"}
-            label={editing ? "Save entry text" : "Entry actions"}
+            label={editing
+              ? entry.receipt ? "Save receipt merchant" : "Save entry text"
+              : "Entry actions"}
             onPress={async () => {
               if (editing) void saveEditedNote();
               else setActionsOpen((open) => !open);
@@ -140,15 +171,27 @@ export default function EntryDetailSheet() {
         <View accessibilityLiveRegion="polite" style={[shared.row, { marginBottom: 12 }]}>
           <Icon name={confirmation.kind === "shortcut" ? "bookmark" : "check"} color={Finn.primary}
             animation={confirmation.kind === "shortcut" ? "scale" : "bounce"} animationTrigger={confirmation.trigger} size={15} />
-          <Text style={shared.subtle}>{confirmation.kind === "shortcut" ? "Saved to your shortcuts" : "Note saved"}</Text>
+          <Text style={shared.subtle}>
+            {confirmation.kind === "shortcut"
+              ? "Saved to your shortcuts"
+              : confirmation.kind === "merchant"
+                ? "Merchant saved"
+                : "Note saved"}
+          </Text>
         </View>
       </ContentFade>}
       {entry.syncState === "pending" && (
         <View accessible accessibilityLiveRegion="polite" style={[shared.card, styles.syncCard]}>
           <Icon name="refresh" color={Finn.muted} size={16} />
           <View style={styles.syncCopy}>
-            <Text style={styles.syncTitle}>Saved on this device</Text>
-            <Text style={shared.subtle}>Waiting to sync. Finn will keep retrying automatically.</Text>
+            <Text style={styles.syncTitle}>
+              {entry.pendingAction === "ai_correct" ? "Finn is revising the breakdown" : "Saved on this device"}
+            </Text>
+            <Text style={shared.subtle}>
+              {entry.pendingAction === "ai_correct"
+                ? "The current breakdown stays here while this revision syncs."
+                : "Waiting to sync. Finn will keep retrying automatically."}
+            </Text>
           </View>
         </View>
       )}
@@ -203,19 +246,25 @@ export default function EntryDetailSheet() {
       {actionsOpen && !editing && (
         <View style={[shared.card, styles.actionsMenu]}>
           <Button
-            label="Edit original note"
+            label={entry.receipt ? "Edit receipt merchant" : "Edit original note"}
             onPress={() => {
               setActionsOpen(false);
+              setNote(entry.receipt
+                ? entry.merchant
+                : entry.note);
               setEditing(true);
             }}
             style={styles.actionRow}
           >
             <Icon name="edit" size={15} color={Finn.primary} />
-            <Text style={styles.actionText}>Edit original note</Text>
+            <Text style={styles.actionText}>
+              {entry.receipt ? "Edit receipt merchant" : "Edit original note"}
+            </Text>
           </Button>
           <View style={styles.actionDivider} />
           <Button
             label={saved ? "Entry saved as a shortcut" : "Save as a shortcut"}
+            disabled={mixedCurrencies}
             onPress={async () => {
               try {
                 await savePreset({
@@ -260,11 +309,12 @@ export default function EntryDetailSheet() {
 
       {editing ? (
         <TextInput
-          accessibilityLabel="Edit original note"
+          accessibilityLabel={entry.receipt ? "Edit receipt merchant" : "Edit original note"}
           value={note}
           onChangeText={setNote}
           multiline
           autoFocus
+          placeholder={entry.receipt ? "Merchant not found" : undefined}
           style={[shared.input, styles.noteInput]}
         />
       ) : (
@@ -336,106 +386,42 @@ export default function EntryDetailSheet() {
         </View>
       )}
 
+      <SectionLabel style={styles.sectionLabel}>Amount breakdown</SectionLabel>
       <View style={[shared.card, styles.amountCard]}>
-        <AmountExpression items={entry.items} currency={settings.currency} />
+        <AmountExpression terms={entry.amountBreakdown ?? []} />
       </View>
 
-      <SectionLabel style={styles.sectionLabel}>Items</SectionLabel>
-      <TransactionBreakdown entry={entry} onChange={updateEntry} />
+      <SectionLabel style={styles.sectionLabel}>Items breakdown</SectionLabel>
+      {!entry.receipt && entry.allocationRows?.length
+        ? <ParticipantBreakdown
+            rows={entry.allocationRows}
+            selfName={session?.user.user_metadata.full_name ?? session?.user.user_metadata.name}
+          />
+        : <TransactionBreakdown entry={entry} onChange={updateEntry} />}
 
       <SectionLabel style={styles.sectionLabel}>
         Finn’s thought process
       </SectionLabel>
       <View style={[shared.card, styles.thoughtCard]}>
-        <View style={styles.confidence}>
-          <View style={styles.confidenceRing}>
-            <View style={styles.confidenceArc} />
-            <Text style={styles.confidenceScore}>75</Text>
-          </View>
-          <View>
-            <Text style={styles.confidenceLabel}>Confidence level</Text>
-            <Text style={styles.confidenceTitle}>High</Text>
-          </View>
-        </View>
+        <Image
+          accessibilityLabel="Finn working on a laptop"
+          contentFit="contain"
+          source={require("../../../../assets/images/character/onboarding/future-question-base.png")}
+          style={styles.thoughtIllustration}
+        />
         <Text style={styles.thoughtText}>{entry.thought}</Text>
-        <Button
-          label="Edit original note"
-          onPress={() => setEditing(true)}
-          style={styles.correct}
-        >
-          <Icon name="edit" size={12} color={Finn.primary} />
-          <Text style={styles.correctText}>Something off? Click to edit</Text>
-        </Button>
-      </View>
-
-      <SectionLabel style={styles.sectionLabel}>References</SectionLabel>
-      <MotionLayout style={[shared.card, styles.referencesCard]}>
-        <Button
-          label="Toggle entry references"
-          accessibilityState={{ expanded: sourcesOpen }}
-          onPress={() => setSourcesOpen((open) => !open)}
-          style={styles.referencesHeader}
-        >
-          <View style={styles.sourceIcons}>
-            {entry.sources.map((source, index) => (
-              <View
-                key={source.title}
-                style={[
-                  styles.sourceIcon,
-                  { backgroundColor: index ? "#EAF8EF" : "#FFF0D6" },
-                  { zIndex: entry.sources.length - index },
-                ]}
-              >
-                <Icon
-                  name={source.icon}
-                  size={13}
-                  color={index ? BANKNOTE_GREEN : Finn.amber}
-                />
-              </View>
-            ))}
-          </View>
-          <Text style={styles.sourcesCount}>
-            {entry.sources.length}{" "}
-            {entry.sources.length === 1 ? "source" : "sources"}
-          </Text>
-          <DisclosureChevron expanded={sourcesOpen} size={13} color={Finn.muted} />
-        </Button>
-        <Reveal open={sourcesOpen}>
-          <ScrollView
-            horizontal
-            contentContainerStyle={styles.sourceLinks}
-            showsHorizontalScrollIndicator={false}
+        {!entry.receipt && (
+          <Button
+            disabled={entry.syncState === "pending"}
+            label="Tell Finn what to change in the breakdown"
+            onPress={() => setCorrectionOpen(true)}
+            style={styles.correct}
           >
-            {entry.sources.map((source, index) => {
-              const link = sourceWebsite(source, entry.id);
-              const iconColor = index ? BANKNOTE_GREEN : Finn.amber;
-              return (
-                <Button
-                  key={source.title}
-                  accessibilityHint="Opens this reference"
-                  label={link.accessibilityLabel}
-                  onPress={() => {
-                    if (link.url) void Linking.openURL(link.url);
-                  }}
-                  style={styles.sourceLink}
-                >
-                  <View
-                    style={[
-                      styles.sourceLinkIcon,
-                    ]}
-                  >
-                    <Icon name={source.icon} size={13} color={iconColor} />
-                  </View>
-                  <Text numberOfLines={1} style={styles.sourceLinkText}>
-                    {link.label}
-                  </Text>
-                  <Icon name="arrow" size={12} color={Finn.muted} />
-                </Button>
-              );
-            })}
-          </ScrollView>
-        </Reveal>
-      </MotionLayout>
+            <Icon name="edit" size={12} color={Finn.primary} />
+            <Text style={styles.correctText}>Something’s off? Click here to edit.</Text>
+          </Button>
+        )}
+      </View>
 
       {deleting && (
         <View style={styles.deleteConfirm}>
@@ -463,50 +449,66 @@ export default function EntryDetailSheet() {
 }
 
 function AmountExpression({
-  items,
-  currency,
+  terms,
 }: {
-  items: EntryItem[];
-  currency: string;
+  terms: EntryAmountTerm[];
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const approximate = terms.some((term) => term.approximate);
+  const label = amountBreakdownText(terms);
+  if (!terms.length) {
+    return <Text style={styles.amountPlaceholder}>No amount breakdown yet</Text>;
+  }
   return (
-    <Text
-      accessibilityLabel="Item quantities and line totals"
-      style={styles.amountExpression}
-    >
-      {items.map((item, index) => {
-        return (
-          <Fragment key={item.id}>
-            {index > 0 && <Text style={styles.amountOperator}> + </Text>}
-            {item.quantity > 1 && item.unitPriceMinor !== null && item.unitPriceMinor !== undefined
-              ? <Text>{item.quantity} × {money(item.unitPriceMinor, currency)} = {money(item.amountMinor, currency)}</Text>
-              : item.quantity > 1
-                ? <Text>{item.quantity} items · {money(item.amountMinor, currency)}</Text>
-                : <Text>{money(item.amountMinor, currency)}</Text>}
-          </Fragment>
-        );
-      })}
-    </Text>
+    <View style={styles.amountExpressionWrap}>
+      <Button
+        accessibilityHint="Toggles the complete amount calculation"
+        accessibilityState={{ expanded }}
+        label={expanded ? "Collapse amount breakdown" : `Expand amount breakdown: ${label}`}
+        onPress={() => setExpanded((current) => !current)}
+        style={styles.amountExpressionButton}
+      >
+        <Text
+          accessibilityLabel={label}
+          ellipsizeMode="tail"
+          numberOfLines={expanded ? undefined : 1}
+          style={styles.amountExpression}
+        >
+          {terms.map((term, index) => (
+            <Fragment key={term.id}>
+              {index > 0 && <Text style={styles.amountOperator}> + </Text>}
+              <Text>{term.factors.join(" * ")} * </Text>
+              <Text style={styles.currencySymbol}>{currencySymbol(term.currency)}</Text>
+              <Text>{moneyValue(term.unitAmountMinor, term.currency)}</Text>
+            </Fragment>
+          ))}
+        </Text>
+      </Button>
+      {approximate && <Text style={styles.approximate}>(approx breakdown)</Text>}
+    </View>
   );
 }
 
-function sourceWebsite(
-  source: { icon: "note" | "location"; detail: string },
-  entryId: string,
-) {
-  if (source.icon === "location") {
-    return {
-      accessibilityLabel: `Open ${source.detail} in Google Maps`,
-      label: "maps.google.com",
-      url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(source.detail)}`,
-    };
-  }
-
-  return {
-    accessibilityLabel: "View original entry note",
-    label: `finn.app/entries/${entryId}`,
-    url: Linking.createURL(`entries/${entryId}`),
-  };
+function ParticipantBreakdown({
+  rows,
+  selfName,
+}: {
+  rows: EntryAllocationRow[];
+  selfName?: string;
+}) {
+  return <View style={[shared.card, styles.participantCard]}>
+    {rows.map((row, index) => (
+      <View key={row.id} style={[styles.participantRow, index > 0 && styles.participantDivider]}>
+        <Text style={styles.participantName}>
+          {row.partyKind === "self" ? selfName?.trim() || "You" : row.label}
+        </Text>
+        <Text style={styles.participantAmount}>
+          <Text style={styles.currencySymbol}>{currencySymbol(row.currency)}</Text>
+          {moneyValue(row.amountMinor, row.currency)}
+        </Text>
+      </View>
+    ))}
+  </View>;
 }
 
 const styles = StyleSheet.create({
@@ -571,6 +573,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
+  amountExpressionButton: {
+    minHeight: 44,
+    width: "100%",
+  },
+  amountExpressionWrap: { alignItems: "center", gap: 5 },
+  amountPlaceholder: {
+    color: Finn.muted,
+    fontFamily: JournalType.regular,
+    fontSize: 13,
+  },
+  approximate: {
+    color: Finn.muted,
+    fontFamily: JournalType.regular,
+    fontSize: 11,
+    lineHeight: 15,
+  },
   amountOperator: { color: Finn.secondary },
   currencySymbol: { color: BANKNOTE_GREEN },
   sectionLabel: {
@@ -583,51 +601,7 @@ const styles = StyleSheet.create({
     paddingLeft: 0,
   },
   thoughtCard: { borderRadius: 18, padding: 16 },
-  confidence: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 11,
-    marginBottom: 12,
-  },
-  confidenceRing: {
-    alignItems: "center",
-    borderColor: "#D8DDD9",
-    borderRadius: 26,
-    borderWidth: 3,
-    height: 52,
-    justifyContent: "center",
-    position: "relative",
-    width: 52,
-  },
-  confidenceArc: {
-    borderColor: BANKNOTE_GREEN,
-    borderRadius: 26,
-    borderRightColor: "transparent",
-    borderWidth: 3,
-    height: 52,
-    left: -3,
-    position: "absolute",
-    top: -3,
-    transform: [{ rotate: "-45deg" }],
-    width: 52,
-  },
-  confidenceScore: {
-    color: BANKNOTE_GREEN,
-    fontFamily: JournalType.bold,
-    fontSize: 15,
-  },
-  confidenceLabel: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  confidenceTitle: {
-    color: BANKNOTE_GREEN,
-    fontFamily: JournalType.bold,
-    fontSize: 14,
-    lineHeight: 18,
-  },
+  thoughtIllustration: { height: 62, marginBottom: 10, width: 82 },
   thoughtText: {
     color: Finn.ink,
     fontFamily: JournalType.regular,
@@ -646,60 +620,17 @@ const styles = StyleSheet.create({
     fontFamily: JournalType.medium,
     fontSize: 12,
   },
-  referencesCard: { borderRadius: 17, padding: 12 },
-  referencesHeader: {
-    flexDirection: "row",
-    gap: 8,
-    justifyContent: "flex-end",
-    minHeight: 28,
-  },
-  sourceIcons: { flex: 1, flexDirection: "row" },
-  sourceIcon: {
+  participantCard: { gap: 0, paddingVertical: 5 },
+  participantRow: {
     alignItems: "center",
-    borderColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 2,
-    height: 28,
-    justifyContent: "center",
-    marginRight: -10,
-    width: 28,
-  },
-  sourcesCount: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  sourceLinks: {
     flexDirection: "row",
-    gap: 8,
-    marginTop: 9,
-    paddingRight: 4,
+    justifyContent: "space-between",
+    minHeight: 48,
+    paddingHorizontal: 3,
   },
-  sourceLink: {
-
-    borderColor: "#EEE7E1",
-    borderRadius: 18,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 7,
-    maxWidth: "100%",
-    minHeight: 36,
-    paddingHorizontal: 8,
-  },
-  sourceLinkIcon: {
-    alignItems: "center",
-    borderRadius: 12,
-    height: 24,
-    justifyContent: "center",
-    width: 24,
-  },
-  sourceLinkText: {
-    color: REFERENCE_LINK_BLUE,
-    fontFamily: JournalType.medium,
-    fontSize: 12,
-    maxWidth: 150,
-  },
+  participantDivider: { borderTopColor: Finn.line, borderTopWidth: StyleSheet.hairlineWidth },
+  participantName: { color: Finn.ink, fontFamily: JournalType.medium, fontSize: 14 },
+  participantAmount: { color: Finn.ink, fontFamily: JournalType.bold, fontSize: 15 },
   actionsMenu: {
     marginBottom: 18,
     marginTop: -7,

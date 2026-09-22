@@ -3,19 +3,21 @@ import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Path, Rect } from "react-native-svg";
 import { Button } from "@/components/ui/button";
+import { CustomToast, type CustomToastState } from "@/components/ui/custom-toast";
 import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { AppleMark, GoogleMark } from "@/features/auth/components/provider-marks";
@@ -41,23 +43,44 @@ function messageFor(error: unknown) {
 }
 
 export default function AuthScreen() {
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    id: number;
+    mess: string;
+    highlighted?: string;
+    state: CustomToastState;
+  } | null>(null);
+  const toastId = useRef(0);
+
+  const showToast = (mess: string, state: CustomToastState, highlighted?: string) => {
+    setToast({ id: ++toastId.current, mess, highlighted, state });
+  };
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = toast.id;
+    const timeout = setTimeout(() => {
+      setToast((current) => (current?.id === id ? null : current));
+    }, 4000);
+    return () => clearTimeout(timeout);
+  }, [toast]);
+
+  const warnForConsent = () =>
+    showToast("To continue with Finn,", "warning", "Agree to the Privacy Policy and Terms.");
 
   const run = async (key: string, action: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(key);
-    setError(null);
-    setNotice(null);
+    setToast(null);
     try {
       await action();
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
-      setError(messageFor(caught));
+      showToast(messageFor(caught), "error");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setBusy(null);
@@ -66,7 +89,7 @@ export default function AuthScreen() {
 
   const submitEmail = () => {
     if (!agreed) {
-      setError("Agree to the Privacy Policy and Terms of Service to continue.");
+      warnForConsent();
       return;
     }
     return run("email", async () => {
@@ -86,10 +109,10 @@ export default function AuthScreen() {
         throw new Error("Enter your email address first.");
       }
       await sendPasswordReset(email);
-      setNotice("Password reset instructions are on their way.");
+      showToast("Password reset instructions are on their way.", "info", "Check your inbox.");
     });
 
-  const authDisabled = !!busy || !agreed;
+  const consentGated = !agreed;
 
   return (
     <View style={styles.root}>
@@ -119,22 +142,30 @@ export default function AuthScreen() {
             <View style={styles.card}>
               <AppleSignInButton
                 busy={busy === "apple"}
-                disabled={authDisabled}
-                onPress={() =>
-                  run("apple", () =>
+                disabled={!!busy}
+                consentGated={consentGated}
+                onBlocked={warnForConsent}
+                onPress={() => {
+                  if (consentGated) return warnForConsent();
+                  return run("apple", () =>
                     Platform.OS === "ios"
                       ? signInWithNativeApple()
                       : signInWithSocialProvider("apple"),
-                  )
-                }
+                  );
+                }}
               />
 
-              <SocialButton
-                label="Continue with Google"
-                busy={busy === "google"}
-                disabled={authDisabled}
-                onPress={() => run("google", () => signInWithSocialProvider("google"))}
-              />
+              <View style={consentGated && styles.disabledButton}>
+                <SocialButton
+                  label="Continue with Google"
+                  busy={busy === "google"}
+                  disabled={!!busy}
+                  onPress={() => {
+                    if (consentGated) return warnForConsent();
+                    return run("google", () => signInWithSocialProvider("google"));
+                  }}
+                />
+              </View>
 
               <View style={styles.dividerRow}>
                 <View style={styles.divider} />
@@ -182,27 +213,19 @@ export default function AuthScreen() {
                 <Text style={styles.forgotText}>Forgot password?</Text>
               </Button>
 
-              <Button
-                label="Sign in with email"
-                onPress={submitEmail}
-                disabled={authDisabled}
-                style={styles.primaryButton}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {busy === "email" ? "Signing in…" : "Sign in"}
-                </Text>
-              </Button>
+              <View style={consentGated && styles.disabledButton}>
+                <Button
+                  label="Sign in with email"
+                  onPress={submitEmail}
+                  disabled={!!busy}
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {busy === "email" ? "Signing in…" : "Sign in"}
+                  </Text>
+                </Button>
+              </View>
 
-              {error ? (
-                <Text accessibilityRole="alert" style={styles.error}>
-                  {error}
-                </Text>
-              ) : null}
-              {notice ? (
-                <Text accessibilityRole="alert" style={styles.notice}>
-                  {notice}
-                </Text>
-              ) : null}
             </View>
 
             <View style={styles.consentRow}>
@@ -213,7 +236,7 @@ export default function AuthScreen() {
                 disabled={!!busy}
                 onPress={() => {
                   setAgreed((value) => !value);
-                  setError(null);
+                  setToast(null);
                 }}
                 style={[styles.checkbox, agreed && styles.checkboxChecked]}
               >
@@ -241,6 +264,16 @@ export default function AuthScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
+        <View pointerEvents="box-none" style={[styles.toastHost, { top: insets.top + 8 }]}>
+          {toast ? (
+            <CustomToast
+              key={toast.id}
+              mess={toast.mess}
+              highlighted={toast.highlighted}
+              state={toast.state}
+            />
+          ) : null}
+        </View>
       </SafeAreaView>
     </View>
   );
@@ -336,37 +369,57 @@ function BackgroundDoodles() {
 function AppleSignInButton({
   busy,
   disabled,
+  consentGated,
+  onBlocked,
   onPress,
 }: {
   busy: boolean;
   disabled: boolean;
+  consentGated: boolean;
+  onBlocked: () => void;
   onPress: () => void;
 }) {
   if (Platform.OS === "ios") {
-    return (
+    const nativeButton = (
       <AppleAuthentication.AppleAuthenticationButton
         buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
         buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
         cornerRadius={16}
         onPress={onPress}
-        pointerEvents={disabled ? "none" : "auto"}
-        accessibilityState={{ disabled }}
-        style={[styles.nativeAppleButton, disabled && styles.disabledButton]}
+        pointerEvents={disabled || consentGated ? "none" : "auto"}
+        accessibilityState={{ disabled: disabled || consentGated }}
+        style={styles.nativeAppleButton}
       />
     );
+    if (consentGated && !disabled) {
+      return (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Continue with Apple"
+          accessibilityHint="Agree to the Privacy Policy and Terms of Service first"
+          onPress={onBlocked}
+          style={styles.disabledButton}
+        >
+          {nativeButton}
+        </Pressable>
+      );
+    }
+    return <View style={disabled && styles.disabledButton}>{nativeButton}</View>;
   }
 
   return (
-    <Button
-      label="Continue with Apple"
-      onPress={onPress}
-      disabled={disabled}
-      style={styles.appleButton}
-    >
-      <AppleMark size={20} />
-      <Text style={styles.appleLabel}>{busy ? "Opening…" : "Continue with Apple"}</Text>
-      <View style={styles.providerSpacer} />
-    </Button>
+    <View style={consentGated && styles.disabledButton}>
+      <Button
+        label="Continue with Apple"
+        onPress={onPress}
+        disabled={disabled}
+        style={styles.appleButton}
+      >
+        <AppleMark size={20} />
+        <Text style={styles.appleLabel}>{busy ? "Opening…" : "Continue with Apple"}</Text>
+        <View style={styles.providerSpacer} />
+      </Button>
+    </View>
   );
 }
 
@@ -394,6 +447,13 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Finn.canvas, overflow: "hidden" },
   safeArea: { flex: 1 },
   flex: { flex: 1 },
+  toastHost: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    zIndex: 10,
+    alignItems: "center",
+  },
   background: {
     position: "absolute",
     inset: 0,
@@ -595,20 +655,6 @@ const styles = StyleSheet.create({
     fontFamily: JournalType.bold,
     fontSize: 16,
     color: "#FFFFFF",
-  },
-  error: {
-    fontFamily: JournalType.regular,
-    color: Finn.danger,
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: "center",
-  },
-  notice: {
-    fontFamily: JournalType.regular,
-    color: "#24764E",
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: "center",
   },
   consentRow: {
     flexDirection: "row",

@@ -10,38 +10,12 @@ import {
   subscribeJournalCache,
 } from "@/lib/offline/database";
 import { syncJournal } from "@/lib/offline/sync-queue";
-import { parseNote } from "@/features/entries/services/entry-parser";
 import type {
   CaptureInput,
-  Catalog,
   SavedEntry,
 } from "@/lib/supabase/database.types";
 import { capture } from "../../../../supabase/functions/_shared/validation";
-
-const offlineCatalog: Catalog = {
-  categories: [
-    "food",
-    "transport",
-    "shopping",
-    "bills",
-    "entertainment",
-    "health",
-    "education",
-    "travel",
-    "software",
-    "subscriptions",
-    "work",
-    "income",
-    "transfer",
-    "debt",
-    "other",
-  ].map((id) => ({ id, name: id })),
-  merchants: [],
-  aliases: [],
-  rules: [],
-  people: [],
-  contexts: [],
-};
+import { pendingExtraction } from "../../../../supabase/functions/_shared/pending-entry";
 
 export function createCaptureInput(
   rawText: string,
@@ -72,7 +46,7 @@ export async function captureJournalNote(value: CaptureInput) {
     }
     const local = {
       input,
-      extraction: parseNote(input, cache.catalog ?? offlineCatalog),
+      extraction: pendingExtraction(input),
       sync: "pending" as const,
     };
     cache.entries[input.id] = local;
@@ -139,7 +113,7 @@ export async function refreshJournal() {
     let query = db
       .from("journal_entries")
       .select(
-        "id,source_type,raw_text,original_text,captured_at,occurred_on,timezone,currency,revision,extraction,deleted_at,capture_request",
+        "id,raw_text,original_text,captured_at,occurred_on,timezone,currency,revision,extraction,deleted_at,capture_request",
       )
       .eq("user_id", userId)
       .order("id")
@@ -149,7 +123,7 @@ export async function refreshJournal() {
     if (error) throw error;
     await changeJournalCache(userId, (cache) => {
       for (const row of data) {
-        if (row.source_type === "receipt") continue;
+        if (row.original_text === null) continue;
         if (cache.jobs.some((j) => j.entryId === row.id)) continue;
         const entry = row as unknown as SavedEntry;
         if ((cache.entries[row.id]?.remote?.revision ?? 0) > entry.revision)
@@ -171,44 +145,4 @@ export async function refreshJournal() {
     after = data[data.length - 1].id;
   }
   return listLocalJournal();
-}
-
-/** Cache RLS-filtered rules and entity names for deterministic offline capture. */
-export async function refreshJournalCatalog() {
-  const userId = await currentUserId();
-  const db = getSupabase();
-  const results = await Promise.all([
-    db.from("categories").select("id,name").limit(100),
-    db
-      .from("merchants")
-      .select("id,canonical_name,default_category_id,user_id")
-      .order("id")
-      .limit(1000),
-    db
-      .from("merchant_aliases")
-      .select("alias,merchant_id,user_id")
-      .order("id")
-      .limit(1000),
-    db
-      .from("category_rules")
-      .select("merchant_key,category_id")
-      .order("merchant_key")
-      .limit(1000),
-    db.from("people").select("name").order("name").limit(1000),
-    db.from("contexts").select("name").order("name").limit(1000),
-  ]);
-  if (results.some((r) => r.error))
-    throw new Error("Could not refresh journal categories.");
-  const catalog: Catalog = {
-    categories: results[0].data!,
-    merchants: results[1].data!,
-    aliases: results[2].data!,
-    rules: results[3].data!,
-    people: results[4].data!,
-    contexts: results[5].data!,
-  };
-  await changeJournalCache(userId, (cache) => {
-    cache.catalog = catalog;
-  });
-  return catalog;
 }

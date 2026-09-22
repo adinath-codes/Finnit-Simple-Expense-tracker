@@ -19,6 +19,20 @@ export type CorrectionInput = {
   extraction: Extraction;
   remember_rule?: { merchant_key: string; category_id: string };
 };
+export type ReparseInput = {
+  action: "reparse";
+  operation_id: string;
+  expected_revision: number;
+  id: string;
+  input: CaptureInput;
+};
+export type AIEntryCorrectionInput = {
+  action: "ai_correct";
+  operation_id: string;
+  id: string;
+  expected_revision: number;
+  instruction: string;
+};
 export type DeleteInput = {
   action: "delete";
   operation_id: string;
@@ -42,6 +56,8 @@ export type SyncJob = {
   payload:
     | CaptureInput
     | CorrectionInput
+    | ReparseInput
+    | AIEntryCorrectionInput
     | ReceiptCorrectionInput
     | ManualReceiptInput
     | DeleteInput
@@ -75,7 +91,7 @@ export type CachedReceipt = {
   error?: string;
 };
 export type JournalCache = {
-  version: 2;
+  version: 3;
   entries: Record<string, CachedEntry>;
   receipts: Record<string, CachedReceipt>;
   jobs: SyncJob[];

@@ -6,7 +6,7 @@ import {
 } from "./contracts.ts";
 import { date, currency, object, text, ApiError } from "./validation.ts";
 import { monthStart, shiftDay } from "./dates.ts";
-import { contains, normalize } from "./parser.ts";
+import { contains, normalize } from "./text.ts";
 
 export function validatePlan(value: unknown, catalog: Catalog): SearchPlan {
   const p = object(value);
@@ -21,6 +21,12 @@ export function validatePlan(value: unknown, catalog: Catalog): SearchPlan {
     "context",
     "text",
     "currency",
+    "metric",
+    "group_by",
+    "participant_scope",
+    "split_view",
+    "include_sources",
+    "review_policy",
   ];
   if (Object.keys(p).some((key) => !allowed.includes(key)))
     throw new ApiError(400, "unsupported_filter");
@@ -55,6 +61,37 @@ export function validatePlan(value: unknown, catalog: Catalog): SearchPlan {
     !catalog.contexts.some((n) => normalize(n.name) === normalize(context))
   )
     throw new ApiError(400, "unknown_context");
+  const metrics = [
+    "stated_amount",
+    "user_share",
+    "group_total",
+    "paid_by_user",
+    "owed_to_user",
+    "user_owes",
+    "reimbursed",
+    "gross_spend",
+  ] as const;
+  const groupings = [
+    "entry", "day", "week", "month", "category", "merchant", "context", "participant",
+  ] as const;
+  const metric = p.metric === undefined ? "user_share" : p.metric;
+  if (!metrics.includes(metric as never)) throw new ApiError(400, "invalid_metric");
+  const groupBy = p.group_by === undefined ? [] : p.group_by;
+  if (
+    !Array.isArray(groupBy) || groupBy.length > 8 ||
+    groupBy.some((item) => !groupings.includes(item as never))
+  ) throw new ApiError(400, "invalid_grouping");
+  const participantScope = p.participant_scope ?? "any";
+  if (!["any", "self_only", "with_others"].includes(participantScope as string))
+    throw new ApiError(400, "invalid_participant_scope");
+  const splitView = p.split_view ?? "none";
+  if (!["none", "self_vs_others", "by_participant"].includes(splitView as string))
+    throw new ApiError(400, "invalid_split_view");
+  const reviewPolicy = p.review_policy ?? "exclude_unconfirmed";
+  if (!["exclude_unconfirmed", "include_review_rows"].includes(reviewPolicy as string))
+    throw new ApiError(400, "invalid_review_policy");
+  if (p.include_sources !== undefined && typeof p.include_sources !== "boolean")
+    throw new ApiError(400, "invalid_include_sources");
   return {
     operation: p.operation as SearchPlan["operation"],
     direction: p.direction as SearchPlan["direction"],
@@ -66,6 +103,12 @@ export function validatePlan(value: unknown, catalog: Catalog): SearchPlan {
     context,
     text: p.text === null ? null : text(p.text, 500),
     currency: p.currency === null ? null : currency(p.currency),
+    metric: metric as SearchPlan["metric"],
+    group_by: groupBy as SearchPlan["group_by"],
+    participant_scope: participantScope as SearchPlan["participant_scope"],
+    split_view: splitView as SearchPlan["split_view"],
+    include_sources: p.include_sources === true,
+    review_policy: reviewPolicy as SearchPlan["review_policy"],
   };
 }
 export function parseSearch(
@@ -161,7 +204,7 @@ export function parseSearch(
     remainder = remainder.replace(new RegExp(`\\b${code}\\b`, "gi"), " ");
   remainder = remainder
     .replace(
-      /\b(how much|what is|what was|what are|did i|have i|do i|i|spent|spend|spending|cost|show|list|my|on|at|with|in|for|the|this|and|total|of|expense|expenses|income|transfer|lent|borrowed|repayment)\b/gi,
+      /\b(how much|what is|what was|what are|did i|have i|do i|i|spent|spend|spending|cost|show|list|my|on|at|with|in|for|the|this|and|total|group|gross|share|split|pay|paid|owe|owed|owes|reimbursements?|reimbursed|of|expense|expenses|income|transfer|lent|borrowed|repayment)\b/gi,
       " ",
     )
     .replace(/[?!.]/g, " ")
@@ -178,6 +221,26 @@ export function parseSearch(
     context: context?.name ?? null,
     text: remainder || null,
     currency: currencies[0] ?? null,
+    metric: /\bgroup\s+total|total\s+(?:cost|bill)\b/i.test(query)
+      ? "group_total"
+      : /\b(?:did\s+i|i)\s+pay|paid\s+by\s+me\b/i.test(query)
+        ? "paid_by_user"
+        : /\b(?:owed?\s+to\s+me|owes?\s+me)\b/i.test(query)
+          ? "owed_to_user"
+          : /\b(?:do\s+i\s+owe|i\s+owe)\b/i.test(query)
+            ? "user_owes"
+            : /\breimburs/i.test(query)
+              ? "reimbursed"
+              : /\bgross\s+spend\b/i.test(query)
+                ? "gross_spend"
+                : "user_share",
+    group_by: /\b(?:breakdown|split)\b/i.test(query) ? ["entry"] : [],
+    participant_scope: /\bwith\s+(?:friends?|family|others?|people|[A-Z][\p{L}-]+)\b/iu.test(query)
+      ? "with_others"
+      : "any",
+    split_view: /\b(?:show\s+the\s+)?split\b/i.test(query) ? "self_vs_others" : "none",
+    include_sources: /\b(?:show|list|source|breakdown)\b/i.test(query),
+    review_policy: "exclude_unconfirmed",
   };
   const unsupportedOrComplex =
     /\b(compare|most|least|owes|subscriptions|semester|between|except|excluding|or|before|after|since|until|january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(
@@ -195,7 +258,7 @@ export function parseSearch(
   );
   // The plan supports one value per entity, never a silently narrowed union.
   const unsupported =
-    /\b(compare|most|least|owes|subscriptions|except|excluding|not|without|over|under|more than|less than|at least|at most|greater than)\b/i.test(
+    /\b(compare|most|least|subscriptions|except|excluding|not|without|over|under|more than|less than|at least|at most|greater than)\b/i.test(
       query,
     ) ||
     directions.length > 1 ||

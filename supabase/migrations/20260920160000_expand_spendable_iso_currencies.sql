@@ -2,11 +2,6 @@
 -- ISO 4217 currency in the checked-in SIX List One snapshot. This is additive
 -- and safe to deploy before clients begin selecting the new codes.
 insert into public.currencies (code, minor_digits) values
-(node:47829) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
-(Use `node --trace-warnings ...` to show where the warning was created)
-(node:47829) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/adinath/Documents/Finn-expense-tracker-app/Finn/supabase/functions/_shared/currencies.ts is not specified and it doesn't parse as CommonJS.
-Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
-To eliminate this warning, add "type": "module" to /home/adinath/Documents/Finn-expense-tracker-app/Finn/package.json.
   ('AFN', 2),
   ('DZD', 2),
   ('ARS', 2),
@@ -164,4 +159,3 @@ To eliminate this warning, add "type": "module" to /home/adinath/Documents/Finn-
   ('PLN', 2)
 on conflict (code) do update
 set minor_digits = excluded.minor_digits;
-

@@ -1,5 +1,5 @@
 import type { Category, JournalEntry } from "@/types/domain";
-import { entryTotal } from "@/utils/amounts";
+import { entryTotal, itemAccountingAmount } from "@/utils/amounts";
 import { currencySymbol, money } from "@/utils/currency";
 import type { CalendarMonth } from "../types/calendar.types";
 
@@ -50,7 +50,7 @@ export function buildCalendarMonth({
       (totalsByDate.get(entry.date) ?? 0) + entryTotal(entry),
     );
     for (const item of entry.items) {
-      categoryTotals[item.category] += item.amountMinor;
+      categoryTotals[item.category] += itemAccountingAmount(item);
     }
   }
 

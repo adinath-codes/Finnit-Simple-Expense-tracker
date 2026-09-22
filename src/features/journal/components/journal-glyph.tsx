@@ -4,10 +4,9 @@ import { Icon, type IconName } from "@/components/ui/icon";
 const journalNames = {
   flame: "flame",
   settings: "settings",
-  mic: "mic",
   plus: "plus",
   camera: "camera",
-  keyboard: "keyboard",
+  check: "check",
   sparkle: "sparkle",
   more: "more",
   food: "food",

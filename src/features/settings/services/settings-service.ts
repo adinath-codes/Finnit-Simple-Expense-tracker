@@ -3,6 +3,7 @@ import { changeJournalCache } from "@/lib/offline/database";
 import { getSupabase } from "@/lib/supabase/client";
 import type { Goal, Preferences } from "@/types/domain";
 import type { JournalCache } from "@/types/sync";
+import { currentPreferences } from "@/lib/offline/cache-schema";
 
 type SettingsRow = {
   currency: string;
@@ -14,25 +15,26 @@ type SettingsRow = {
 };
 
 function fromRow(row: SettingsRow): Preferences {
-  return {
+  return currentPreferences({
     currency: row.currency,
     location: row.location_enabled,
     reminders: row.reminders_enabled,
     reminderFrequency: row.reminder_frequency,
     reminderTime: row.reminder_time,
     backTapQuickAdd: row.back_tap_quick_add,
-  };
+  });
 }
 
 function toRow(userId: string, settings: Preferences) {
+  const current = currentPreferences(settings);
   return {
     user_id: userId,
-    currency: settings.currency,
-    location_enabled: settings.location,
-    reminders_enabled: settings.reminders,
-    reminder_frequency: settings.reminderFrequency,
-    reminder_time: settings.reminderTime,
-    back_tap_quick_add: settings.backTapQuickAdd,
+    currency: current.currency,
+    location_enabled: current.location,
+    reminders_enabled: current.reminders,
+    reminder_frequency: current.reminderFrequency,
+    reminder_time: current.reminderTime,
+    back_tap_quick_add: current.backTapQuickAdd,
     updated_at: new Date().toISOString(),
   };
 }
@@ -68,11 +70,11 @@ export async function initializeAccountSettings(
 ) {
   await changeJournalCache(userId, (cache) => {
     if (!cache.local.settingsInitialized) {
-      cache.local.settings = {
+      cache.local.settings = currentPreferences({
         ...cache.local.settings,
         ...(onboardingCurrency ? { currency: onboardingCurrency } : {}),
         ...legacy,
-      };
+      });
       cache.local.settingsInitialized = true;
     }
     cache.local.legacyPreferencesImported = true;
@@ -84,7 +86,7 @@ export async function saveSettingsForAccount(
   settings: Preferences,
 ) {
   await changeJournalCache(userId, (cache) => {
-    cache.local.settings = settings;
+    cache.local.settings = currentPreferences(settings);
     cache.local.settingsInitialized = true;
     enqueueSettingsSync(cache, userId);
   });
@@ -104,6 +106,9 @@ export async function refreshSettingsForAccount(userId: string) {
     if (data) {
       cache.local.settings = fromRow(data as SettingsRow);
       cache.local.settingsInitialized = true;
+      if ((data as SettingsRow).location_enabled || (data as SettingsRow).back_tap_quick_add) {
+        enqueueSettingsSync(cache, userId);
+      }
     } else {
       // Device-only settings migrate when the user first signs in; a new
       // account receives the same explicit defaults.

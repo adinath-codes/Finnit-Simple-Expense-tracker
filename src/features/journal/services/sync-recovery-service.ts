@@ -5,14 +5,16 @@ import { changeJournalCache, readJournalCache } from "@/lib/offline/database";
 import { syncJournal } from "@/lib/offline/sync-queue";
 import type {
   CorrectionInput,
+  AIEntryCorrectionInput,
   DeleteInput,
+  ReparseInput,
 } from "@/types/sync";
 import type { ReceiptCorrectionInput } from "@/lib/supabase/database.types";
 import { refreshJournal } from "./journal-service";
 
 const CONFLICT_CODE = "revision_or_idempotency_conflict";
 
-type RevisionedPayload = CorrectionInput | DeleteInput | ReceiptCorrectionInput;
+type RevisionedPayload = CorrectionInput | AIEntryCorrectionInput | ReparseInput | DeleteInput | ReceiptCorrectionInput;
 
 function isRevisionedPayload(value: unknown): value is RevisionedPayload {
   return !!value && typeof value === "object" &&

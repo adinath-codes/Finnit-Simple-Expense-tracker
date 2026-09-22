@@ -4,7 +4,7 @@ export default function PrivacyPolicyRoute() {
   return (
     <LegalDocumentScreen
       title="Privacy Policy"
-      effectiveDate="September 20, 2026"
+      effectiveDate="September 22, 2026"
       intro="Finn is a private financial journal. This policy explains what the app handles, why it is needed, and the choices you have."
       sections={[
         {
@@ -12,7 +12,7 @@ export default function PrivacyPolicyRoute() {
           paragraphs: [
             "Finn processes account details such as your email address and the financial notes, amounts, categories, people, places, extracted receipt text, and preferences you choose to save.",
             "A receipt image is kept on your device only while parsing or retry is pending, sent as a transient authenticated request, and deleted after extraction succeeds. Finn does not store receipt images in its backend.",
-            "Location is optional. When enabled, Finn may attach approximate place context when you save an entry; it is not intended for continuous tracking.",
+            "Finn no longer requests location when you save a note. Older notes may still contain place context saved when that option was available.",
           ],
         },
         {
@@ -32,7 +32,7 @@ export default function PrivacyPolicyRoute() {
         {
           heading: "Your choices",
           paragraphs: [
-            "You can leave optional location features off, sign out on this device, and delete your account from Settings. Account deletion removes the authentication account and server records linked to it; the app also clears the account-scoped offline journal stored on this device.",
+            "You can sign out on this device and delete your account from Settings. Account deletion removes the authentication account and server records linked to it; the app also clears the account-scoped offline journal stored on this device.",
             "Some short-lived operational records may remain where required for security, legal compliance, or reliable deletion, and provider backups may expire on their normal schedule.",
           ],
         },

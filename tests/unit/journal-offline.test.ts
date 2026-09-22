@@ -2,15 +2,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  currentPreferences,
   journalCacheKey,
   normalizeJournalCache,
 } from "../../src/lib/offline/cache-schema.ts";
 import {
   correctedTextExtraction,
   journalEntriesFromCache,
+  receiptDisplayTotal,
+  receiptJournalEntry,
+  receiptJournalText,
 } from "../../src/features/journal/services/journal-adapter.ts";
 import { entryTotal } from "../../src/utils/amounts.ts";
 import { presetCaptureText } from "../../src/features/presets/services/preset-format.ts";
+import {
+  amountBreakdownText,
+  deriveAmountBreakdown,
+  deriveAllocationRows,
+  deriveReceiptAmountBreakdown,
+} from "../../src/features/entries/services/breakdown-service.ts";
 import type { CachedEntry, JournalCache } from "../../src/types/sync.ts";
 
 const transaction = {
@@ -62,7 +72,7 @@ test("v1 cache migration preserves entries and outbox", () => {
       nextAttemptAt: 0,
     }],
   });
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(migrated.entries[cachedEntry.input.id].input.raw_text, "rent 1200");
   assert.equal(migrated.jobs.length, 1);
   assert.deepEqual(migrated.local.presets, []);
@@ -71,6 +81,26 @@ test("v1 cache migration preserves entries and outbox", () => {
 
 test("journal cache keys isolate accounts", () => {
   assert.notEqual(journalCacheKey("account-a"), journalCacheKey("account-b"));
+});
+
+test("retired location and Back Tap opt-ins stay off in legacy settings", () => {
+  const legacy = currentPreferences({
+    currency: "USD",
+    location: true,
+    backTapQuickAdd: true,
+  });
+  assert.equal(legacy.currency, "USD");
+  assert.equal(legacy.location, false);
+  assert.equal(legacy.backTapQuickAdd, false);
+
+  const cache = normalizeJournalCache({
+    version: 2,
+    entries: {},
+    jobs: [],
+    local: { settings: { ...legacy, location: true, backTapQuickAdd: true } },
+  });
+  assert.equal(cache.local.settings.location, false);
+  assert.equal(cache.local.settings.backTapQuickAdd, false);
 });
 
 test("metadata outbox jobs survive cache normalization", () => {
@@ -156,6 +186,103 @@ test("legacy receipt cache drops backend image identifiers and cleanup jobs", ()
   assert.equal(cache.jobs.length, 0);
 });
 
+test("receipt journal text prefers a trimmed merchant and never lists adjustments", () => {
+  const lines = [
+    { kind: "tax", description: "GST" },
+    { kind: "item", description: " Coffee " },
+    { kind: "discount", description: "Coupon" },
+    { kind: "item", description: "bread" },
+    { kind: "tip", description: "Tip" },
+    { kind: "item", description: "Milk" },
+    { kind: "fee", description: "Service fee" },
+  ];
+  assert.equal(receiptJournalText("  Cafe North  ", lines), "Purchase from Cafe North");
+  assert.equal(receiptJournalText(null, lines.slice(0, 2)), "Purchased Coffee");
+  assert.equal(receiptJournalText(null, lines.slice(0, 4)), "Purchased Coffee, bread");
+  assert.equal(receiptJournalText(null, lines), "Purchased Coffee, bread + 1 more");
+  assert.equal(receiptJournalText("  ", lines.filter((line) => line.kind !== "item")), "Scanned receipt");
+  assert.equal(receiptJournalText(null, [{ kind: "item", description: "  " }]), "Scanned receipt");
+});
+
+test("receipt breakdown uses exact printed line amounts without multiplying twice", () => {
+  const lines = [
+    {
+      ordinal: 0, kind: "item", description: "Coffee", quantity: 2,
+      unit_price_minor: "6000", amount_minor: "12000", currency: "INR",
+      needs_review: false, provisional: false,
+    },
+    {
+      ordinal: 1, kind: "item", description: "Bread", quantity: 3,
+      unit_price_minor: null, amount_minor: "10000", currency: "INR",
+      needs_review: true, provisional: false,
+    },
+    {
+      ordinal: 2, kind: "discount", description: "Coupon", quantity: null,
+      unit_price_minor: null, amount_minor: "-2000", currency: "INR",
+      needs_review: false, provisional: false,
+    },
+  ];
+  const terms = deriveReceiptAmountBreakdown(lines, "receipt-1");
+  assert.deepEqual(terms.map(({ factors, unitAmountMinor, approximate }) => ({
+    factors, unitAmountMinor, approximate,
+  })), [
+    { factors: [2], unitAmountMinor: 6000, approximate: false },
+    { factors: [1], unitAmountMinor: 10000, approximate: true },
+    { factors: [1], unitAmountMinor: -2000, approximate: false },
+  ]);
+  assert.equal(amountBreakdownText(terms), "2 * ₹60 + 1 * ₹100 + 1 * ₹-20");
+});
+
+test("receipt display total prefers print, then lines, without relaxing accounting", () => {
+  const line = (ordinal, amountMinor, needsReview = false) => ({
+    ordinal, kind: "item", description: `Item ${ordinal}`, quantity: 1,
+    unit_price_minor: null, amount_minor: String(amountMinor), currency: "INR",
+    category_id: "food", confidence: 1, needs_review: needsReview,
+    evidence_text: `Item ${ordinal} ${amountMinor}`, provisional: false,
+  });
+  const request = {
+    entry_id: "22222222-2222-4222-8222-222222222222",
+    attachment_id: "33333333-3333-4333-8333-333333333333",
+    captured_at: "2026-09-20T11:00:00.000Z",
+    timezone: "Asia/Kolkata",
+    selected_date: "2026-09-20",
+    default_currency: "INR",
+  };
+  const receipt = {
+    request, width: 1200, height: 1800, prepared: true,
+    status: "needs_review", lines: [line(0, 12000), line(1, 3000, true)],
+    attachment: {
+      id: request.attachment_id, status: "needs_review", merchant_name: null,
+      purchase_date_text: null, printed_subtotal_minor: null,
+      printed_total_minor: "17000", currency: "INR", confidence: 0.7,
+      needs_review: true, truncated: false, model: "test", lines: [],
+    },
+    remote: {
+      ...request, source_type: "receipt", raw_text: null, original_text: null,
+      occurred_on: request.selected_date, currency: "INR", revision: 1,
+      deleted_at: null, extraction: {
+        transactions: [
+          { ...transaction, amount_minor: "12000", needs_review: false },
+          { ...transaction, amount_minor: "3000", needs_review: true },
+        ],
+        people: [], contexts: [], unresolved: [],
+      },
+    },
+  };
+  const entry = receiptJournalEntry(receipt, { syncState: "synced" });
+  assert.equal(entry.note, "Purchased Item 0, Item 1");
+  assert.deepEqual(receiptDisplayTotal(entry, "USD"), { amountMinor: 17000, currency: "INR" });
+  assert.equal(entryTotal(entry), 12000);
+
+  const withoutPrint = receiptJournalEntry({
+    ...receipt,
+    attachment: { ...receipt.attachment, printed_total_minor: null },
+  }, { syncState: "synced" });
+  assert.deepEqual(receiptDisplayTotal(withoutPrint, "USD"), { amountMinor: 15000, currency: "INR" });
+  assert.equal(entryTotal(withoutPrint), 12000);
+  assert.equal(receiptDisplayTotal({ ...entry, receipt: { ...entry.receipt, status: "scanning" } }, "INR"), null);
+});
+
 test("journal adapter exposes queued and blocked state without losing backend category", () => {
   const base = normalizeJournalCache({
     version: 1,
@@ -187,6 +314,27 @@ test("journal adapter exposes queued and blocked state without losing backend ca
   assert.equal(adapted.syncError, "invalid_backend_response");
 });
 
+test("hierarchical categories retain their top-level journal presentation", () => {
+  const categorized: CachedEntry = {
+    ...cachedEntry,
+    extraction: {
+      ...cachedEntry.extraction,
+      transactions: [{
+        ...transaction,
+        category_id: "transport.ride_hailing",
+      }],
+    },
+  };
+  const entry = journalEntriesFromCache(normalizeJournalCache({
+    version: 3,
+    entries: { [categorized.input.id]: categorized },
+    jobs: [],
+  }))[0];
+  assert.equal(entry.category, "transport");
+  assert.equal(entry.items[0].category, "transport");
+  assert.equal(entry.items[0].categoryId, "transport.ride_hailing");
+});
+
 test("journal adapter classifies revision conflicts and keeps blocked deletions visible", () => {
   const cache = normalizeJournalCache({
     version: 2,
@@ -215,6 +363,87 @@ test("journal adapter classifies revision conflicts and keeps blocked deletions 
   assert.equal(entries.length, 1);
   assert.equal(entries[0].syncState, "blocked");
   assert.equal(entries[0].syncIssue, "conflict");
+});
+
+test("amount breakdown uses only literal multiplication and addition", () => {
+  const extraction = {
+    transactions: [{ ...transaction, amount_minor: "40000" }],
+    people: [], contexts: [], unresolved: [],
+    amount_components: [{
+      transaction_ordinal: 0, ordinal: 0, label: "ride", quantity: 1,
+      unit_price_minor: "10000", line_total_minor: "10000", semantic_role: "item",
+      confidence: 1, evidence: { text: "1 * 100", start: 0, end: 7 }, needs_review: false,
+    }, {
+      transaction_ordinal: 0, ordinal: 1, label: "snacks", quantity: 5,
+      unit_price_minor: "6000", line_total_minor: "30000", semantic_role: "item",
+      confidence: 1, evidence: { text: "5 * 60", start: 10, end: 16 }, needs_review: false,
+    }],
+  };
+  const expression = amountBreakdownText(deriveAmountBreakdown(extraction, "entry"));
+  assert.equal(expression, "1 * ₹100 + 5 * ₹60");
+  assert.equal(expression.includes("="), false);
+  assert.equal(expression.includes("×"), false);
+});
+
+test("canonical group entry derives ride/share factors and participant rows", () => {
+  const extraction = {
+    transactions: [{
+      ...transaction,
+      description: "2 uber rides along with 3 friends costing 1000 in total",
+      amount_minor: "100000",
+      group_total_minor: "100000",
+      user_share_minor: "33400",
+      quantity: 2,
+      participant_count: 3,
+      primary_amount_role: "group_total",
+      split_method: "equal",
+      breakdown_approximate: true,
+    }],
+    people: [], contexts: [], unresolved: [],
+    participants: [{
+      transaction_ordinal: 0, party_kind: "anonymous_group", display_name: null,
+      participant_count: 2, role: "participant", share_minor: "66600",
+      share_percentage: null, split_method: "equal", confidence: 1,
+      evidence: null, needs_review: false,
+    }, {
+      transaction_ordinal: 0, party_kind: "self", display_name: null,
+      participant_count: 1, role: "participant", share_minor: "33400",
+      share_percentage: null, split_method: "equal", confidence: 1,
+      evidence: null, needs_review: false,
+    }],
+  };
+  const terms = deriveAmountBreakdown(extraction, "entry");
+  assert.equal(amountBreakdownText(terms), "2 * 3 * ₹166");
+  assert.equal(terms[0].approximate, true);
+  assert.deepEqual(
+    deriveAllocationRows(extraction, "entry").map(({ label, amountMinor }) => [label, amountMinor]),
+    [["Friend 1", 33300], ["Friend 2", 33300], ["You", 33400]],
+  );
+});
+
+test("AI correction jobs retain old extraction and expose pending action", () => {
+  const cache = normalizeJournalCache({
+    version: 3,
+    entries: { [cachedEntry.input.id]: { ...cachedEntry, extraction: cachedEntry.extraction } },
+    jobs: [{
+      id: "44444444-4444-4444-8444-444444444444",
+      userId: "account-a",
+      entryId: cachedEntry.input.id,
+      endpoint: "correct-entry",
+      payload: {
+        action: "ai_correct",
+        operation_id: "44444444-4444-4444-8444-444444444444",
+        id: cachedEntry.input.id,
+        expected_revision: 2,
+        instruction: "The amount was equally split",
+      },
+      state: "pending", attempts: 0, nextAttemptAt: 0,
+    }],
+  });
+  const adapted = journalEntriesFromCache(cache)[0];
+  assert.equal(adapted.pendingAction, "ai_correct");
+  assert.equal(adapted.items[0].amountMinor, 120000);
+  assert.equal(cache.entries[cachedEntry.input.id].input.raw_text, "rent 1200");
 });
 
 test("journal adapter exposes only the saved coarse place label", () => {
@@ -283,6 +512,53 @@ test("quantity describes an already-total backend amount without multiplying it 
   const corrected = correctedTextExtraction(threeCoffees, entry);
   assert.equal(corrected.transactions[0].amount_minor, "45000");
   assert.equal(corrected.transactions[0].unit_price_minor, null);
+});
+
+test("structured arithmetic is exposed per term while totals use the user's known share", () => {
+  const calculated: CachedEntry = {
+    ...cachedEntry,
+    sync: "synced",
+    extraction: {
+      ...cachedEntry.extraction,
+      schema_version: 2,
+      interpretation_summary: "Three grounded price terms; the user's share is explicit.",
+      transactions: [{
+        ...transaction,
+        description: "2*100 + 1*100 + 3*200",
+        amount_minor: "90000",
+        primary_amount_role: "group_total",
+        group_total_minor: "90000",
+        user_share_minor: "30000",
+        paid_by_user_minor: null,
+        participant_count: 3,
+        split_method: "exact",
+      }],
+      amount_components: [
+        { transaction_ordinal: 0, ordinal: 0, label: "First", quantity: 2, unit_price_minor: "10000", line_total_minor: "20000", semantic_role: "item", confidence: 1, evidence: { text: "2*100", start: 0, end: 5 }, needs_review: false },
+        { transaction_ordinal: 0, ordinal: 1, label: "Second", quantity: 1, unit_price_minor: "10000", line_total_minor: "10000", semantic_role: "item", confidence: 1, evidence: { text: "1*100", start: 8, end: 13 }, needs_review: false },
+        { transaction_ordinal: 0, ordinal: 2, label: "Third", quantity: 3, unit_price_minor: "20000", line_total_minor: "60000", semantic_role: "item", confidence: 1, evidence: { text: "3*200", start: 16, end: 21 }, needs_review: false },
+      ],
+    },
+  };
+  const adapted = journalEntriesFromCache(normalizeJournalCache({
+    version: 3,
+    entries: { [calculated.input.id]: calculated },
+    jobs: [],
+  }))[0];
+
+  assert.deepEqual(
+    adapted.items[0].components?.map(({ quantity, unitPriceMinor, lineTotalMinor }) => ({
+      quantity, unitPriceMinor, lineTotalMinor,
+    })),
+    [
+      { quantity: 2, unitPriceMinor: 10000, lineTotalMinor: 20000 },
+      { quantity: 1, unitPriceMinor: 10000, lineTotalMinor: 10000 },
+      { quantity: 3, unitPriceMinor: 20000, lineTotalMinor: 60000 },
+    ],
+  );
+  assert.equal(adapted.items[0].amountMinor, 90000);
+  assert.equal(entryTotal(adapted), 30000);
+  assert.equal(adapted.thought, calculated.extraction.interpretation_summary);
 });
 
 test("editing note text does not turn a missing amount into a confirmed zero", () => {

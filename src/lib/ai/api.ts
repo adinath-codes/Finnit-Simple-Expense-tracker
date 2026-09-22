@@ -15,6 +15,7 @@ export async function callBackend<T>(
     | "parse-entry"
     | "correct-entry"
     | "ask-money"
+    | "ask-sql"
     | "request-quota-review",
   payload: unknown,
   expectedUserId?: string,

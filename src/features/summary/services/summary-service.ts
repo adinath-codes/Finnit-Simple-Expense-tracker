@@ -2,6 +2,7 @@
 import { getSupabase } from "@/lib/supabase/client";
 import { searchJournal } from "@/features/ask/services/ask-service";
 import type { Category, JournalEntry } from "@/types/domain";
+import { itemAccountingAmount } from "@/utils/amounts";
 import type { PeriodSummary, SummaryPeriod } from "../types/summary.types";
 
 const emptyCategoryTotals = (): Record<Category, number> => ({
@@ -102,7 +103,7 @@ export function buildPeriodSummary({
       continue;
     }
     for (const item of entry.items) {
-      categoryTotals[item.category] += item.amountMinor;
+      categoryTotals[item.category] += itemAccountingAmount(item);
     }
   }
 
@@ -131,6 +132,7 @@ export function spendingSummary(startDate: string, endDate: string) {
       context: null,
       text: null,
       currency: null,
+      metric: "user_share",
     },
     limit: 20,
   });

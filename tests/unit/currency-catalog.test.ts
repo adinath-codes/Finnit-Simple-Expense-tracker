@@ -7,7 +7,7 @@ import {
   isSupportedCurrency,
   searchCurrencies,
 } from "../../supabase/functions/_shared/currencies.ts";
-import { moneyTokens } from "../../supabase/functions/_shared/parser.ts";
+import { moneyTokens } from "../../supabase/functions/_shared/money-evidence.ts";
 import { receiptMoney } from "../../supabase/functions/_shared/receipt.ts";
 import { onboardingSteps } from "../../src/features/onboarding/data/onboarding-steps.ts";
 import { sanitizeOnboardingAnswers } from "../../src/features/onboarding/services/onboarding-validation.ts";

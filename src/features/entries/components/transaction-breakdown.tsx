@@ -2,10 +2,33 @@ import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
-import { Finn, Categories, JournalType } from "@/constants/theme";
+import { Finn, Categories, FinancialCategoryLabels, JournalType } from "@/constants/theme";
 import { sheetStyles as shared } from "@/components/sheets/app-sheet";
 import type { Category, EntryItem, JournalEntry } from "@/types/domain";
 import { money } from "@/utils/currency";
+
+function calculationExpression(item: EntryItem) {
+  return item.components?.map((component, index) => {
+    const term = `${component.quantity} * ${money(component.unitPriceMinor, item.currency)}`;
+    if (index === 0) return term;
+    return `+ ${term}`;
+  }).join(" ") ?? "";
+}
+
+function amountScopeLabel(item: EntryItem) {
+  if (item.primaryAmountRole === "group_total") return "Group total";
+  if (item.primaryAmountRole === "user_share") return "Your share";
+  if (item.primaryAmountRole === "paid_by_user") return "You paid";
+  return "Total";
+}
+
+function journalCategory(value: string): Category {
+  const root = value.split(".")[0];
+  return root === "food" || root === "transport" || root === "shopping"
+    ? root
+    : "other";
+}
+
 export function TransactionBreakdown({
   entry,
   onChange,
@@ -18,6 +41,7 @@ export function TransactionBreakdown({
   const [amount, setAmount] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [category, setCategory] = useState<Category>("other");
+  const [categoryId, setCategoryId] = useState("other");
   const [categoryChanged, setCategoryChanged] = useState(false);
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<NonNullable<EntryItem["kind"]>>("item");
@@ -34,13 +58,24 @@ export function TransactionBreakdown({
       {visibleItems.map((item) => (
         <View key={item.id} style={styles.card}>
           <Button
-            label={`Expand ${item.name}`}
+            accessibilityState={{ expanded: expanded === item.id }}
+            label={`${expanded === item.id ? "Collapse" : "Expand"} ${item.name}, ${money(item.amountMinor, item.currency)}`}
             onPress={() => setExpanded(expanded === item.id ? null : item.id)}
             style={styles.row}
           >
-            <Text style={styles.name}>{item.name}</Text>
-            <Text style={styles.amount}>
-              {money(item.amountMinor)}
+            <Text
+              ellipsizeMode="tail"
+              numberOfLines={expanded === item.id ? undefined : 1}
+              style={styles.name}
+            >
+              {item.name}
+            </Text>
+            <Text
+              ellipsizeMode="tail"
+              numberOfLines={expanded === item.id ? undefined : 1}
+              style={styles.amount}
+            >
+              {money(item.amountMinor, item.currency)}
             </Text>
             <Icon
               name={expanded === item.id ? "up" : "down"}
@@ -55,29 +90,73 @@ export function TransactionBreakdown({
                   accent="#F5B82D"
                   icon="quantity"
                   label="Quantity"
-                  value={String(item.quantity)}
+                  value={`${item.quantity}${item.quantityUnit ? ` ${item.quantityUnit}` : ""}`}
                 />
                 <ItemMetric
                   accent="#F77B96"
                   icon="wallet"
-                  label="Total"
-                  value={money(item.amountMinor)}
+                  label={amountScopeLabel(item)}
+                  value={money(item.amountMinor, item.currency)}
                 />
                 {item.unitPriceMinor !== null && item.unitPriceMinor !== undefined && (
                   <ItemMetric
                     accent="#F77B96"
                     icon="wallet"
                     label="Per item"
-                    value={money(item.unitPriceMinor)}
+                    value={money(item.unitPriceMinor, item.currency)}
                   />
                 )}
                 <ItemMetric
                   accent={Categories[item.category].color}
                   icon={Categories[item.category].icon}
                   label="Category"
-                  value={Categories[item.category].label}
+                  value={FinancialCategoryLabels[item.categoryId ?? item.category] ?? Categories[item.category].label}
                 />
               </View>
+              {!!item.components?.length && (
+                <View style={styles.calculation}>
+                  <Text style={styles.calculationLabel}>Cost calculation</Text>
+                  <Text selectable style={styles.expression}>
+                    {calculationExpression(item)}
+                  </Text>
+                  <View style={styles.componentList}>
+                    {item.components.map((component) => (
+                      <View key={component.id} style={styles.componentRow}>
+                        <View style={styles.componentDescription}>
+                          <Text style={styles.componentName}>{component.label}</Text>
+                          <Text style={styles.componentMath}>
+                            {component.quantity} * {money(component.unitPriceMinor, item.currency)}
+                          </Text>
+                        </View>
+                        <Text style={styles.componentTotal}>
+                          {money(component.lineTotalMinor, item.currency)}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+              {(item.groupTotalMinor !== null && item.groupTotalMinor !== undefined ||
+                item.userShareMinor !== null && item.userShareMinor !== undefined ||
+                item.paidByUserMinor !== null && item.paidByUserMinor !== undefined) && (
+                <View style={styles.scopeSummary}>
+                  {item.groupTotalMinor !== null && item.groupTotalMinor !== undefined && (
+                    <Text style={styles.scopeText}>
+                      Group total · {money(item.groupTotalMinor, item.currency)}
+                    </Text>
+                  )}
+                  <Text style={styles.scopeText}>
+                    Your share · {item.userShareMinor === null || item.userShareMinor === undefined
+                      ? "Not recorded"
+                      : money(item.userShareMinor, item.currency)}
+                  </Text>
+                  {item.paidByUserMinor !== null && item.paidByUserMinor !== undefined && (
+                    <Text style={styles.scopeText}>
+                      You paid · {money(item.paidByUserMinor, item.currency)}
+                    </Text>
+                  )}
+                </View>
+              )}
               {editing === item.id ? (
                 <View style={{ padding: 14, gap: 10 }}>
                   <View>
@@ -112,17 +191,18 @@ export function TransactionBreakdown({
                     </View>
                   </View>
                   <View style={styles.categories}>
-                    {(Object.keys(Categories) as Category[]).map((key) => (
+                    {Object.entries(FinancialCategoryLabels).map(([key, label]) => (
                       <Button
                         key={key}
-                        label={`Set category to ${Categories[key].label}`}
+                        label={`Set category to ${label}`}
                         onPress={() => {
-                          setCategory(key);
+                          setCategoryId(key);
+                          setCategory(journalCategory(key));
                           setCategoryChanged(true);
                         }}
                         style={[
                           styles.category,
-                          category === key && {
+                          categoryId === key && {
                             backgroundColor: Finn.primarySoft,
                           },
                         ]}
@@ -130,11 +210,10 @@ export function TransactionBreakdown({
                         <Text
                           style={{
                             fontSize: 11,
-                            color:
-                              category === key ? Finn.primary : Finn.secondary,
+                            color: categoryId === key ? Finn.primary : Finn.secondary,
                           }}
                         >
-                          {Categories[key].label}
+                          {label}
                         </Text>
                       </Button>
                     ))}
@@ -182,7 +261,7 @@ export function TransactionBreakdown({
                           amountMinor: (kind === "discount" ? -1 : 1) * Math.round(Number(amount) * 100),
                           unitPriceMinor: null,
                           category,
-                          categoryId: categoryChanged ? category : item.categoryId,
+                          categoryId: categoryChanged ? categoryId : item.categoryId,
                           kind,
                           amountMissing: false,
                         };
@@ -217,6 +296,7 @@ export function TransactionBreakdown({
                     setAmount(String(Math.abs(item.amountMinor) / 100));
                     setQuantity(String(item.quantity));
                     setCategory(item.category);
+                    setCategoryId(item.categoryId ?? item.category);
                     setCategoryChanged(false);
                     setKind(item.kind ?? "item");
                   }}
@@ -325,13 +405,75 @@ const styles = StyleSheet.create({
     fontFamily: JournalType.medium,
     fontSize: 14,
     color: Finn.ink,
+    flexShrink: 1,
     fontVariant: ["tabular-nums"],
+    maxWidth: "42%",
+    textAlign: "right",
   },
   metadata: {
     flexDirection: "row",
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 14,
+  },
+  calculation: {
+    borderTopWidth: 1,
+    borderColor: Finn.line,
+    marginHorizontal: 16,
+    paddingVertical: 13,
+    gap: 8,
+  },
+  calculationLabel: {
+    color: Finn.secondary,
+    fontFamily: JournalType.medium,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  expression: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 14,
+    lineHeight: 21,
+    fontVariant: ["tabular-nums"],
+  },
+  componentList: { gap: 7 },
+  componentRow: {
+    alignItems: "center",
+    backgroundColor: Finn.wash,
+    borderRadius: 11,
+    flexDirection: "row",
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  componentDescription: { flex: 1, gap: 2 },
+  componentName: {
+    color: Finn.ink,
+    fontFamily: JournalType.medium,
+    fontSize: 12,
+  },
+  componentMath: {
+    color: Finn.secondary,
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
+  },
+  componentTotal: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
+  },
+  scopeSummary: {
+    borderTopWidth: 1,
+    borderColor: Finn.line,
+    marginHorizontal: 16,
+    paddingVertical: 11,
+    gap: 4,
+  },
+  scopeText: {
+    color: Finn.secondary,
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
   },
   metric: { alignItems: "center", flex: 1, minWidth: 0 },
   value: {

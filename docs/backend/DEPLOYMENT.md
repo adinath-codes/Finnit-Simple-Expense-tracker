@@ -77,6 +77,8 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260920030847_discard_receipt_images.sql`: removes persisted receipt-image fields and Storage access so only extracted receipt text/financial structure remains.
 - `supabase/migrations/20260920090000_account_preferences_and_presets.sql`: owner-scoped settings and saved-entry presets, both synchronized through the authenticated Data API.
 - `supabase/migrations/20260920160000_expand_spendable_iso_currencies.sql`: adds the current spendable ISO 4217 codes and exact minor-unit scales before clients can select them.
+- `supabase/migrations/20260922022045_revision_aware_entry_enrichment.sql`: makes reparse claims revision-aware and exposes private mutation retries.
+- `supabase/migrations/20260922035031_transaction_semantics_v2.sql`: adds hierarchical categories, transaction participants/contexts/allocations, exact amount components, AI-operation idempotency, and metric-aware search.
 
 No separate seed step is needed. If the base backend is already deployed, push
 the currency migration first, then redeploy `parse-entry`, `correct-entry`,
@@ -187,18 +189,21 @@ The entry uses its first transaction's effective day; each transaction also has
 its own day for accurate search/calendar queries. A different payload with the
 same capture ID produces a 409, rather than silently creating or altering money.
 
-The response has `{ entry, cached, warning? }`. `entry.extraction.transactions`
-contains **total** `amount_minor` as an integer string, currency, amount status,
-quantity, optional unit price, direction/cash flow, category source, confidence,
-review flags, date, and evidence. Amount is null when absent. Do not treat it as
-zero or multiply it by quantity again. `original_text` is immutable even after
-corrections. SQL search/source results also return money as strings.
+The response has `{ entry, cached }`. `entry.extraction.transactions` keeps the
+exact stated `amount_minor` plus its `primary_amount_role`; `group_total_minor`,
+`user_share_minor`, and `paid_by_user_minor` are separate. Amount is null when
+absent. Do not treat it as zero or multiply it by quantity again. Arithmetic such
+as `2 × 100 + 1 × 20` is stored in `amount_components`; Gemini selects grounded
+terms and the server calculates each line and total with integer arithmetic.
+`original_text` is immutable even after corrections. SQL search/source results
+also return money as strings.
 
-Capture stores the deterministic result before any Gemini request. A timeout,
-invalid/ungrounded answer, or exhausted AI quota returns the saved note with a
-warning. Retrying the same ID returns the persisted extraction without another
-model request. An in-flight worker that dies leaves its saved deterministic
-result available for correction; retries deliberately do not spend more tokens.
+The device stores a non-financial pending record before the request. The server
+claims the exact entry/revision/input hash/schema/prompt/model tuple before Gemini;
+completed retries return the persisted interpretation without another model call,
+and stale interrupted claims can be retried. Provider or semantic-validation
+failure leaves the local pending note available for retry without fabricating a
+financial result.
 
 ### Correction and deletion: `correct-entry`
 
@@ -274,13 +279,13 @@ the selected range/current calendar month. All ranges have an exclusive end.
 means the latest such date on or before the reference day. Ambiguous dates are
 marked for review, not guessed.
 
-The first response returns `applied_filters`, `filter_labels`, `totals` grouped by
-currency, `matching_count`, and a bounded list of matching transactions with source
-notes, item dates, category and merchant names. It also returns `revision`,
-`has_more`, and `next_cursor`. Totals are SQL sums across **all** matches, never
-just the returned page. Missing, estimated, or review-required records remain
-inspectable but are excluded from confirmed totals. Expense totals exclude
-income, transfers, lending, borrowing and repayments. No implicit FX occurs.
+The first response returns `applied_filters`, the selected `metric`, filter labels,
+per-currency totals, known/unknown counts, and bounded transaction-level sources,
+participants, contexts, splits, and amount components. Supported metrics are
+`stated_amount`, `user_share`, `group_total`, `paid_by_user`, `owed_to_user`,
+`user_owes`, `reimbursed`, and `gross_spend`. Totals are SQL sums across **all**
+matches, never just the returned page. Unknown or review-required values remain
+inspectable but are excluded from the requested metric. No implicit FX occurs.
 
 Editable filter requests can send `filters` instead of `query`:
 

@@ -15,6 +15,81 @@ export type CategorySource =
   | "user_correction"
   | "llm_fallback"
   | "unresolved";
+export const AMOUNT_ROLES = [
+  "personal_total",
+  "group_total",
+  "user_share",
+  "paid_by_user",
+  "reimbursement",
+  "amount_owed",
+  "tax",
+  "tip",
+  "discount",
+  "legacy_unclassified",
+  "unknown",
+] as const;
+export type AmountRole = (typeof AMOUNT_ROLES)[number];
+export const SPLIT_METHODS = [
+  "not_applicable",
+  "exact",
+  "equal",
+  "percentage",
+  "weighted",
+  "unknown",
+] as const;
+export type SplitMethod = (typeof SPLIT_METHODS)[number];
+export type EvidenceClaim = {
+  text: string;
+  start: number;
+  end: number;
+};
+export type TransactionParticipant = {
+  transaction_ordinal: number;
+  party_kind: "self" | "known_person" | "anonymous_group" | "unknown";
+  display_name: string | null;
+  participant_count: number;
+  role: "participant" | "payer" | "beneficiary" | "debtor" | "creditor";
+  share_minor: string | null;
+  share_percentage: number | null;
+  split_method: SplitMethod;
+  confidence: number;
+  evidence: EvidenceClaim | null;
+  needs_review: boolean;
+};
+export type TransactionContext = {
+  transaction_ordinal: number;
+  name: string;
+  confidence: number;
+  evidence: EvidenceClaim;
+  needs_review: boolean;
+};
+export type TransactionAllocation = {
+  transaction_ordinal: number;
+  participant_ordinal: number | null;
+  allocation_type:
+    | "share"
+    | "paid"
+    | "owed_to_user"
+    | "owed_by_user"
+    | "reimbursed_to_user"
+    | "reimbursed_by_user";
+  amount_minor: string;
+  confidence: number;
+  evidence: EvidenceClaim | null;
+  needs_review: boolean;
+};
+export type AmountComponent = {
+  transaction_ordinal: number;
+  ordinal: number;
+  label: string;
+  quantity: number;
+  unit_price_minor: string;
+  line_total_minor: string;
+  semantic_role: "item" | "tax" | "tip" | "fee" | "discount";
+  confidence: number;
+  evidence: EvidenceClaim;
+  needs_review: boolean;
+};
 export type Transaction = {
   id?: string;
   description: string;
@@ -35,12 +110,32 @@ export type Transaction = {
   person: string | null;
   evidence: string | null;
   receipt_line_kind?: ReceiptLineKind | "receipt_total" | null;
+  /** `amount_minor` is the exact primary stated amount, scoped by this role. */
+  primary_amount_role?: AmountRole;
+  group_total_minor?: string | null;
+  user_share_minor?: string | null;
+  paid_by_user_minor?: string | null;
+  split_method?: SplitMethod;
+  participant_count?: number | null;
+  quantity_unit?: string | null;
+  merchant_text?: string | null;
+  field_confidence?: Record<string, number>;
+  field_evidence?: Record<string, EvidenceClaim>;
+  allocation_status?: "complete" | "partial" | "unknown" | "not_applicable";
+  /** True when the displayed multiplier/share breakdown was inferred. */
+  breakdown_approximate?: boolean;
 };
 export type Extraction = {
   transactions: Transaction[];
   people: string[];
   contexts: string[];
   unresolved: string[];
+  schema_version?: number;
+  interpretation_summary?: string;
+  participants?: TransactionParticipant[];
+  transaction_contexts?: TransactionContext[];
+  allocations?: TransactionAllocation[];
+  amount_components?: AmountComponent[];
 };
 export type CaptureInput = {
   id: string;
@@ -53,7 +148,7 @@ export type CaptureInput = {
   approximate_place?: string;
 };
 export type Catalog = {
-  categories: { id: string; name: string }[];
+  categories: { id: string; name: string; parent_id?: string | null }[];
   merchants: {
     id: string;
     canonical_name: string;
@@ -76,6 +171,22 @@ export type SearchPlan = {
   context: string | null;
   text: string | null;
   currency: string | null;
+  metric?:
+    | "stated_amount"
+    | "user_share"
+    | "group_total"
+    | "paid_by_user"
+    | "owed_to_user"
+    | "user_owes"
+    | "reimbursed"
+    | "gross_spend";
+  group_by?: Array<
+    "entry" | "day" | "week" | "month" | "category" | "merchant" | "context" | "participant"
+  >;
+  participant_scope?: "any" | "self_only" | "with_others";
+  split_view?: "none" | "self_vs_others" | "by_participant";
+  include_sources?: boolean;
+  review_policy?: "exclude_unconfirmed" | "include_review_rows";
 };
 export type SavedEntry = Omit<CaptureInput, "raw_text"> & {
   source_type?: "text" | "receipt";
@@ -85,6 +196,9 @@ export type SavedEntry = Omit<CaptureInput, "raw_text"> & {
   revision: number;
   deleted_at: string | null;
   extraction: Extraction;
+  extraction_status?: "pending" | "complete" | "needs_review" | "failed";
+  extraction_schema_version?: number;
+  interpretation_summary?: string | null;
   receipt?: ReceiptAttachment | null;
 };
 

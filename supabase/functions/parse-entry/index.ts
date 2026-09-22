@@ -1,6 +1,11 @@
 import { ApiError, capture, extraction } from "../_shared/validation.ts";
-import { parseNote } from "../_shared/parser.ts";
-import { enrich } from "../_shared/gemini.ts";
+import {
+  enrich,
+  EXTRACTION_PROMPT_VERSION,
+  EXTRACTION_SCHEMA_VERSION,
+  extractionInputHash,
+} from "../_shared/gemini.ts";
+import { withApproximatePlace } from "../_shared/entry-context.ts";
 import {
   catalog,
   metric,
@@ -10,17 +15,8 @@ import {
 } from "../_shared/runtime.ts";
 import type { SavedEntry } from "../_shared/contracts.ts";
 
-function withApproximatePlace<T extends { contexts: string[] }>(
-  value: T,
-  approximatePlace?: string,
-) {
-  if (!approximatePlace || value.contexts.includes(approximatePlace)) return value;
-  return { ...value, contexts: [...value.contexts.slice(0, 19), approximatePlace] };
-}
-
 serve(async (body, ctx) => {
   const input = capture(body);
-  await requireQuota(ctx);
   // Idempotent retries return persisted interpretation without another model call.
   const { data: existing, error } = await ctx.db
     .from("journal_entries")
@@ -52,68 +48,67 @@ serve(async (body, ctx) => {
       cached: true,
     };
   }
-  const candidates = await catalog(ctx);
-  const parsed = extraction(
-    withApproximatePlace(parseNote(input, candidates), input.approximate_place),
-    candidates.categories.map((c) => c.id),
-    candidates.merchants.map((m) => m.id),
-  );
-  let entry = await rpc<SavedEntry>(ctx.admin, "finn_commit_entry", {
+  await requireQuota(ctx);
+  const inputHash = await extractionInputHash(input);
+  const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+  const claim = await rpc<string>(ctx.admin, "finn_claim_ai_operation", {
     p_user: ctx.userId,
-    p_input: input,
-    p_extraction: parsed,
-    p_audit: {
-      event: "deterministic_extraction",
-      parser_version: 1,
-      result: parsed,
-    },
+    p_operation_id: input.id,
+    p_task: "entry_extraction",
+    p_entry_id: input.id,
+    p_entry_revision: 0,
+    p_input_hash: inputHash,
+    p_schema_version: EXTRACTION_SCHEMA_VERSION,
+    p_prompt_version: EXTRACTION_PROMPT_VERSION,
+    p_model_version: model,
   });
-  const difficult =
-    parsed.unresolved.length > 0 ||
-    parsed.transactions.some(
-      (t) => t.confidence < 0.85 || t.unresolved.some((f) => f !== "amount"),
-    );
-  await metric(ctx, difficult ? "parser_needs_help" : "parser_success");
-  if (!difficult || entry.revision !== 1 || entry.deleted_at)
-    return { entry, cached: false };
-  const claimed = await rpc<boolean>(ctx.admin, "finn_claim_enrichment", {
-    p_user: ctx.userId,
-    p_id: input.id,
-    p_revision: 1,
-  });
-  if (!claimed) return { entry, cached: true };
+  if (claim === "in_progress") throw new ApiError(503, "ai_in_progress");
+  if (claim === "complete") {
+    return {
+      entry: await rpc(ctx.admin, "finn_entry_document", {
+        p_user: ctx.userId,
+        p_id: input.id,
+      }),
+      cached: true,
+    };
+  }
   try {
+    const candidates = await catalog(ctx);
     const { result, modelResult } = await enrich(ctx, input, candidates);
-    const resultWithPlace = withApproximatePlace(result, input.approximate_place);
-    entry = await rpc(ctx.admin, "finn_commit_entry", {
+    const interpreted = extraction(
+      withApproximatePlace(result, input.approximate_place),
+      candidates.categories.map((c) => c.id),
+      candidates.merchants.map((m) => m.id),
+    );
+    const entry = await rpc<SavedEntry>(ctx.admin, "finn_commit_entry", {
       p_user: ctx.userId,
       p_input: input,
-      p_extraction: resultWithPlace,
-      p_expected_revision: 1,
+      p_extraction: interpreted,
       p_audit: {
-        event: "llm_extraction",
-        parser_result: parsed,
-        llm_result: modelResult,
-        validated_result: resultWithPlace,
-        model: Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash",
+        event: "gemini_extraction",
+        model,
+        schema_version: EXTRACTION_SCHEMA_VERSION,
+        prompt_version: EXTRACTION_PROMPT_VERSION,
+        input_hash: inputHash,
+        model_result: modelResult,
+        validated_result: interpreted,
       },
     });
+    await rpc(ctx.admin, "finn_finish_ai_operation", {
+      p_user: ctx.userId,
+      p_operation_id: input.id,
+      p_status: "complete",
+      p_validation_code: null,
+    });
+    await metric(ctx, "gemini_interpretation_saved");
     return { entry, cached: false };
   } catch (error) {
-    // Capture is already durable. A provider outage, invalid output or exhausted
-    // quota can never roll back the raw note or replace it with guessed amounts.
-    await metric(ctx, "enrichment_deferred");
-    entry = await rpc(ctx.admin, "finn_entry_document", {
+    await rpc(ctx.admin, "finn_finish_ai_operation", {
       p_user: ctx.userId,
-      p_id: input.id,
-    });
-    return {
-      entry,
-      cached: false,
-      warning:
-        error instanceof ApiError && error.code === "ai_quota_exhausted"
-          ? "ai_quota_exhausted"
-          : "saved_with_deterministic_result",
-    };
+      p_operation_id: input.id,
+      p_status: "failed",
+      p_validation_code: error instanceof ApiError ? error.code : "unknown",
+    }).catch(() => undefined);
+    throw error;
   }
 });

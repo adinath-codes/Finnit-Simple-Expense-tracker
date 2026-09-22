@@ -1,0 +1,46 @@
+import type { CaptureInput, Extraction } from "./contracts.ts";
+
+/** A durable local placeholder. It deliberately makes no financial inference. */
+export function pendingExtraction(input: CaptureInput): Extraction {
+  return {
+    transactions: [{
+      description: input.raw_text,
+      amount_minor: null,
+      currency: input.currency,
+      direction: "expense",
+      cash_flow: "out",
+      amount_status: "missing",
+      category_id: "other",
+      category_source: "unresolved",
+      merchant_id: null,
+      occurred_on: input.selected_date ?? input.captured_at.slice(0, 10),
+      quantity: null,
+      unit_price_minor: null,
+      confidence: 0,
+      needs_review: true,
+      unresolved: ["gemini_pending"],
+      person: null,
+      evidence: null,
+      primary_amount_role: "unknown",
+      group_total_minor: null,
+      user_share_minor: null,
+      paid_by_user_minor: null,
+      split_method: "unknown",
+      participant_count: null,
+      quantity_unit: null,
+      merchant_text: null,
+      field_confidence: {},
+      field_evidence: {},
+      allocation_status: "unknown",
+    }],
+    people: [],
+    contexts: [],
+    unresolved: ["gemini_pending"],
+    schema_version: 2,
+    interpretation_summary: "Finn is waiting to understand this note.",
+    participants: [],
+    transaction_contexts: [],
+    allocations: [],
+    amount_components: [],
+  };
+}

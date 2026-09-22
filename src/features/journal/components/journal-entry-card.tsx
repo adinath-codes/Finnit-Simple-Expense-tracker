@@ -1,5 +1,5 @@
 import { ZoomLink } from "@/components/navigation/zoom-link";
-import { useCallback, useEffect } from "react";
+import { useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -14,77 +14,19 @@ import { Finn, JournalType } from "@/constants/theme";
 import { JournalGlyph } from "./journal-glyph";
 import type { JournalEntry } from "@/types/domain";
 import { money } from "@/utils/currency";
-import { amountFromNote, entryTotal } from "@/utils/amounts";
-import {
-  useJournalEntryProcessing,
-  type PendingEntryResult,
-} from "../hooks/use-journal-entry-processing";
-import {
-  JournalProcessingDots,
-  JournalProcessingStatus,
-} from "./journal-processing-status";
-import { ContentFade, MotionLayout } from "@/components/ui/motion";
-
-export function PendingJournalEntryCard({
-  note,
-  buildResult,
-  onCommit,
-  autoCommit = true,
-  failed = false,
-  onRetry,
-}: {
-  note: string;
-  buildResult: (note: string) => PendingEntryResult;
-  onCommit?: (result: PendingEntryResult) => void;
-  autoCommit?: boolean;
-  failed?: boolean;
-  onRetry?: () => void;
-}) {
-  const processing = useJournalEntryProcessing({
-    draft: note,
-    enabled: false,
-    buildResult,
-    onCommit: (result) => onCommit?.(result),
-    preserveActivePipeline: true,
-  });
-  const requestManualCommit = processing.requestManualCommit;
-
-  useEffect(() => {
-    if (autoCommit) requestManualCommit({ note, dismissKeyboard: false });
-  }, [autoCommit, note, requestManualCommit]);
-
-  return (
-    <View style={styles.row}>
-      <Text style={styles.note}>{note}</Text>
-      <View style={[styles.meta, styles.loader]}>
-        {failed ? (
-          <Button label="Retry saving note" onPress={onRetry} style={styles.retrySave}>
-            <Text style={styles.retrySaveText}>Retry save</Text>
-          </Button>
-        ) : processing.phase === "typing" ? (
-          <JournalProcessingDots />
-        ) : (
-          <JournalProcessingStatus
-            phase={processing.phase}
-            result={processing.pendingResult}
-          />
-        )}
-      </View>
-    </View>
-  );
-}
+import { entryTotal } from "@/utils/amounts";
+import { receiptDisplayTotal } from "@/features/journal/services/journal-adapter";
+import { JournalProcessingStatus } from "./journal-processing-status";
+import { MotionLayout } from "@/components/ui/motion";
 
 export function JournalEntryCard({
   entry,
   currency,
   editing,
   draft,
-  processingDraft,
   onStartEditing,
   onChangeDraft,
   onCommit,
-  onProcessedCommit,
-  onProcessingStarted,
   onReturn,
   inputRef,
   onRetrySync,
@@ -93,131 +35,60 @@ export function JournalEntryCard({
   currency: string;
   editing: boolean;
   draft: string;
-  processingDraft: string | null;
   onStartEditing: () => void;
   onChangeDraft: (draft: string) => void;
-  onCommit: () => void;
-  onProcessedCommit: (entry: JournalEntry, finishEditing: boolean) => void;
-  onProcessingStarted: (entryId: string, draft: string) => void;
+  onCommit: (draft: string) => Promise<boolean>;
   onReturn: (entryId: string) => void;
   inputRef: (input: TextInput | null) => void;
   onRetrySync: () => void;
 }) {
+  const [saving, setSaving] = useState(false);
   const total = entryTotal(entry);
+  const mixedCurrencies = new Set(entry.items.map((item) => item.currency ?? currency)).size > 1;
   const receiptStatus = entry.receipt?.status;
+  const receiptTotal = receiptDisplayTotal(entry, currency);
   const detailLabel = receiptStatus
     ? {
         preparing: "Preparing…",
         queued: "Queued",
         scanning: `${entry.items.length} found`,
-        needs_review: "Review receipt",
-        complete: money(total, currency),
+        needs_review: receiptTotal
+          ? money(receiptTotal.amountMinor, receiptTotal.currency)
+          : "Review receipt",
+        complete: receiptTotal
+          ? money(receiptTotal.amountMinor, receiptTotal.currency)
+          : "Add amount",
         failed: "Retry scan",
       }[receiptStatus]
-    : entry.status === "review"
-    ? total
-      ? "Review split"
-      : "Add amount"
-    : money(total, currency);
-  const activeDraft = editing ? draft : processingDraft ?? entry.note;
-  const hasDraftChanges = activeDraft !== entry.note;
-  const buildPendingEntry = useCallback(
-    (note: string): PendingEntryResult => {
-      const trimmedNote = note.trim();
-      const parsedAmount = amountFromNote(trimmedNote);
-      const sources = entry.sources.map((source) =>
-        source.title === "Your original note"
-          ? { ...source, detail: trimmedNote }
-          : source,
-      );
-      const nextEntry: JournalEntry = {
-        ...entry,
-        note: trimmedNote,
-        sources,
-        ...(parsedAmount && !entry.receipt
-          ? {
-              status: "ready" as const,
-              items: [
-                {
-                  id: entry.items[0]?.id ?? `${entry.id}-item`,
-                  name: trimmedNote,
-                  quantity: 1,
-                  amountMinor: parsedAmount,
-                  category: entry.category,
-                },
-              ],
-            }
-          : {}),
-      };
-      const nextTotal = entryTotal(nextEntry);
-      const review = nextEntry.status === "review";
-      return {
-        entry: nextEntry,
-        resultLabel: review
-          ? nextTotal
-            ? "Review split"
-            : "Add amount"
-          : money(nextTotal, currency),
-        review,
-        sourceCount: nextEntry.sources.length,
-      };
-    },
-    [currency, entry],
-  );
-  const commitProcessedEntry = useCallback(
-    (
-      result: PendingEntryResult,
-      { dismissKeyboard }: { dismissKeyboard: boolean },
-    ) => onProcessedCommit(result.entry, dismissKeyboard),
-    [onProcessedCommit],
-  );
-  const processing = useJournalEntryProcessing({
-    draft: activeDraft,
-    enabled: editing && hasDraftChanges,
-    buildResult: buildPendingEntry,
-    onCommit: commitProcessedEntry,
-    preserveActivePipeline: true,
-  });
-  const handleBlur = () => {
-    if (
-      !activeDraft.trim() ||
-      (processing.phase === "typing" && activeDraft.trim() === entry.note)
-    ) {
-      onCommit();
-      return;
-    }
-    if (processing.requestManualCommit({ note: activeDraft })) {
-      onProcessingStarted(entry.id, activeDraft);
-    }
+    : entry.syncState === "pending" && total === 0
+      ? "Parsing…"
+    : mixedCurrencies
+      ? "Mixed currencies"
+    : entry.status === "review" && total === 0
+      ? "Add amount"
+      : money(total, currency);
+  const commit = async (note: string, advance: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    const saved = await onCommit(note);
+    setSaving(false);
+    if (saved && advance) onReturn(entry.id);
   };
   const handleSubmit = (event: TextInputSubmitEditingEvent) => {
     const submittedDraft = event.nativeEvent.text;
     if (submittedDraft !== draft) onChangeDraft(submittedDraft);
-
-    if (
-      submittedDraft.trim() &&
-      submittedDraft !== entry.note &&
-      processing.requestManualCommit({
-        note: submittedDraft,
-        dismissKeyboard: false,
-      })
-    ) {
-      onProcessingStarted(entry.id, submittedDraft);
-    }
-
-    onReturn(entry.id);
+    void commit(submittedDraft, true);
   };
 
   return (
     <MotionLayout style={styles.entry}>
     <View style={styles.row}>
-      {editing ? (
+      {editing && !entry.receipt ? (
         <TextInput
           ref={inputRef}
           accessibilityLabel={`Edit ${entry.note}`}
           autoFocus
           multiline
-          onBlur={handleBlur}
           onChangeText={onChangeDraft}
           onSubmitEditing={handleSubmit}
           scrollEnabled={false}
@@ -227,6 +98,12 @@ export function JournalEntryCard({
           textAlignVertical="top"
           value={draft}
         />
+      ) : entry.receipt ? (
+        <View style={styles.noteControl}>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.note}>
+            {entry.note}
+          </Text>
+        </View>
       ) : (
         <Pressable
           accessibilityHint="Edits this entry directly in the journal."
@@ -244,28 +121,20 @@ export function JournalEntryCard({
         </Pressable>
       )}
 
-      {editing ? (
+      {editing && !entry.receipt ? (
         <View style={[styles.meta, styles.loader]}>
-          {!hasDraftChanges ? (
-            <EntryResult
-              detailLabel={detailLabel}
-              entry={entry}
-            />
-          ) : processing.phase === "typing" ? (
-            <JournalProcessingDots />
-          ) : (
+          {saving ? (
             <JournalProcessingStatus
-              phase={processing.phase}
-              result={processing.pendingResult}
+              phase="organizing"
+              result={null}
             />
+          ) : (
+            <Button label={`Save edited note ${entry.note}`} onPress={() => {
+              void commit(draft, false);
+            }} style={styles.editDone}>
+              <Icon name="check" size={19} color={Finn.primary} />
+            </Button>
           )}
-        </View>
-      ) : processingDraft !== null && processing.phase !== "typing" ? (
-        <View style={[styles.meta, styles.loader]}>
-          <JournalProcessingStatus
-            phase={processing.phase}
-            result={processing.pendingResult}
-          />
         </View>
       ) : (
         <ZoomLink href={{ pathname: "/entries/[entryId]", params: { entryId: entry.id } }}>
@@ -281,23 +150,6 @@ export function JournalEntryCard({
       )}
     </View>
     <EntrySyncStatus entry={entry} onRetry={onRetrySync} />
-    {!!entry.receipt && entry.items.length > 0 && (
-      <View style={styles.receiptLines}>
-        {entry.items.map((item) => (
-          <ContentFade key={item.id} style={styles.receiptLine}>
-            <View style={styles.receiptDescription}>
-              <Text numberOfLines={1} style={styles.receiptName}>
-                {item.name}
-              </Text>
-              {item.needsReview && <View accessibilityLabel="Needs review" style={styles.reviewDot} />}
-            </View>
-            <Text style={styles.receiptAmount}>
-              {money(item.amountMinor, currency)}
-            </Text>
-          </ContentFade>
-        ))}
-      </View>
-    )}
     </MotionLayout>
   );
 }
@@ -434,6 +286,12 @@ const styles = StyleSheet.create({
   loader: {
     alignSelf: "flex-start",
   },
+  editDone: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+    minWidth: 44,
+  },
   pressed: {
     opacity: 0.65,
   },
@@ -451,46 +309,5 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     includeFontPadding: false,
     color: Finn.secondary,
-  },
-  receiptLines: {
-    borderLeftColor: Finn.line,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    gap: 5,
-    marginBottom: 8,
-    marginLeft: 4,
-    paddingLeft: 12,
-  },
-  receiptLine: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    minHeight: 23,
-  },
-  receiptDescription: {
-    alignItems: "center",
-    flex: 1,
-    flexDirection: "row",
-    gap: 7,
-    paddingRight: 12,
-  },
-  receiptName: {
-    color: Finn.secondary,
-    flexShrink: 1,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  receiptAmount: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    fontVariant: ["tabular-nums"],
-    lineHeight: 18,
-  },
-  reviewDot: {
-    backgroundColor: Finn.amber,
-    borderRadius: 3,
-    height: 6,
-    width: 6,
   },
 });

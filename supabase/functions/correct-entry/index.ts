@@ -1,6 +1,15 @@
 import { ApiError, capture, extraction, object, text, uuid } from "../_shared/validation.ts";
-import { normalize } from "../_shared/parser.ts";
+import { normalize } from "../_shared/text.ts";
+import {
+  enrich,
+  correctionInputHash,
+  EXTRACTION_PROMPT_VERSION,
+  EXTRACTION_SCHEMA_VERSION,
+  extractionInputHash,
+} from "../_shared/gemini.ts";
+import { withApproximatePlace } from "../_shared/entry-context.ts";
 import { CURRENCIES } from "../_shared/contracts.ts";
+import type { SavedEntry } from "../_shared/contracts.ts";
 import { reconcileReceiptCorrection, validateReceiptCorrectionLines } from "../_shared/receipt.ts";
 import { catalog, metric, requireQuota, rpc, serve } from "../_shared/runtime.ts";
 
@@ -12,6 +21,219 @@ serve(async (body, ctx) => {
     (!Number.isInteger(revision) || Number(revision) < 1)
   ) {
     throw new ApiError(400, "invalid_revision");
+  }
+  if (body.action === "reparse") {
+    const input = capture(body.input);
+    if (uuid(body.id) !== input.id) throw new ApiError(400, "invalid_id");
+    const previous = await rpc<{
+      request: { input?: Record<string, unknown>; revision?: number };
+    } | null>(ctx.admin, "finn_mutation_document", {
+      p_user: ctx.userId,
+      p_operation_id: operationId,
+    });
+    if (previous) {
+      const saved = previous.request.input && capture(previous.request.input);
+      const sameInput = saved &&
+        Object.keys(input).every((key) =>
+          input[key as keyof typeof input] === saved[key as keyof typeof saved]
+        ) &&
+        Object.keys(saved).every((key) =>
+          input[key as keyof typeof input] === saved[key as keyof typeof saved]
+        );
+      if (
+        previous.request.revision !== revision ||
+        !sameInput
+      ) throw new ApiError(409, "revision_or_idempotency_conflict");
+      return {
+        entry: await rpc<SavedEntry>(ctx.admin, "finn_entry_document", {
+          p_user: ctx.userId,
+          p_id: input.id,
+        }),
+        cached: true,
+      };
+    }
+    await requireQuota(ctx);
+    const { data: current, error } = await ctx.db.from("journal_entries")
+      .select("original_text,revision,capture_request")
+      .eq("id", input.id).maybeSingle();
+    if (error) throw new ApiError(503, "database_unavailable");
+    if (!current || current.original_text === null)
+      throw new ApiError(404, "text_entry_not_found");
+    if (current.revision !== revision)
+      throw new ApiError(409, "revision_or_idempotency_conflict");
+    const original = capture(current.capture_request);
+    if (
+      original.id !== input.id ||
+      original.captured_at !== input.captured_at ||
+      original.timezone !== input.timezone ||
+      original.currency !== input.currency ||
+      original.selected_date !== input.selected_date ||
+      original.approximate_place !== input.approximate_place
+    ) throw new ApiError(400, "invalid_capture_metadata");
+    const inputHash = await extractionInputHash(input);
+    const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const claim = await rpc<string>(ctx.admin, "finn_claim_ai_operation", {
+      p_user: ctx.userId,
+      p_operation_id: operationId,
+      p_task: "entry_reparse",
+      p_entry_id: input.id,
+      p_entry_revision: revision,
+      p_input_hash: inputHash,
+      p_schema_version: EXTRACTION_SCHEMA_VERSION,
+      p_prompt_version: EXTRACTION_PROMPT_VERSION,
+      p_model_version: model,
+    });
+    if (claim === "in_progress") throw new ApiError(503, "ai_in_progress");
+    if (claim === "complete") {
+      return {
+        entry: await rpc<SavedEntry>(ctx.admin, "finn_entry_document", {
+          p_user: ctx.userId,
+          p_id: input.id,
+        }),
+        cached: true,
+      };
+    }
+    try {
+      const candidates = await catalog(ctx);
+      const { result, modelResult } = await enrich(ctx, input, candidates);
+      const interpreted = extraction(
+        withApproximatePlace(result, input.approximate_place),
+        candidates.categories.map((category) => category.id),
+        candidates.merchants.map((merchant) => merchant.id),
+      );
+      const entry = await rpc<SavedEntry>(ctx.admin, "finn_commit_entry", {
+        p_user: ctx.userId,
+        p_input: input,
+        p_extraction: interpreted,
+        p_expected_revision: revision,
+        p_operation_id: operationId,
+        p_audit: {
+          event: "gemini_reparse",
+          model,
+          schema_version: EXTRACTION_SCHEMA_VERSION,
+          prompt_version: EXTRACTION_PROMPT_VERSION,
+          input_hash: inputHash,
+          model_result: modelResult,
+          validated_result: interpreted,
+        },
+      });
+      await rpc(ctx.admin, "finn_finish_ai_operation", {
+        p_user: ctx.userId,
+        p_operation_id: operationId,
+        p_status: "complete",
+        p_validation_code: null,
+      });
+      await metric(ctx, "gemini_reparse_saved");
+      return { entry, cached: false };
+    } catch (error) {
+      await rpc(ctx.admin, "finn_finish_ai_operation", {
+        p_user: ctx.userId,
+        p_operation_id: operationId,
+        p_status: "failed",
+        p_validation_code: error instanceof ApiError ? error.code : "unknown",
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+  if (body.action === "ai_correct") {
+    const id = uuid(body.id);
+    const instruction = text(body.instruction, 500).trim();
+    const inputHash = await correctionInputHash({
+      id,
+      expectedRevision: Number(revision),
+      instruction,
+    });
+    const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const claim = await rpc<string>(ctx.admin, "finn_claim_ai_operation", {
+      p_user: ctx.userId,
+      p_operation_id: operationId,
+      p_task: "entry_ai_correction",
+      p_entry_id: id,
+      p_entry_revision: revision,
+      p_input_hash: inputHash,
+      p_schema_version: EXTRACTION_SCHEMA_VERSION,
+      p_prompt_version: EXTRACTION_PROMPT_VERSION,
+      p_model_version: model,
+    });
+    if (claim === "in_progress") throw new ApiError(503, "ai_in_progress");
+    if (claim === "complete") {
+      return {
+        entry: await rpc<SavedEntry>(ctx.admin, "finn_entry_document", {
+          p_user: ctx.userId,
+          p_id: id,
+        }),
+        cached: true,
+      };
+    }
+    try {
+      await requireQuota(ctx);
+      const { data: current, error } = await ctx.db.from("journal_entries")
+        .select("source_type,raw_text,revision,capture_request")
+        .eq("id", id)
+        .maybeSingle();
+      if (error) throw new ApiError(503, "database_unavailable");
+      if (!current || current.source_type !== "text" || current.raw_text === null) {
+        throw new ApiError(404, "text_entry_not_found");
+      }
+      if (current.revision !== revision) {
+        throw new ApiError(409, "revision_or_idempotency_conflict");
+      }
+      const originalInput = capture(current.capture_request);
+      const correctionInput = {
+        ...originalInput,
+        raw_text: `${current.raw_text}\nUser correction: ${instruction}`,
+      };
+      const candidates = await catalog(ctx);
+      const { result, modelResult } = await enrich(
+        ctx,
+        correctionInput,
+        candidates,
+        { correctionInstruction: instruction },
+      );
+      const interpreted = extraction(
+        withApproximatePlace(result, originalInput.approximate_place),
+        candidates.categories.map((category) => category.id),
+        candidates.merchants.map((merchant) => merchant.id),
+      );
+      for (const transaction of interpreted.transactions) {
+        transaction.category_source = "user_correction";
+      }
+      const entry = await rpc<SavedEntry>(ctx.admin, "finn_commit_entry", {
+        p_user: ctx.userId,
+        // Keeping this input untouched preserves both the visible note and the
+        // original source while the structured extraction is replaced.
+        p_input: { ...originalInput, raw_text: current.raw_text },
+        p_extraction: interpreted,
+        p_expected_revision: revision,
+        p_operation_id: operationId,
+        p_audit: {
+          event: "gemini_correction",
+          model,
+          schema_version: EXTRACTION_SCHEMA_VERSION,
+          prompt_version: EXTRACTION_PROMPT_VERSION,
+          input_hash: inputHash,
+          instruction,
+          model_result: modelResult,
+          validated_result: interpreted,
+        },
+      });
+      await rpc(ctx.admin, "finn_finish_ai_operation", {
+        p_user: ctx.userId,
+        p_operation_id: operationId,
+        p_status: "complete",
+        p_validation_code: null,
+      });
+      await metric(ctx, "gemini_correction_saved");
+      return { entry, cached: false };
+    } catch (error) {
+      await rpc(ctx.admin, "finn_finish_ai_operation", {
+        p_user: ctx.userId,
+        p_operation_id: operationId,
+        p_status: "failed",
+        p_validation_code: error instanceof ApiError ? error.code : "unknown",
+      }).catch(() => undefined);
+      throw error;
+    }
   }
   await requireQuota(ctx);
   if (body.action === "create_receipt_manual") {

@@ -4,6 +4,8 @@
 >
 > This document consolidates the complete core-product brief, the complete MVP V1 scope, and the post-MVP search direction. If the earlier MVP priority notes and the later **MVP V1 — Required Product Scope** differ, treat the later required scope as authoritative for V1 while preserving the earlier notes as product context. Treat **Part III — V2 Advanced Search** as authoritative for search architecture and sequencing.
 
+> September 22, 2026 scope update: Location capture and iPhone Back Tap quick add are retired. Their saved opt-ins are turned off, and the old quick-add link returns to the journal. Historical notes may retain previously saved place context.
+
 ---
 
 ## Part I — Core Product Idea
@@ -654,7 +656,7 @@ Priority order:
 ### P0
 
 1. Natural-language financial note entry
-2. Layered extraction into structured transactions, with AI only as fallback
+2. Server-side Gemini structured extraction for every explicitly submitted text note
 3. Store raw input
 4. Chronological journal/timeline
 5. Basic editing
@@ -932,13 +934,11 @@ This improves:
 * cost
 * privacy
 
-The cost and accuracy hierarchy is:
-
-1. deterministic amount, currency, quantity, and date parsing
-2. global merchant aliases and keyword categorization rules
-3. user-specific rules learned from explicit corrections
-4. a small structured-output model only for unresolved or ambiguous cases
-5. a stronger model only for rare, complex fallbacks
+For journal text capture, Gemini is the sole semantic interpreter. The client
+stores an unparsed pending note until the authenticated server response arrives.
+Deterministic code may tokenize literal money evidence, validate model claims,
+apply explicit user correction rules, convert to integer minor units, and perform
+arithmetic; it must not independently infer transactions or categories.
 
 AI must never invent a missing amount. Web search, search grounding, menu-price
 lookup, or location-based price guessing must not be used to manufacture a
@@ -1172,7 +1172,7 @@ Examples:
 → total ₹450
 → quantity 3 when applicable
 
-The parser should recognize common representations such as:
+The server-side money evidence validator should recognize representations such as:
 
 * 100
 * ₹100
@@ -1188,9 +1188,9 @@ The parser should recognize common representations such as:
 * spent 500
 * paid 500
 
-Do not depend entirely on the LLM for obvious numeric extraction.
-
-Use deterministic parsing where appropriate, with AI used to understand semantic relationships.
+Gemini chooses which grounded evidence belongs to each transaction. Deterministic
+code converts that chosen evidence into integer minor units and checks arithmetic;
+it does not create a competing interpretation.
 
 If the user does not provide an amount, do not invent one.
 
@@ -1374,51 +1374,11 @@ It exists because preserving purchase information can make the financial journal
 
 ---
 
-# 5. Location-aware entries
+# 5. Location-aware entries — retired
 
-Location support should exist but remain optional.
-
-There should be a Settings control such as:
-
-**Use location for journal entries**
-
-When enabled, an entry may store useful approximate context such as:
-
-* city
-* place
-* merchant location
-* country
-
-Example:
-
-`coffee 180`
-
-could later have contextual information:
-
-Coffee
-₹180
-Chennai
-
-This can eventually enable questions such as:
-
-`How much did I spend in Bangalore?`
-
-or:
-
-`How much did my Chennai trip cost?`
-
-Privacy is critical.
-
-Do NOT make precise location mandatory.
-
-Do NOT continuously track the user.
-
-Location should only be captured when necessary and with permission.
-
-The product must continue working perfectly without location access.
-
-Location may help identify a place, city, trip, or merchant branch. It must not
-be used to guess the amount paid.
+Earlier V1 drafts proposed optional approximate place context. New notes no
+longer request location or attach place context. Existing place labels remain
+on historical notes until those notes or the account are deleted.
 
 ---
 
@@ -1541,7 +1501,6 @@ Do NOT send requests unnecessarily.
 
 Use:
 
-* deterministic parsing where possible
 * caching
 * deduplication
 * batching where appropriate
@@ -1553,10 +1512,9 @@ Avoid repeatedly reprocessing the same journal entry.
 
 Store processed results.
 
-For ordinary text capture, run deterministic parsing and categorization first.
-Call a lightweight model only for unresolved fields or ambiguous relationships.
-Cache the structured result permanently with the entry. A stronger model may be
-used only as a rare fallback, with server-side token caps, per-user rate limits,
+For ordinary text capture, call one server-side Gemini structured-output request
+only after the user explicitly submits. Cache the validated structured result
+permanently with the entry, with server-side token caps, per-user rate limits,
 idempotency, and cost monitoring.
 
 For example:
@@ -1565,11 +1523,8 @@ For example:
 
 should not require another LLM call every time the user opens the journal.
 
-If the AI quota/API becomes unavailable:
-
-the financial journal must remain functional.
-
-AI enrichment can happen later.
+If the AI quota/API becomes unavailable, keep the raw note in the durable local
+outbox and retry later. Do not manufacture a local financial interpretation.
 
 The hierarchy is:
 
@@ -1891,8 +1846,6 @@ Before considering MVP V1 complete, verify:
 * [ ] Multiple currency detection
 * [ ] Currency conversion
 * [ ] Quantity extraction
-* [ ] Optional location context
-* [ ] Location permission/settings
 * [ ] Receipt photo capture/transient parsing
 * [ ] Receipt information extraction
 * [ ] Local caching
@@ -1947,7 +1900,6 @@ Everything else:
 currency conversion
 categorization
 offline processing
-location
 quantity
 AI
 calendar indexing

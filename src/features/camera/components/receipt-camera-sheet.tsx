@@ -16,6 +16,7 @@ import {
   type CameraType,
 } from "expo-camera";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Circle, Path } from "react-native-svg";
 import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useMotionPreference } from "@/hooks/use-motion-preference";
@@ -383,14 +384,27 @@ function CameraControls({
         <RoundControl icon="back" label="Close camera" onPress={onClose} />
         <RoundControl icon="gallery" label="Choose receipt from photos" onPress={onGallery} />
       </View>
-      <Button
-        disabled={!cameraReady || capturing}
-        label={capturing ? "Taking receipt photo" : "Take receipt photo"}
-        onPress={onCapture}
-        style={styles.shutterOuter}
-      >
-        <View style={[styles.shutterInner, capturing && styles.shutterBusy]} />
-      </Button>
+      <View pointerEvents="box-none" style={styles.shutterSlot}>
+        <Button
+          disabled={!cameraReady || capturing}
+          label={capturing ? "Taking receipt photo" : "Take receipt photo"}
+          onPress={onCapture}
+          style={styles.shutterOuter}
+        >
+          <View style={[styles.shutterInner, capturing && styles.shutterBusy]}>
+            <Svg width={29} height={29} viewBox="0 0 28 28" accessible={false}>
+              <Path
+                d="M8 7.5 9.5 5h9L20 7.5h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h2Z"
+                fill="none"
+                stroke="#171717"
+                strokeLinejoin="round"
+                strokeWidth={1.8}
+              />
+              <Circle cx={14} cy={15} r={4.1} fill="none" stroke="#171717" strokeWidth={1.8} />
+            </Svg>
+          </View>
+        </Button>
+      </View>
       <View style={styles.rightControls}>
         {facing === "back" && (
           <RoundControl
@@ -498,22 +512,29 @@ const styles = StyleSheet.create({
     minHeight: 50,
     width: 50,
   },
+  shutterSlot: {
+    alignItems: "center",
+    bottom: 20,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    zIndex: 2,
+  },
   shutterOuter: {
-    alignSelf: "center",
     backgroundColor: "rgba(20, 20, 20, 0.76)",
     borderColor: "rgba(255, 255, 255, 0.26)",
     borderRadius: 45,
     borderWidth: 1,
-    bottom: 20,
     height: 88,
     minHeight: 88,
-    position: "absolute",
     width: 88,
   },
   shutterInner: {
+    alignItems: "center",
     backgroundColor: "#FFFFFF",
     borderRadius: 34,
     height: 68,
+    justifyContent: "center",
     width: 68,
   },
   shutterBusy: {

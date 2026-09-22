@@ -1,7 +1,7 @@
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import type { Href } from "expo-router";
 import { useState, type ReactNode } from "react";
-import { Alert, Platform, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Platform, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { AppSheet, SectionLabel } from "@/components/sheets/app-sheet";
 import { Button } from "@/components/ui/button";
@@ -16,16 +16,12 @@ import {
 import {
   clearOnboardingSnapshot,
 } from "@/storage/onboarding-repository";
-import { useLocationSetting } from "./location-setting";
 import {
   CurrencyPicker,
   currencyDisplay,
 } from "@/components/forms/currency-picker";
 
-const FREQUENCIES = ["Every evening", "Twice a day", "Weekdays only"];
-const TIMES = ["7:00 PM", "8:00 PM", "9:00 PM", "10:00 PM"];
-
-type Picker = "frequency" | "time" | "currency" | null;
+type Picker = "currency" | null;
 
 export default function SettingsScreen() {
   const {
@@ -35,7 +31,7 @@ export default function SettingsScreen() {
     mutationError,
     clearMutationError,
   } = useJournal();
-  const { session, setOnboardingComplete } = useSession();
+  const { setOnboardingComplete } = useSession();
   const [picker, setPicker] = useState<Picker>(null);
   const [accountBusy, setAccountBusy] = useState<"sign-out" | "delete" | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -45,10 +41,6 @@ export default function SettingsScreen() {
   };
   const applySettings = (patch: Parameters<typeof updateSettings>[0]) =>
     updateSettings(patch);
-  const location = useLocationSetting(
-    settings.location,
-    (enabled) => applySettings({ location: enabled }),
-  );
 
   const signOut = async () => {
     if (accountBusy) return;
@@ -114,144 +106,7 @@ export default function SettingsScreen() {
         />
       </View>
 
-      <SectionLabel style={styles.sectionLabel}>Journal context</SectionLabel>
-      <View style={styles.group}>
-        <SettingsRow
-          icon="location"
-          color="#05C65A"
-          title="Use location for journal entries"
-          subtitle={location.subtitle}
-          accessory={
-            <FinnSwitch
-              label="Use location for journal entries"
-              value={settings.location}
-              onValueChange={(enabled) => {
-                if (location.busy) return;
-                void location.setEnabled(enabled).catch(() => undefined);
-              }}
-            />
-          }
-        />
-        {location.needsSettings && (
-          <>
-            <Divider />
-            <SettingsRow
-              title="Open location settings"
-              value="Allow While Using"
-              disclosure="chevron"
-              onPress={location.openSettings}
-            />
-          </>
-        )}
-      </View>
-      <Text style={styles.helperText}>
-        Adds approximate place context only when you save an entry. Finn never
-        tracks you continuously.
-      </Text>
-
-      {Platform.OS === "ios" && (
-        <>
-          <SectionLabel style={styles.sectionLabel}>Quick capture</SectionLabel>
-          <View style={styles.group}>
-            <SettingsRow
-              icon="sparkle"
-              color={Finn.primary}
-              title="Back Tap quick add"
-              subtitle="Open a focused expense note from an iPhone Back Tap"
-              accessory={
-                <FinnSwitch
-                  label="Back Tap quick add"
-                  value={settings.backTapQuickAdd}
-                  onValueChange={(backTapQuickAdd) =>
-                    applySettings({ backTapQuickAdd })
-                  }
-                />
-              }
-            />
-            {settings.backTapQuickAdd && (
-              <>
-                <Divider />
-                <View style={styles.setup}>
-                  <Text style={styles.setupTitle}>One-time iPhone setup</Text>
-                  <Text style={styles.setupStep}>
-                    1. In Shortcuts, create a shortcut that opens
-                    {" "}<Text style={styles.setupLink}>finn://quick-add</Text>.
-                  </Text>
-                  <Text style={styles.setupStep}>
-                    2. In Settings, choose Accessibility → Touch → Back Tap.
-                  </Text>
-                  <Text style={styles.setupStep}>
-                    3. Pick Double Tap or Triple Tap, then select that shortcut.
-                  </Text>
-                </View>
-              </>
-            )}
-          </View>
-          <Text style={styles.helperText}>
-            Apple controls the Back Tap assignment. Turning this off makes the
-            Finn shortcut return to the journal instead of opening quick add.
-          </Text>
-        </>
-      )}
-
-      <SectionLabel style={styles.sectionLabel}>Gentle reminders</SectionLabel>
-      <View style={styles.group}>
-        <SettingsRow
-          icon="bell"
-          color="#48AEEB"
-          title="Daily journal reminder"
-          accessory={
-            <FinnSwitch
-              label="Daily journal reminder"
-              value={settings.reminders}
-              onValueChange={(reminders) => {
-                applySettings({ reminders });
-                if (!reminders) setPicker(null);
-              }}
-            />
-          }
-        />
-        {settings.reminders && (
-          <>
-            <Divider />
-            <SettingsRow
-              title="Frequency"
-              value={settings.reminderFrequency}
-              disclosure="down"
-              onPress={() => togglePicker("frequency")}
-            />
-            {picker === "frequency" && (
-              <Options
-                values={FREQUENCIES}
-                selected={settings.reminderFrequency}
-                onSelect={(reminderFrequency) => {
-                  applySettings({ reminderFrequency });
-                  setPicker(null);
-                }}
-              />
-            )}
-            <Divider />
-            <SettingsRow
-              title="Time"
-              value={settings.reminderTime}
-              disclosure="down"
-              onPress={() => togglePicker("time")}
-            />
-            {picker === "time" && (
-              <Options
-                values={TIMES}
-                selected={settings.reminderTime}
-                onSelect={(reminderTime) => {
-                  applySettings({ reminderTime });
-                  setPicker(null);
-                }}
-              />
-            )}
-          </>
-        )}
-      </View>
-
-      <SectionLabel style={styles.sectionLabel}>Journal settings</SectionLabel>
+      <SectionLabel style={styles.sectionLabel}>Currency</SectionLabel>
       <View style={styles.group}>
         <SettingsRow
           icon="globe"
@@ -270,21 +125,7 @@ export default function SettingsScreen() {
             }}
           />
         )}
-        <Divider />
-        <SettingsRow
-          icon="check"
-          color={Finn.primary}
-          title="Offline capture"
-          subtitle="Entries save on this device first"
-          value="Ready"
-          disclosure="none"
-        />
       </View>
-
-      <Text style={styles.preview}>
-        Preferences sync privately with your Finn account. Reminder scheduling
-        is still not connected.
-      </Text>
 
       <SectionLabel style={styles.sectionLabel}>Privacy & legal</SectionLabel>
       <View style={styles.group}>
@@ -306,14 +147,6 @@ export default function SettingsScreen() {
       <SectionLabel style={styles.sectionLabel}>Account</SectionLabel>
       <View style={styles.group}>
         <SettingsRow
-          icon="wallet"
-          color={Finn.primary}
-          title={session?.user.email ?? "Finn account"}
-          subtitle="Your journal is protected by this account"
-          disclosure="none"
-        />
-        <Divider />
-        <SettingsRow
           icon="arrow"
           color="#7A7572"
           title={accountBusy === "sign-out" ? "Signing out…" : "Sign out"}
@@ -333,35 +166,7 @@ export default function SettingsScreen() {
       </View>
       {accountError ? <Text accessibilityRole="alert" style={styles.accountError}>{accountError}</Text> : null}
 
-      <View style={styles.brand}>
-        <Text style={styles.brandName}>finn</Text>
-        <Text style={styles.brandCaption}>notes for your money.</Text>
-      </View>
     </AppSheet>
-  );
-}
-
-function FinnSwitch({
-  label,
-  value,
-  onValueChange,
-}: {
-  label: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
-}) {
-  return (
-    <Switch
-      accessibilityLabel={label}
-      value={value}
-      onValueChange={onValueChange}
-      trackColor={{ false: "#DEDAD7", true: "#05C65A" }}
-      thumbColor="#FFFFFF"
-      ios_backgroundColor="#DEDAD7"
-      {...(Platform.OS === "web"
-        ? { activeThumbColor: "#FFFFFF", style: styles.webSwitch }
-        : {})}
-    />
   );
 }
 
@@ -423,41 +228,6 @@ function SettingsRow({
 
 function Divider() {
   return <View style={styles.separator} />;
-}
-
-function Options({
-  values,
-  selected,
-  onSelect,
-}: {
-  values: readonly string[];
-  selected: string;
-  onSelect: (value: string) => void;
-}) {
-  return (
-    <View style={styles.options}>
-      {values.map((value) => (
-        <Button
-          key={value}
-          label={value}
-          onPress={() => onSelect(value)}
-          style={styles.option}
-        >
-          <Text
-            style={[
-              styles.optionLabel,
-              selected === value && styles.optionLabelSelected,
-            ]}
-          >
-            {value}
-          </Text>
-          {selected === value && (
-            <Icon name="check" color={Finn.primary} size={15} />
-          )}
-        </Button>
-      ))}
-    </View>
-  );
 }
 
 const styles = StyleSheet.create({
@@ -524,14 +294,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#EDE8E5",
     marginLeft: 17,
   },
-  helperText: {
-    color: "#9E9997",
-    fontFamily: JournalType.regular,
-    fontSize: 10,
-    lineHeight: 15,
-    paddingHorizontal: 5,
-    marginTop: 8,
-  },
   accountError: {
     fontFamily: JournalType.regular,
     color: Finn.danger,
@@ -539,73 +301,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 10,
     paddingHorizontal: 4,
-  },
-  setup: {
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 17,
-    backgroundColor: "#FEFCFB",
-  },
-  setupTitle: {
-    color: Finn.ink,
-    fontFamily: JournalType.medium,
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  setupStep: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 11,
-    lineHeight: 17,
-    marginTop: 3,
-  },
-  setupLink: {
-    color: Finn.primary,
-    fontFamily: JournalType.medium,
-  },
-  options: {
-    paddingHorizontal: 18,
-    paddingBottom: 9,
-    backgroundColor: "#FEFCFB",
-  },
-  option: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    minHeight: 45,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#EFEAE7",
-  },
-  optionLabel: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-  },
-  optionLabelSelected: {
-    color: Finn.primary,
-    fontFamily: JournalType.medium,
-  },
-  webSwitch: { width: 43, height: 26 },
-  preview: {
-    textAlign: "center",
-    color: Finn.muted,
-    fontFamily: JournalType.regular,
-    fontSize: 10,
-    lineHeight: 16,
-    marginTop: 22,
-    paddingHorizontal: 18,
-  },
-  brand: { alignItems: "center", marginTop: 27, marginBottom: 5 },
-  brandName: {
-    fontFamily: JournalType.medium,
-    fontSize: 26,
-    color: "#B9AAA2",
-    letterSpacing: -1.4,
-  },
-  brandCaption: {
-    fontFamily: JournalType.regular,
-    fontSize: 10,
-    color: Finn.muted,
-    marginTop: 3,
   },
 });

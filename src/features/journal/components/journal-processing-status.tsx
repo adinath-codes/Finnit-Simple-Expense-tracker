@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
+  AppState,
   Platform,
   StyleSheet,
   Text,
@@ -21,12 +22,18 @@ import Animated, {
 } from "react-native-reanimated";
 import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
-import type { EntrySource } from "@/types/domain";
-import type {
-  EntryProcessingPhase,
-  PendingEntryResult,
-} from "../hooks/use-journal-entry-processing";
+import type { EntrySource, JournalEntry } from "@/types/domain";
 import { JournalGlyph } from "./journal-glyph";
+
+type EntryProcessingPhase =
+  | "typing" | "thinking" | "reading" | "organizing"
+  | "sources" | "calculating" | "result" | "settling";
+type PendingEntryResult = {
+  entry: JournalEntry;
+  resultLabel: string;
+  review: boolean;
+  sourceCount: number;
+};
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const STATUS_DURATION = 300;
@@ -61,26 +68,36 @@ const statusPhases = [
 type VisiblePhase = (typeof statusPhases)[number];
 
 const labels: Partial<Record<VisiblePhase, string>> = {
-  thinking: "Thinking",
-  reading: "Reading",
-  organizing: "Organizing",
+  thinking: "Tap tick",
+  reading: "Parsing",
+  organizing: "Saving",
   calculating: "Calculating",
 };
 
 export function JournalProcessingStatus({
   phase,
   result,
+  idle = false,
 }: {
   phase: Exclude<EntryProcessingPhase, "typing">;
   result: PendingEntryResult | null;
+  idle?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
+  const [foreground, setForeground] = useState(AppState.currentState === "active");
   const position = useSharedValue(-1);
   const lineHeight = useSharedValue(FALLBACK_LINE_HEIGHT);
   const settleProgress = useSharedValue(0);
   const shimmerOffset = useSharedValue(SHIMMER_START);
   const visiblePhase = phase === "settling" ? "result" : phase;
   const phaseIndex = statusPhases.indexOf(visiblePhase);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      setForeground(state === "active");
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     cancelAnimation(position);
@@ -107,7 +124,7 @@ export function JournalProcessingStatus({
   useEffect(() => {
     cancelAnimation(shimmerOffset);
     shimmerOffset.set(SHIMMER_START);
-    if (!reducedMotion) {
+    if (!reducedMotion && foreground) {
       shimmerOffset.set(
         withRepeat(
           withTiming(SHIMMER_END, {
@@ -120,15 +137,16 @@ export function JournalProcessingStatus({
       );
     }
     return () => cancelAnimation(shimmerOffset);
-  }, [reducedMotion, shimmerOffset]);
+  }, [foreground, reducedMotion, shimmerOffset]);
 
   const handleMeasure = (event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.height;
     if (measured > 0) lineHeight.set(measured);
   };
 
-  const accessibilityLabel =
-    visiblePhase === "sources"
+  const accessibilityLabel = idle
+    ? "Tap tick to save"
+    : visiblePhase === "sources"
       ? `${result?.sourceCount ?? 1} ${pluralize("source", result?.sourceCount ?? 1)}`
       : visiblePhase === "result"
         ? result?.resultLabel ?? "Entry ready"
@@ -138,7 +156,7 @@ export function JournalProcessingStatus({
     <View
       accessibilityLabel={accessibilityLabel}
       accessibilityLiveRegion="polite"
-      accessibilityRole={visiblePhase === "result" ? "text" : "progressbar"}
+      accessibilityRole={idle || visiblePhase === "result" ? "text" : "progressbar"}
       style={styles.viewport}
     >
       <Text

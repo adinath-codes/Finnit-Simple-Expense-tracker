@@ -11,6 +11,7 @@ import { useEffect } from "react";
 import { Platform } from "react-native";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { QuotaReachedModalHost } from "@/features/support/components/quota-reached-modal";
 import {
      SessionProvider,
@@ -38,6 +39,7 @@ export default function RootLayout() {
      if (!fontsLoaded) return null;
      return (
           <GestureHandlerRootView style={{ flex: 1 }}>
+               <KeyboardProvider>
                <SafeAreaProvider>
                     <SessionProvider>
                          <AppProviders>
@@ -57,6 +59,7 @@ export default function RootLayout() {
                          </AppProviders>
                     </SessionProvider>
                </SafeAreaProvider>
+               </KeyboardProvider>
           </GestureHandlerRootView>
      );
 }

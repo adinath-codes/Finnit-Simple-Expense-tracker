@@ -6,9 +6,11 @@ export function exactMoney(minor: string, currency: string) {
     negative = amount < 0n;
   const absolute = negative ? -amount : amount;
   const scale = 10n ** BigInt(digits);
-  const whole = new Intl.NumberFormat("en-IN", {
-    maximumFractionDigits: 0,
-  }).format(absolute / scale);
+  const wholeDigits = (absolute / scale).toString();
+  const head = wholeDigits.slice(0, -3);
+  const whole = head
+    ? `${head.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${wholeDigits.slice(-3)}`
+    : wholeDigits;
   const fraction = (absolute % scale).toString().padStart(digits, "0");
   const formatted =
     whole + (digits && absolute % scale !== 0n ? `.${fraction}` : "");

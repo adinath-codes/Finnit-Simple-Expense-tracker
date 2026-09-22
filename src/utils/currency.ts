@@ -1,9 +1,13 @@
+import { CURRENCIES } from "../../supabase/functions/_shared/contracts.ts";
+
 export function money(amountMinor: number, currency = "INR") {
+  const digits = CURRENCIES[currency] ?? 2;
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency,
-    maximumFractionDigits: amountMinor % 100 ? 2 : 0,
-  }).format(amountMinor / 100);
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(amountMinor / 10 ** digits);
 }
 
 export function currencySymbol(currency = "INR") {
@@ -18,8 +22,9 @@ export function currencySymbol(currency = "INR") {
   );
 }
 
-export function moneyValue(amountMinor: number) {
+export function moneyValue(amountMinor: number, currency = "INR") {
+  const digits = CURRENCIES[currency] ?? 2;
   return new Intl.NumberFormat("en-IN", {
-    maximumFractionDigits: amountMinor % 100 ? 2 : 0,
-  }).format(amountMinor / 100);
+    maximumFractionDigits: digits,
+  }).format(amountMinor / 10 ** digits);
 }

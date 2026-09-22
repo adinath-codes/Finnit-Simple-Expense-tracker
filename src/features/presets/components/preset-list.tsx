@@ -3,6 +3,7 @@ import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { Motion } from "@/constants/motion";
 import { ContentFade, Reveal, MotionLayout } from "@/components/ui/motion";
 import { useState } from "react";
+import { router } from "expo-router";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 import { AppSheet, sheetStyles as shared } from "@/components/sheets/app-sheet";
 import { Icon } from "@/components/ui/icon";
@@ -28,7 +29,7 @@ export default function PresetList() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Preset | null>(null);
   const [amount, setAmount] = useState("");
-  const [added, setAdded] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState<string | null>(null);
   const beginEdit = (preset?: Preset) => {
     setAnimateList(true);
     setForm(
@@ -43,9 +44,15 @@ export default function PresetList() {
     setAmount(preset ? String(preset.amountMinor / 100) : "");
   };
   const add = async (preset: Preset) => {
-    try { await capturePreset(preset, selectedDate); } catch { return; }
-    setAdded(preset.id);
-    setSuccess((current) => ({ trigger: current.trigger + 1, message: "Added to your journal" }));
+    if (capturing) return;
+    setCapturing(preset.id);
+    try {
+      await capturePreset(preset, selectedDate);
+    } catch {
+      setCapturing(null);
+      return;
+    }
+    router.dismissTo("/");
   };
   const filtered = presets.filter((preset) =>
     `${preset.name} ${preset.note}`
@@ -220,6 +227,7 @@ export default function PresetList() {
               </Button>
             </View>
             <Button
+              disabled={capturing !== null}
               label={
                 editing
                   ? `Delete saved entry ${preset.name}`
@@ -237,14 +245,10 @@ export default function PresetList() {
                 style={[
                   styles.addCircle,
                   editing && { backgroundColor: "#FBEAED" },
-                  added === preset.id &&
-                    !editing && { backgroundColor: Finn.primary },
                 ]}
               >
                 <Icon
-                  name={
-                    editing ? "trash" : added === preset.id ? "check" : "plus"
-                  }
+                  name={editing ? "trash" : "plus"}
                   animation={false}
                   size={16}
                   color={editing ? Finn.danger : "#fff"}

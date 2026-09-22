@@ -1,6 +1,5 @@
 import { type ReactNode } from "react";
 import {
-     KeyboardAvoidingView,
      Platform,
      ScrollView,
      StyleSheet,
@@ -10,6 +9,10 @@ import {
      View,
      type ViewStyle,
 } from "react-native";
+import {
+     KeyboardAvoidingView,
+     KeyboardStickyView,
+} from "react-native-keyboard-controller";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Finn, JournalType } from "@/constants/theme";
@@ -27,6 +30,7 @@ export function AppSheet({
      headerLayout = "centered",
      bodyStyle,
      headerScrollable = false,
+     stickyFooter = false,
 }: {
      title: string;
      children: ReactNode;
@@ -35,6 +39,7 @@ export function AppSheet({
      headerLayout?: "centered" | "leading";
      bodyStyle?: StyleProp<ViewStyle>;
      headerScrollable?: boolean;
+     stickyFooter?: boolean;
 }) {
      const insets = useSafeAreaInsets();
      const header = (
@@ -83,6 +88,7 @@ export function AppSheet({
                <KeyboardAvoidingView
                     style={{ flex: 1 }}
                     behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    enabled={!stickyFooter}
                >
                     {!headerScrollable && header}
                     <ScrollView
@@ -113,8 +119,8 @@ export function AppSheet({
                               children
                          )}
                     </ScrollView>
-                    {footer && (
-                         <View
+                    {footer && (stickyFooter ? (
+                         <KeyboardStickyView
                               style={[
                                    styles.footer,
                                    {
@@ -126,8 +132,12 @@ export function AppSheet({
                               ]}
                          >
                               {footer}
+                         </KeyboardStickyView>
+                    ) : (
+                         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+                              {footer}
                          </View>
-                    )}
+                    ))}
                </KeyboardAvoidingView>
           </Screen>
      );

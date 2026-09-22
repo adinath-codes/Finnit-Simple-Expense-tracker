@@ -1,12 +1,60 @@
-import { StyleSheet, Text, View } from "react-native";
+import { MaskedView } from "@expo/ui/community/masked-view";
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import { Image } from "expo-image";
+import { Platform, StyleSheet, Text, View } from "react-native";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { JournalGlyph } from "./journal-glyph";
 import { useJournal } from "@/providers/app-providers";
 import { dayLabel } from "@/utils/dates";
+
+const ASK_GRADIENT_ID = "ask-finn-blue";
+
+function AskFinnLabel() {
+  const label = (
+    <View style={styles.askLabel}>
+      <JournalGlyph name="sparkle" size={13} color="#000000" />
+      <Text maxFontSizeMultiplier={1.3} style={styles.askText}>
+        Ask Finn
+      </Text>
+    </View>
+  );
+
+  return Platform.OS === "web" ? (
+    <View style={styles.askLabel}>
+      <JournalGlyph
+        name="sparkle"
+        size={13}
+        colors={[Finn.blueSparkleStart, Finn.blueSparkleEnd]}
+      />
+      <Text style={[styles.askText, styles.askTextWeb]}>Ask Finn</Text>
+    </View>
+  ) : (
+    <MaskedView maskElement={label} style={styles.askLabelMask}>
+      <Svg height="100%" width="100%">
+        <Defs>
+          <LinearGradient
+            id={ASK_GRADIENT_ID}
+            x1="0%"
+            x2="100%"
+            y1="0%"
+            y2="0%"
+          >
+            <Stop offset="0" stopColor={Finn.blueSparkleStart} />
+            <Stop offset="1" stopColor={Finn.blueSparkleEnd} />
+          </LinearGradient>
+        </Defs>
+        <Rect
+          fill={`url(#${ASK_GRADIENT_ID})`}
+          height="100%"
+          width="100%"
+        />
+      </Svg>
+    </MaskedView>
+  );
+}
+
 export function JournalHeader() {
   const { selectedDate, today } = useJournal();
   return (
@@ -28,10 +76,10 @@ export function JournalHeader() {
       </Button></ZoomLink>
       <View style={[styles.side, styles.actions]}>
         <ZoomLink href="/search"><Button
-          label="Search your journal"
-          style={styles.settings}
+          label="Ask Finn"
+          style={[styles.settings, styles.askButton]}
         >
-          <Icon name="search" size={18} />
+          <AskFinnLabel />
         </Button></ZoomLink>
         <ZoomLink href="/settings"><Button
           label="Open settings"
@@ -53,7 +101,7 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   side: { width: 112 },
-  actions: { flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+  actions: { flexDirection: "row", justifyContent: "flex-end", gap: 4 },
   mark: {
     width: 108,
     height: 48,
@@ -92,6 +140,24 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.96)",
     boxShadow: "0px 5px 20px rgba(161, 125, 75, 0.10)",
   },
+  askButton: { paddingHorizontal: 4 },
+  askLabel: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 3,
+  },
+  askLabelMask: {
+    height: 20,
+    width: 58,
+  },
+  askText: {
+    color: "#000000",
+    fontFamily: JournalType.medium,
+    fontSize: 11,
+    includeFontPadding: false,
+    lineHeight: 20,
+  },
+  askTextWeb: { color: Finn.blueSparkleStart },
   placeholder: {
     fontFamily: JournalType.medium,
     fontSize: 14,

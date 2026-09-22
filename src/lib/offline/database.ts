@@ -4,6 +4,7 @@ import {
   emptyJournalCache,
   journalCacheKey,
   legacyJournalCacheKey,
+  previousJournalCacheKey,
   normalizeJournalCache,
 } from "./cache-schema";
 
@@ -14,11 +15,14 @@ const listeners = new Set<{ userId?: string; listener: () => void }>();
 async function read(userId: string): Promise<JournalCache> {
   const current = await AsyncStorage.getItem(journalCacheKey(userId));
   if (current) return normalizeJournalCache(JSON.parse(current));
-  const legacy = await AsyncStorage.getItem(legacyJournalCacheKey(userId));
+  const previousKey = previousJournalCacheKey(userId);
+  const legacyKey = legacyJournalCacheKey(userId);
+  const legacy = await AsyncStorage.getItem(previousKey) ??
+    await AsyncStorage.getItem(legacyKey);
   if (!legacy) return emptyJournalCache();
   const migrated = normalizeJournalCache(JSON.parse(legacy));
   await AsyncStorage.setItem(journalCacheKey(userId), JSON.stringify(migrated));
-  await AsyncStorage.removeItem(legacyJournalCacheKey(userId));
+  await AsyncStorage.multiRemove([previousKey, legacyKey]);
   return migrated;
 }
 export async function readJournalCache(userId: string) {
@@ -29,6 +33,7 @@ export async function deleteJournalCache(userId: string) {
   await locks.get(userId)?.catch(() => undefined);
   await AsyncStorage.multiRemove([
     journalCacheKey(userId),
+    previousJournalCacheKey(userId),
     legacyJournalCacheKey(userId),
   ]);
   notify(userId);

@@ -1,8 +1,41 @@
 import "react-native-url-polyfill/auto";
+import * as ExpoCrypto from "expo-crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sessionStorage } from "./session-storage";
 
 let client: SupabaseClient | undefined;
+
+/**
+ * Supabase PKCE needs `crypto.subtle.digest`. React Native does not supply the
+ * WebCrypto global, but Expo Crypto exposes the same native SHA-256 primitive.
+ * Install only the two WebCrypto members Supabase uses and preserve a browser's
+ * native implementation when one is available.
+ */
+function installPkceCrypto() {
+  if (globalThis.crypto?.subtle) return;
+
+  const nativeCrypto = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", {
+    configurable: true,
+    value: {
+      getRandomValues:
+        nativeCrypto?.getRandomValues?.bind(nativeCrypto) ??
+        ExpoCrypto.getRandomValues,
+      subtle: {
+        async digest(algorithm: AlgorithmIdentifier, data: BufferSource) {
+          const name = typeof algorithm === "string" ? algorithm : algorithm.name;
+          if (name !== "SHA-256") {
+            throw new Error(`Unsupported PKCE digest algorithm: ${name}`);
+          }
+          return ExpoCrypto.digest(ExpoCrypto.CryptoDigestAlgorithm.SHA256, data);
+        },
+      },
+    },
+  });
+}
+
+installPkceCrypto();
+
 export function isBackendConfigured() {
   return !!(
     process.env.EXPO_PUBLIC_SUPABASE_URL &&

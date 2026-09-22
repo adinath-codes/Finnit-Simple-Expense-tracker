@@ -143,6 +143,17 @@ function receiptExtraction(
       person: null,
       evidence: total,
       receipt_line_kind: "receipt_total",
+      primary_amount_role: "personal_total",
+      group_total_minor: total,
+      user_share_minor: total,
+      paid_by_user_minor: total,
+      split_method: "not_applicable",
+      participant_count: 1,
+      quantity_unit: null,
+      merchant_text: null,
+      field_confidence: { amount: 1, allocation: 1 },
+      field_evidence: {},
+      allocation_status: "complete",
     }];
   } else {
     transactions = lines.map((line): Transaction => {
@@ -171,6 +182,27 @@ function receiptExtraction(
         person: null,
         evidence: line.evidence_text,
         receipt_line_kind: line.kind,
+        primary_amount_role: line.kind === "tax"
+          ? "tax"
+          : line.kind === "tip"
+            ? "tip"
+            : line.kind === "discount"
+              ? "discount"
+              : "personal_total",
+        group_total_minor: line.amount_minor,
+        user_share_minor: line.amount_minor,
+        paid_by_user_minor: line.amount_minor,
+        split_method: "not_applicable",
+        participant_count: 1,
+        quantity_unit: line.quantity === null ? null : "items",
+        merchant_text: null,
+        field_confidence: {
+          amount: line.confidence,
+          category: line.confidence,
+          allocation: 1,
+        },
+        field_evidence: {},
+        allocation_status: "complete",
       });
     });
   }
@@ -181,6 +213,14 @@ function receiptExtraction(
       people: [],
       contexts: [],
       unresolved: lines.some((line) => line.needs_review) || !reconciled ? ["receipt_review"] : [],
+      schema_version: 2,
+      interpretation_summary: reconciled
+        ? "The receipt lines reconcile with the recorded total."
+        : "The visible receipt lines were kept, but the printed total needs review.",
+      participants: [],
+      transaction_contexts: [],
+      allocations: [],
+      amount_components: [],
     } satisfies Extraction,
   };
 }

@@ -292,18 +292,20 @@ export async function correctReceiptEntry(entry: JournalEntry) {
         provisional: false,
       };
     });
+    const merchantName = entry.merchant.trim() || null;
+    const printedTotalMinor = entry.receipt?.printedTotalMinor === undefined
+      ? receipt.attachment?.printed_total_minor ?? null
+      : entry.receipt.printedTotalMinor === null
+        ? null
+        : String(entry.receipt.printedTotalMinor);
     const operationId = Crypto.randomUUID();
     const basePayload = {
       operation_id: operationId,
       id: entry.id,
-      merchant_name: entry.note.trim() || null,
+      merchant_name: merchantName,
       purchase_date_text: receipt.attachment?.purchase_date_text ?? null,
       printed_subtotal_minor: receipt.attachment?.printed_subtotal_minor ?? null,
-      printed_total_minor: entry.receipt?.printedTotalMinor === undefined
-        ? receipt.attachment?.printed_total_minor ?? null
-        : entry.receipt.printedTotalMinor === null
-          ? null
-          : String(entry.receipt.printedTotalMinor),
+      printed_total_minor: printedTotalMinor,
       currency: receipt.attachment?.currency ?? receipt.request.default_currency,
       lines,
     };
@@ -320,6 +322,14 @@ export async function correctReceiptEntry(entry: JournalEntry) {
       nextAttemptAt: 0,
     });
     receipt.lines = lines;
+    if (receipt.attachment) {
+      receipt.attachment = {
+        ...receipt.attachment,
+        merchant_name: merchantName,
+        printed_total_minor: printedTotalMinor,
+        lines,
+      };
+    }
     receipt.status = "needs_review";
   });
   void syncJournal(userId).catch(() => undefined);

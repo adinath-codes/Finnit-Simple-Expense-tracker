@@ -187,7 +187,7 @@ export async function catalog(ctx: Context): Promise<Catalog> {
     throw new ApiError(422, "catalog_limit_reached");
   };
   const results = await Promise.all([
-    rows("categories", "id,name", "id"),
+    rows("categories", "id,name,parent_id", "id"),
     rows("merchants", "id,canonical_name,default_category_id,user_id", "id"),
     rows("merchant_aliases", "alias,merchant_id,user_id", "id"),
     rows("category_rules", "merchant_key,category_id", "merchant_key"),

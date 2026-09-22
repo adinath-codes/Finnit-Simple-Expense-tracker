@@ -1,16 +1,16 @@
-import type { JournalEntry } from "@/types/domain";
+import type { EntryItem, JournalEntry } from "@/types/domain";
+
+export function itemAccountingAmount(item: EntryItem) {
+  return item.accountingAmountMinor === undefined
+    ? item.amountMinor
+    : item.accountingAmountMinor ?? 0;
+}
+
 export function entryTotal(entry: JournalEntry) {
   if (entry.accountingTotalMinor !== undefined)
     return entry.accountingTotalMinor;
   return entry.items.reduce(
-    (total, item) => total + item.amountMinor,
+    (total, item) => total + itemAccountingAmount(item),
     0,
   );
-}
-/** A deterministic demo helper; no AI inference or network work occurs here. */
-export function amountFromNote(note: string) {
-  const match = note.match(
-    /(?:^|\s)(?:₹|rs\.?\s*)?(\d[\d,]*(?:\.\d{1,2})?)\s*$/i,
-  );
-  return match ? Math.round(Number(match[1].replaceAll(",", "")) * 100) : 0;
 }

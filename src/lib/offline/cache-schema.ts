@@ -11,7 +11,18 @@ export const defaultPreferences = (): Preferences => ({
   backTapQuickAdd: false,
 });
 
-export const journalCacheKey = (userId: string) => `finn.journal.v2.${userId}`;
+/** Retired opt-ins must stay off even in legacy caches and queued writes. */
+export function currentPreferences(settings: Partial<Preferences> = {}): Preferences {
+  return {
+    ...defaultPreferences(),
+    ...settings,
+    location: false,
+    backTapQuickAdd: false,
+  };
+}
+
+export const journalCacheKey = (userId: string) => `finn.journal.v3.${userId}`;
+export const previousJournalCacheKey = (userId: string) => `finn.journal.v2.${userId}`;
 export const legacyJournalCacheKey = (userId: string) => `finn.journal.v1.${userId}`;
 
 function receiptRequest(value: unknown): ReceiptScanRequest {
@@ -49,7 +60,7 @@ function normalizeReceipts(value: unknown): JournalCache["receipts"] {
 
 export function emptyJournalCache(): JournalCache {
   return {
-    version: 2,
+    version: 3,
     entries: {},
     receipts: {},
     jobs: [],
@@ -70,7 +81,7 @@ export function normalizeJournalCache(value: unknown): JournalCache {
   }
   const raw = value as Record<string, unknown>;
   if (
-    (raw.version !== 1 && raw.version !== 2) ||
+    (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) ||
     !raw.entries ||
     !Array.isArray(raw.jobs)
   ) {
@@ -80,7 +91,7 @@ export function normalizeJournalCache(value: unknown): JournalCache {
     ? raw.local as Partial<JournalCache["local"]>
     : {};
   return {
-    version: 2,
+    version: 3,
     entries: raw.entries as JournalCache["entries"],
     receipts: normalizeReceipts(raw.receipts),
     jobs: (raw.jobs as JournalCache["jobs"]).filter(
@@ -90,7 +101,7 @@ export function normalizeJournalCache(value: unknown): JournalCache {
       : job),
     ...(raw.catalog ? { catalog: raw.catalog as JournalCache["catalog"] } : {}),
     local: {
-      settings: { ...defaultPreferences(), ...local.settings },
+      settings: currentPreferences(local.settings),
       presets: Array.isArray(local.presets) ? local.presets : [],
       goals: Array.isArray(local.goals) ? local.goals : [],
       settingsInitialized: local.settingsInitialized ?? false,

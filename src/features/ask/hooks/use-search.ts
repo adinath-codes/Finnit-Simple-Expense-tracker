@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BackendError } from "@/lib/ai/api";
 import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
 import type { SearchPlan } from "@/lib/supabase/database.types";
-import { recentSearchContexts, searchJournal } from "../services/ask-service";
+import { explainSearch, recentSearchContexts, searchJournal, searchWithSql, sqlSourcePage } from "../services/ask-service";
 import type { ContextResult, SearchResult } from "../types/ask.types";
 
 export function searchError(error: unknown) {
@@ -22,6 +22,7 @@ export function useSearch() {
   const [loadingContexts, setLoadingContexts] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingExplanation, setLoadingExplanation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -65,6 +66,7 @@ export function useSearch() {
         setContexts(null);
         setLoading(false);
         setLoadingMore(false);
+        setLoadingExplanation(false);
         moreBusy.current = false;
         setError(null);
         setPageError(null);
@@ -129,6 +131,7 @@ export function useSearch() {
     setPageError(null);
     setLoading(false);
     setLoadingMore(false);
+    setLoadingExplanation(false);
     moreBusy.current = false;
   }, []);
   const run = useCallback(
@@ -161,7 +164,7 @@ export function useSearch() {
       const version = generation.current;
       setLoading(true);
       try {
-        const data = await searchJournal(
+        let data = await searchJournal(
           "filters" in input
             ? { filters: input.filters }
             : {
@@ -172,8 +175,41 @@ export function useSearch() {
           controller.signal,
           userId,
         );
-        if (version === generation.current && !controller.signal.aborted)
+        if (data.needs_filters && data.reason === "query_needs_explicit_filters" && "query" in input) {
+          try {
+            data = await searchWithSql({
+              query: input.query,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              selected_range: input.range,
+            }, controller.signal, userId);
+          } catch {
+            // A failed or rejected SQL plan cannot produce a partial answer.
+            data = { needs_filters: true, reason: "advanced_search_unavailable" };
+          }
+        }
+        if (version === generation.current && !controller.signal.aborted) {
           setResult(data);
+          resultRef.current = data;
+          if (data.revision && (data.sql_session_id || data.applied_filters)) {
+            setLoadingExplanation(true);
+            void explainSearch(data.sql_session_id
+              ? { session_id: data.sql_session_id, revision: data.revision }
+              : { filters: data.applied_filters, revision: data.revision },
+              controller.signal, userId)
+              .then((answer) => {
+                if (version !== generation.current || controller.signal.aborted) return;
+                if (answer.stale) {
+                  setResult((current) => current ? { ...current, stale: true, has_more: false } : current);
+                } else if (answer.explanation) {
+                  setResult((current) => current ? { ...current, explanation: answer.explanation } : current);
+                }
+              })
+              .catch(() => { /* The screen has a factual fixed-text fallback. */ })
+              .finally(() => {
+                if (version === generation.current && !controller.signal.aborted) setLoadingExplanation(false);
+              });
+          }
+        }
       } catch (err) {
         if (version === generation.current && !controller.signal.aborted)
           setError(searchError(err));
@@ -192,7 +228,7 @@ export function useSearch() {
       current?.stale ||
       loading ||
       !current?.next_cursor ||
-      !current.applied_filters ||
+      (!current.applied_filters && !current.sql_session_id) ||
       !current.revision ||
       !userId
     )
@@ -204,15 +240,9 @@ export function useSearch() {
     setLoadingMore(true);
     setPageError(null);
     try {
-      const page = await searchJournal(
-        {
-          filters: current.applied_filters,
-          cursor: current.next_cursor,
-          revision: current.revision,
-        },
-        controller.signal,
-        userId,
-      );
+      const page = current.sql_session_id
+        ? await sqlSourcePage(current.sql_session_id, current.revision, current.next_cursor, controller.signal, userId)
+        : await searchJournal({ filters: current.applied_filters!, cursor: current.next_cursor, revision: current.revision }, controller.signal, userId);
       if (version !== generation.current || controller.signal.aborted) return;
       if (page.stale) {
         setResult({ ...current, stale: true, has_more: false });
@@ -244,6 +274,7 @@ export function useSearch() {
     loadingContexts,
     loading,
     loadingMore,
+    loadingExplanation,
     error,
     contextError,
     pageError,

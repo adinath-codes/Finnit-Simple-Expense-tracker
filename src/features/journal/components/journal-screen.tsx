@@ -9,31 +9,21 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useIsFocused } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Screen } from "@/components/common/screen";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
-import { amountFromNote } from "@/utils/amounts";
-import { money } from "@/utils/currency";
+import { useSession } from "@/features/auth/providers/session-provider";
 import type { ReceiptPhoto } from "@/types/domain";
 import { captureReceipt } from "@/features/camera/services/receipt-service";
 import { JournalHeader } from "./journal-header";
-import {
-  JournalEntryCard,
-  PendingJournalEntryCard,
-} from "./journal-entry-card";
+import { JournalEntryCard } from "./journal-entry-card";
 import { JournalComposer } from "./journal-composer";
 import { JournalEmptyPrompt } from "./journal-empty-prompt";
-import {
-  JournalProcessingDots,
-  JournalProcessingStatus,
-} from "./journal-processing-status";
-import {
-  useJournalEntryProcessing,
-  type PendingEntryResult,
-} from "../hooks/use-journal-entry-processing";
+import { JournalProcessingStatus } from "./journal-processing-status";
+import { loadJournalDrafts, saveJournalDrafts } from "../store/journal-draft-store";
 
 export default function JournalScreen() {
   const {
@@ -46,23 +36,52 @@ export default function JournalScreen() {
     mutationError,
     clearMutationError,
     retrySync,
+    recentPresetEntryId,
+    clearRecentPresetEntry,
   } = useJournal();
+  const ownerId = useSession().session?.user.id;
+  const screenActive = useIsFocused();
   const [draft, setDraft] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [entryDraft, setEntryDraft] = useState("");
-  const [processingEntryDrafts, setProcessingEntryDrafts] = useState<Record<string, string>>({});
-  const [pendingSubmissions, setPendingSubmissions] = useState<
-    { id: string; note: string }[]
-  >([]);
-  const [failedSubmissions, setFailedSubmissions] = useState<Record<string, boolean>>({});
   const [receiptError, setReceiptError] = useState<string | null>(null);
-  const [tool, setTool] = useState<"add" | "voice" | "receipt" | null>(null);
+  const [tool, setTool] = useState<"add" | "receipt" | null>(null);
   const input = useRef<TextInput>(null);
   const entryInputs = useRef(new Map<string, TextInput>());
   const lastReturnSubmission = useRef<string | null>(null);
-  const submissionSequence = useRef(0);
+  const submitLock = useRef(false);
+  const draftTouchedBeforeLoad = useRef(false);
+  const draftOwner = useRef<string | undefined>(undefined);
   const scroll = useRef<ScrollView>(null);
+  useEffect(() => {
+    if (draftOwner.current === ownerId) return;
+    draftOwner.current = ownerId;
+    draftTouchedBeforeLoad.current = false;
+    setDraft("");
+    setEditDrafts({});
+    setDraftLoaded(false);
+  }, [ownerId]);
+  useEffect(() => {
+    if (!ownerId) return;
+    let active = true;
+    setDraftLoaded(false);
+    void loadJournalDrafts(ownerId).then((saved) => {
+      if (!active) return;
+      if (!draftTouchedBeforeLoad.current) setDraft(saved.composer);
+      setEditDrafts(saved.edits);
+      setDraftLoaded(true);
+    });
+    return () => { active = false; };
+  }, [ownerId]);
+  useEffect(() => {
+    if (ownerId && draftLoaded) {
+      void saveJournalDrafts(ownerId, { composer: draft, edits: editDrafts });
+    }
+  }, [draft, draftLoaded, editDrafts, ownerId]);
   useEffect(() => {
     if (Platform.OS === "web") return;
     const hidden = Keyboard.addListener("keyboardDidHide", () => {
@@ -80,58 +99,20 @@ export default function JournalScreen() {
       [],
     ),
   );
-  const buildPendingEntry = useCallback(
-    (note: string, entryId?: string): PendingEntryResult => {
-      const id = entryId ?? `note-${Date.now()}`;
-      const amount = amountFromNote(note);
-      const entry = {
-        id,
-        date: selectedDate,
-        note: note.trim(),
-        merchant: "Your note",
-        category: "other" as const,
-        status: amount ? ("ready" as const) : ("review" as const),
-        time: "Just now",
-        items: [
-          {
-            id: `${id}-item`,
-            name: note.trim(),
-            quantity: 1,
-            amountMinor: amount,
-            category: "other" as const,
-          },
-        ],
-        thought: amount
-          ? "The amount at the end of your note has been added to your journal. This is a local preview; you can edit the category and amount in the item below."
-          : "Your words are saved in this preview. Add an amount in the item details whenever you’re ready.",
-        sources: [
-          {
-            title: "Your original note",
-            detail: note.trim(),
-            icon: "note" as const,
-          },
-        ],
-      };
-      return {
-        entry,
-        resultLabel: amount ? money(amount, settings.currency) : "Add amount",
-        review: !amount,
-        sourceCount: entry.sources.length,
-      };
-    },
-    [selectedDate, settings.currency],
-  );
-  const commitPendingEntry = useCallback(
-    async (
-      result: PendingEntryResult,
-      { dismissKeyboard }: { dismissKeyboard: boolean },
-    ) => {
+  const submitDraft = useCallback(
+    async (submittedDraft: string, dismissKeyboard: boolean) => {
+      const note = submittedDraft.trim();
+      if (!note || submitLock.current) return;
+      submitLock.current = true;
+      setSubmitting(true);
       try {
-        await captureNote(result.entry.note, result.entry.date);
+        await captureNote(note, selectedDate);
       } catch {
+        submitLock.current = false;
+        setSubmitting(false);
         return;
       }
-      setDraft("");
+      setDraft((current) => current.trim() === note ? "" : current);
       if (dismissKeyboard) {
         setFocused(false);
         input.current?.blur();
@@ -140,57 +121,13 @@ export default function JournalScreen() {
         setFocused(true);
         requestAnimationFrame(() => input.current?.focus());
       }
-      requestAnimationFrame(() => {
-        scroll.current?.scrollToEnd({ animated: false });
-      });
-    },
-    [captureNote],
-  );
-  const processing = useJournalEntryProcessing({
-    draft,
-    enabled: focused,
-    buildResult: buildPendingEntry,
-    onCommit: commitPendingEntry,
-  });
-  const persistSubmittedDraft = useCallback(
-    async (submissionId: string, note: string) => {
-      try {
-        await captureNote(note, selectedDate);
-      } catch {
-        setFailedSubmissions((current) => ({ ...current, [submissionId]: true }));
-        return;
-      }
-      setFailedSubmissions((current) => {
-        const { [submissionId]: _failed, ...remaining } = current;
-        return remaining;
-      });
-      setPendingSubmissions((current) =>
-        current.filter((submission) => submission.id !== submissionId),
-      );
+      submitLock.current = false;
+      setSubmitting(false);
       requestAnimationFrame(() => {
         scroll.current?.scrollToEnd({ animated: false });
       });
     },
     [captureNote, selectedDate],
-  );
-  const submitDraft = useCallback(
-    (submittedDraft: string) => {
-      const note = submittedDraft.trim();
-      if (!note) return;
-
-      processing.cancel();
-      submissionSequence.current += 1;
-      const id = `note-${Date.now()}-${submissionSequence.current}`;
-      setPendingSubmissions((current) => [...current, { id, note }]);
-      void persistSubmittedDraft(id, note);
-      setDraft("");
-      setFocused(true);
-      requestAnimationFrame(() => {
-        input.current?.focus();
-        scroll.current?.scrollToEnd({ animated: false });
-      });
-    },
-    [persistSubmittedDraft, processing],
   );
   const submitOnReturn = useCallback(
     (submittedDraft: string) => {
@@ -198,12 +135,13 @@ export default function JournalScreen() {
       if (!note || lastReturnSubmission.current === note) return;
 
       lastReturnSubmission.current = note;
-      submitDraft(note);
+      void submitDraft(note, false);
     },
     [submitDraft],
   );
   const changeDraft = useCallback(
     (nextDraft: string) => {
+      draftTouchedBeforeLoad.current = true;
       const [submittedDraft, ...continuation] = nextDraft.split(/\r\n|\r|\n/);
       if (continuation.length === 0) {
         lastReturnSubmission.current = null;
@@ -213,7 +151,9 @@ export default function JournalScreen() {
 
       submitOnReturn(submittedDraft);
       const remainingDraft = continuation.join(" ").trimStart();
-      setDraft(remainingDraft);
+      // Keep the submitted text durable until local capture completes. A typed
+      // continuation takes over the editor without being cleared by that save.
+      setDraft(remainingDraft || submittedDraft);
     },
     [submitOnReturn],
   );
@@ -233,6 +173,15 @@ export default function JournalScreen() {
     [selectedDate, settings.currency],
   );
   const dayEntries = entries.filter((entry) => entry.date === selectedDate);
+  const recentPresetVisible = dayEntries.some((entry) => entry.id === recentPresetEntryId);
+  useEffect(() => {
+    if (!screenActive || !recentPresetEntryId || !recentPresetVisible) return;
+    const frame = requestAnimationFrame(() => {
+      scroll.current?.scrollToEnd({ animated: false });
+      clearRecentPresetEntry();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [screenActive, recentPresetEntryId, recentPresetVisible, clearRecentPresetEntry]);
   const commitEntryDraft = async (
     entry: (typeof entries)[number],
     nextDraft: string,
@@ -243,51 +192,37 @@ export default function JournalScreen() {
       return true;
     }
 
-    const parsedAmount = amountFromNote(note);
     const sources = entry.sources.map((source) =>
       source.title === "Your original note"
         ? { ...source, detail: note }
         : source,
     );
-    if (entry.receipt) {
-      try { await updateEntry({ ...entry, note, merchant: note, sources }); }
+    if (note !== entry.note) {
+      try { await updateEntry({ ...entry, note, sources }); }
       catch { return false; }
-      return true;
     }
-    try { await updateEntry({
-      ...entry,
-      note,
-      sources,
-      ...(parsedAmount
-        ? {
-            status: "ready" as const,
-            items: [
-              {
-                id: entry.items[0]?.id ?? `${entry.id}-item`,
-                name: note,
-                quantity: 1,
-                amountMinor: parsedAmount,
-                category: entry.category,
-              },
-            ],
-          }
-        : {}),
-    }); } catch { return false; }
     return true;
   };
-  const startEditingEntry = async (entry: (typeof entries)[number]) => {
-    if (editingEntryId && editingEntryId !== entry.id) {
-      const activeEntry = entries.find((item) => item.id === editingEntryId);
-      if (activeEntry && !(await commitEntryDraft(activeEntry, entryDraft))) return;
-    }
+  const startEditingEntry = (entry: (typeof entries)[number]) => {
     setEditingEntryId(entry.id);
-    setEntryDraft(processingEntryDrafts[entry.id] ?? entry.note);
+    setEntryDraft(editDrafts[entry.id] ?? entry.note);
   };
-  const finishEditingEntry = async (entry: (typeof entries)[number]) => {
-    if (!(await commitEntryDraft(entry, entryDraft))) return;
+  const finishEditingEntry = async (entry: (typeof entries)[number], nextDraft: string) => {
+    if (!(await commitEntryDraft(entry, nextDraft))) return false;
+    setEditDrafts((current) => {
+      const { [entry.id]: _saved, ...remaining } = current;
+      return remaining;
+    });
     setEditingEntryId((current) =>
       current === entry.id ? null : current,
     );
+    return true;
+  };
+  const changeEntryDraft = (nextDraft: string) => {
+    setEntryDraft(nextDraft);
+    if (editingEntryId) {
+      setEditDrafts((current) => ({ ...current, [editingEntryId]: nextDraft }));
+    }
   };
   const setEntryInput = useCallback((entryId: string, input: TextInput | null) => {
     if (input) {
@@ -296,17 +231,12 @@ export default function JournalScreen() {
       entryInputs.current.delete(entryId);
     }
   }, []);
-  const startEntryProcessing = useCallback((entryId: string, nextDraft: string) => {
-    setProcessingEntryDrafts((current) =>
-      current[entryId] === nextDraft
-        ? current
-        : { ...current, [entryId]: nextDraft },
-    );
-  }, []);
   const advanceEditingEntry = useCallback(
     (entryId: string) => {
       const currentIndex = dayEntries.findIndex((entry) => entry.id === entryId);
-      const nextEntry = currentIndex >= 0 ? dayEntries[currentIndex + 1] : undefined;
+      const nextEntry = currentIndex >= 0
+        ? dayEntries.slice(currentIndex + 1).find((entry) => !entry.receipt)
+        : undefined;
 
       if (!nextEntry) {
         setEditingEntryId(null);
@@ -316,26 +246,10 @@ export default function JournalScreen() {
       }
 
       setEditingEntryId(nextEntry.id);
-      setEntryDraft(nextEntry.note);
+      setEntryDraft(editDrafts[nextEntry.id] ?? nextEntry.note);
       requestAnimationFrame(() => entryInputs.current.get(nextEntry.id)?.focus());
     },
-    [dayEntries],
-  );
-  const commitProcessedEdit = useCallback(
-    async (entry: (typeof entries)[number], finishEditing: boolean) => {
-      try { await updateEntry(entry); } catch { return; }
-      setProcessingEntryDrafts((current) => {
-        if (!(entry.id in current)) return current;
-        const { [entry.id]: _processedDraft, ...remaining } = current;
-        return remaining;
-      });
-      if (finishEditing) {
-        setEditingEntryId((current) =>
-          current === entry.id ? null : current,
-        );
-      }
-    },
-    [updateEntry],
+    [dayEntries, editDrafts],
   );
   return (
     <Screen journal>
@@ -375,25 +289,12 @@ export default function JournalScreen() {
               currency={settings.currency}
               editing={editingEntryId === entry.id}
               draft={editingEntryId === entry.id ? entryDraft : entry.note}
-              processingDraft={processingEntryDrafts[entry.id] ?? null}
               onStartEditing={() => startEditingEntry(entry)}
-              onChangeDraft={setEntryDraft}
-              onCommit={() => finishEditingEntry(entry)}
-              onProcessedCommit={commitProcessedEdit}
-              onProcessingStarted={startEntryProcessing}
+              onChangeDraft={changeEntryDraft}
+              onCommit={(note) => finishEditingEntry(entry, note)}
               onReturn={advanceEditingEntry}
               inputRef={(node) => setEntryInput(entry.id, node)}
               onRetrySync={() => { void retrySync(entry.id).catch(() => undefined); }}
-            />
-          ))}
-          {pendingSubmissions.map((submission) => (
-            <PendingJournalEntryCard
-              key={submission.id}
-              note={submission.note}
-              buildResult={(note) => buildPendingEntry(note, submission.id)}
-              autoCommit={false}
-              failed={!!failedSubmissions[submission.id]}
-              onRetry={() => void persistSubmittedDraft(submission.id, submission.note)}
             />
           ))}
           <View style={styles.editor}>
@@ -406,7 +307,7 @@ export default function JournalScreen() {
             <TextInput
               ref={input}
               accessibilityLabel="Write an expense"
-              accessibilityHint="Press Return to start another item, pause to save automatically, or use the keyboard button to save now."
+              accessibilityHint="Press Return or tap the green tick to save. Pausing or dismissing the keyboard keeps this draft."
               multiline
               value={draft}
               onChangeText={changeDraft}
@@ -423,21 +324,20 @@ export default function JournalScreen() {
             />
             {focused && !!draft && (
               <View style={styles.statusSlot}>
-                {processing.phase === "typing" ? (
+                <JournalProcessingStatus
+                  phase={submitting ? "organizing" : "thinking"}
+                  result={null}
+                  idle={!submitting}
+                />
+                {!submitting && (
                   <Button label="Note options" onPress={() => {
-                    processing.cancel();
                     Keyboard.dismiss();
                     input.current?.blur();
                     setFocused(false);
                     setTool("add");
                   }} style={styles.noteOptionsButton}>
-                    <JournalProcessingDots />
+                    <Text style={styles.noteOptionsText}>···</Text>
                   </Button>
-                ) : (
-                  <JournalProcessingStatus
-                    phase={processing.phase}
-                    result={processing.pendingResult}
-                  />
                 )}
               </View>
             )}
@@ -446,9 +346,9 @@ export default function JournalScreen() {
           <JournalComposer
             focused={focused}
             draft={draft}
+            submitting={submitting}
             input={input}
-            onSave={processing.requestManualCommit}
-            onInsert={setDraft}
+            onSave={() => { void submitDraft(draft, true); }}
             onReceiptCaptured={attachReceiptPhoto}
             onDismiss={() => setFocused(false)}
             tool={tool}
@@ -484,6 +384,11 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
     minHeight: 30,
     width: 44,
+  },
+  noteOptionsText: {
+    color: Finn.muted,
+    fontSize: 18,
+    lineHeight: 24,
   },
   input: {
     flex: 1,

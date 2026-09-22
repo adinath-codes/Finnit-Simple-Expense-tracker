@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
 import { Finn, JournalType } from "@/constants/theme";
+import { useRotatingPlaceholder } from "@/components/ui/use-rotating-placeholder";
 
 const PHRASES = [
   "Write what you spent…",
@@ -9,68 +8,8 @@ const PHRASES = [
   "Uber back home, split ₹432 with Aswin",
 ];
 
-const TYPE_DELAY = 55;
-const DELETE_DELAY = 30;
-const HOLD_DELAY = 2500;
-
 export function JournalEmptyPrompt({ onPress }: { onPress: () => void }) {
-  const reducedMotion = useReducedMotion();
-  const [visibleText, setVisibleText] = useState(
-    reducedMotion ? PHRASES[0] : "",
-  );
-
-  useEffect(() => {
-    if (reducedMotion) {
-      setVisibleText(PHRASES[0]);
-      return;
-    }
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let phraseIndex = 0;
-    let characterIndex = 0;
-    let deleting = false;
-
-    const schedule = (delay: number) => {
-      timer = setTimeout(tick, delay);
-    };
-
-    const tick = () => {
-      if (cancelled) return;
-
-      const phrase = PHRASES[phraseIndex];
-      if (!deleting) {
-        characterIndex += 1;
-        setVisibleText(phrase.slice(0, characterIndex));
-
-        if (characterIndex === phrase.length) {
-          deleting = true;
-          schedule(HOLD_DELAY);
-        } else {
-          schedule(TYPE_DELAY);
-        }
-        return;
-      }
-
-      characterIndex -= 1;
-      setVisibleText(phrase.slice(0, characterIndex));
-      if (characterIndex === 0) {
-        phraseIndex = (phraseIndex + 1) % PHRASES.length;
-        deleting = false;
-        schedule(TYPE_DELAY);
-      } else {
-        schedule(DELETE_DELAY);
-      }
-    };
-
-    setVisibleText("");
-    schedule(TYPE_DELAY);
-
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [reducedMotion]);
+  const visibleText = useRotatingPlaceholder(PHRASES);
 
   return (
     <Pressable

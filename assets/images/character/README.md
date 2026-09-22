@@ -51,6 +51,15 @@ for a curious head, shoulder, and fingers peeking inward; the right prompt asked
 for a cheerful inward-looking pose presenting a blank receipt. Backgrounds,
 gradients, shadows, extra characters, and watermarks were explicitly excluded.
 
+## Toast reactions
+
+`toast/error.png`, `toast/warning.png`, and `toast/info.png` are three transparent
+black-and-white Finn bust portraits generated with the built-in image tool on
+September 21, 2026. The existing sign-in peek illustration was used as the
+strict identity and ink-style reference. Error is concerned with a hand near his
+chin, warning raises a finger, and info offers an open-handed explanation. The
+toast component supplies state color in text rather than in the character art.
+
 ## Playback and adding another animation
 
 ```tsx

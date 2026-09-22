@@ -22,7 +22,6 @@ import {
   captureJournalNote,
   createCaptureInput,
   refreshJournal,
-  refreshJournalCatalog,
 } from "@/features/journal/services/journal-service";
 import {
   correctedTextExtraction,
@@ -31,6 +30,8 @@ import {
 import {
   deleteJournalEntry,
   correctJournalEntry,
+  correctJournalEntryWithFinn,
+  reparseJournalEntry,
 } from "@/features/entries/services/entries-service";
 import {
   deleteReceipt,
@@ -51,8 +52,8 @@ import {
   updateGoalForAccount,
 } from "@/features/settings/services/settings-service";
 import { readJournalCache, subscribeJournalCache } from "@/lib/offline/database";
+import { currentPreferences } from "@/lib/offline/cache-schema";
 import { startJournalSync } from "@/lib/offline/sync-queue";
-import { captureApproximatePlace } from "@/services/location-service";
 import {
   acceptRemoteEntryVersion,
   keepLocalEntryVersion,
@@ -75,19 +76,21 @@ function useJournalState() {
   const [settingsBootstrapReady, setSettingsBootstrapReady] = useState(false);
   const [selectedDate, setSelectedDate] = useState(seed.today);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [recentPresetEntryId, setRecentPresetEntryId] = useState<string | null>(null);
+  const clearRecentPresetEntry = useCallback(() => setRecentPresetEntryId(null), []);
 
   useEffect(() => {
     let active = true;
     void Promise.all([loadPreferences(), loadOnboardingSnapshot()])
       .then(([preferences, onboarding]) => {
         if (!active) return;
-        setPreAuthSettings({
+        setPreAuthSettings(currentPreferences({
           ...seed.settings,
           ...(onboarding.completedAt && onboarding.answers.currency
             ? { currency: onboarding.answers.currency }
             : {}),
           ...preferences,
-        });
+        }));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -102,6 +105,7 @@ function useJournalState() {
       setCache(null);
       setOwnerId(null);
       setMutationError(null);
+      setRecentPresetEntryId(null);
       return;
     }
 
@@ -120,7 +124,6 @@ function useJournalState() {
       lastRefresh = Date.now();
       void Promise.allSettled([
         refreshJournal(),
-        refreshJournalCatalog(),
         refreshRemoteReceipts(),
         recoverPreparingReceipts(),
         refreshSettingsForAccount(userId),
@@ -190,23 +193,21 @@ function useJournalState() {
   const captureNote = useCallback((note: string, date: string) =>
     runMutation(async () => {
       if (!session) throw new Error("Sign in before saving this note.");
-      const approximatePlace = settings.location
-        ? await captureApproximatePlace()
-        : null;
       const input = createCaptureInput(
         note.trim(),
         settings.currency,
         date,
-        approximatePlace,
       );
       await captureJournalNote(input);
       return input.id;
-    }), [runMutation, session, settings.currency, settings.location]);
+    }), [runMutation, session, settings.currency]);
 
   const capturePreset = useCallback((preset: Preset, date: string) =>
     runMutation(async () => {
       if (!session) throw new Error("Sign in before using a saved entry.");
-      return capturePresetEntry(preset, date, settings.currency);
+      const id = await capturePresetEntry(preset, date, settings.currency);
+      setRecentPresetEntryId(id);
+      return id;
     }), [runMutation, session, settings.currency]);
 
   const updateEntry = useCallback((entry: JournalEntry) =>
@@ -220,7 +221,11 @@ function useJournalState() {
         throw new Error("This note is saved. Let its first sync finish before editing it.");
       }
       const input = { ...current.input, raw_text: entry.note.trim() };
-      await correctJournalEntry(input, correctedTextExtraction(current, entry));
+      if (input.raw_text !== current.input.raw_text) {
+        await reparseJournalEntry(input);
+      } else {
+        await correctJournalEntry(input, correctedTextExtraction(current, entry));
+      }
     }), [runMutation, session]);
 
   const deleteEntry = useCallback((id: string) =>
@@ -232,6 +237,12 @@ function useJournalState() {
         throw new Error("This note is saved. Let its first sync finish before removing it.");
       }
       await deleteJournalEntry(id);
+  }), [runMutation, session]);
+
+  const askFinnToCorrectEntry = useCallback((id: string, instruction: string) =>
+    runMutation(async () => {
+      if (!session) throw new Error("Sign in before asking Finn to revise this entry.");
+      await correctJournalEntryWithFinn(id, instruction);
     }), [runMutation, session]);
 
   const savePreset = useCallback((preset: Preset) =>
@@ -248,7 +259,7 @@ function useJournalState() {
 
   const updateSettings = useCallback((patch: Partial<Preferences>) =>
     runMutation(async () => {
-      const next = { ...settings, ...patch };
+      const next = currentPreferences({ ...settings, ...patch });
       if (session) await saveSettingsForAccount(session.user.id, next);
       else {
         await savePreferences(next);
@@ -326,7 +337,10 @@ function useJournalState() {
     updateGoal,
     captureNote,
     capturePreset,
+    recentPresetEntryId,
+    clearRecentPresetEntry,
     updateEntry,
+    askFinnToCorrectEntry,
     deleteEntry,
     savePreset,
     deletePreset,

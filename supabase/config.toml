@@ -436,6 +436,10 @@ entrypoint = "./functions/scan-receipt/index.ts"
 verify_jwt = false
 entrypoint = "./functions/ask-money/index.ts"
 
+[functions.ask-sql]
+verify_jwt = false
+entrypoint = "./functions/ask-sql/index.ts"
+
 [functions.request-quota-review]
 verify_jwt = false
 entrypoint = "./functions/request-quota-review/index.ts"

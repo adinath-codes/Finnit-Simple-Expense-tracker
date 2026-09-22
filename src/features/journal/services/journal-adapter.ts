@@ -5,10 +5,55 @@ import type {
   JournalCache,
 } from "../../../types/sync.ts";
 import type { Extraction, Transaction } from "../../../lib/supabase/database.types.ts";
+import {
+  deriveAllocationRows,
+  deriveAmountBreakdown,
+  deriveReceiptAmountBreakdown,
+} from "../../entries/services/breakdown-service.ts";
+
+type ReceiptSummaryLine = {
+  kind?: string;
+  description: string;
+};
+
+export function receiptJournalText(
+  merchantName: string | null | undefined,
+  lines: ReceiptSummaryLine[],
+) {
+  const merchant = merchantName?.trim();
+  if (merchant) return `Purchase from ${merchant}`;
+
+  const items = lines
+    .filter((line) => line.kind === "item")
+    .map((line) => line.description.trim())
+    .filter(Boolean);
+  if (!items.length) return "Scanned receipt";
+
+  const visible = items.slice(0, 2).join(", ");
+  const remaining = items.length - 2;
+  return `Purchased ${visible}${remaining > 0 ? ` + ${remaining} more` : ""}`;
+}
+
+export function receiptDisplayTotal(
+  entry: JournalEntry,
+  fallbackCurrency: string,
+) {
+  if (
+    !entry.receipt ||
+    (entry.receipt.status !== "complete" && entry.receipt.status !== "needs_review")
+  ) return null;
+
+  return {
+    amountMinor: entry.receipt.printedTotalMinor ??
+      entry.items.reduce((sum, item) => sum + item.amountMinor, 0),
+    currency: entry.items[0]?.currency ?? fallbackCurrency,
+  };
+}
 
 export function uiCategory(value: string): Category {
-  return value === "food" || value === "transport" || value === "shopping"
-    ? value
+  const root = value.split(".")[0];
+  return root === "food" || root === "transport" || root === "shopping"
+    ? root
     : "other";
 }
 
@@ -18,10 +63,15 @@ function syncMetadata(
   fallback: "pending" | "synced" | "blocked" = "synced",
 ) {
   const job = cache.jobs.find((candidate) => candidate.entryId === entryId);
+  const pendingAction = job?.endpoint === "correct-entry" &&
+      "action" in job.payload && job.payload.action === "ai_correct"
+    ? "ai_correct" as const
+    : undefined;
   return job
     ? {
         syncState: job.state === "blocked" ? "blocked" as const : "pending" as const,
         ...(job.error ? { syncError: job.error } : {}),
+        ...(pendingAction ? { pendingAction } : {}),
         ...(job.state === "blocked"
           ? {
               syncIssue:
@@ -44,6 +94,8 @@ export function textJournalEntry(
 ): JournalEntry {
   const transactions = entry.extraction.transactions;
   const first = transactions[0];
+  const components = entry.extraction.amount_components ?? [];
+  const allocationRows = deriveAllocationRows(entry.extraction, entry.input.id);
   return {
     id: entry.input.id,
     date: first?.occurred_on ?? entry.input.selected_date ?? entry.input.captured_at.slice(0, 10),
@@ -57,22 +109,65 @@ export function textJournalEntry(
       hour: "numeric",
       minute: "2-digit",
     }),
-    items: transactions.map((transaction, index) => ({
-      id: transaction.id ?? `${entry.input.id}-${index}`,
-      name: transaction.description,
-      quantity: transaction.quantity ?? 1,
-      amountMinor: Number(transaction.amount_minor ?? 0),
-      unitPriceMinor: transaction.unit_price_minor === null
-        ? null
-        : Number(transaction.unit_price_minor),
-      amountMissing: transaction.amount_minor === null,
-      category: uiCategory(transaction.category_id),
-      categoryId: transaction.category_id,
-      confidence: transaction.confidence,
-      needsReview: transaction.needs_review,
-    })),
+    items: transactions.map((transaction, index) => {
+      const userShare = transaction.user_share_minor === undefined
+        ? transaction.amount_minor
+        : transaction.user_share_minor;
+      return {
+        id: transaction.id ?? `${entry.input.id}-${index}`,
+        name: transaction.description,
+        quantity: transaction.quantity ?? 1,
+        amountMinor: Number(transaction.amount_minor ?? 0),
+        accountingAmountMinor: userShare === null ? null : Number(userShare),
+        currency: transaction.currency,
+        unitPriceMinor: transaction.unit_price_minor === null
+          ? null
+          : Number(transaction.unit_price_minor),
+        amountMissing: transaction.amount_minor === null,
+        category: uiCategory(transaction.category_id),
+        categoryId: transaction.category_id,
+        confidence: transaction.confidence,
+        needsReview: transaction.needs_review,
+        primaryAmountRole: transaction.primary_amount_role,
+        groupTotalMinor: transaction.group_total_minor === null ||
+            transaction.group_total_minor === undefined
+          ? null
+          : Number(transaction.group_total_minor),
+        userShareMinor: transaction.user_share_minor === null ||
+            transaction.user_share_minor === undefined
+          ? null
+          : Number(transaction.user_share_minor),
+        paidByUserMinor: transaction.paid_by_user_minor === null ||
+            transaction.paid_by_user_minor === undefined
+          ? null
+          : Number(transaction.paid_by_user_minor),
+        splitMethod: transaction.split_method,
+        participantCount: transaction.participant_count,
+        quantityUnit: transaction.quantity_unit,
+        components: components
+          .filter((component) => component.transaction_ordinal === index)
+          .sort((a, b) => a.ordinal - b.ordinal)
+          .map((component) => ({
+            id: `${entry.input.id}-${index}-${component.ordinal}`,
+            label: component.label,
+            quantity: component.quantity,
+            unitPriceMinor: Number(component.unit_price_minor),
+            lineTotalMinor: Number(component.line_total_minor),
+            semanticRole: component.semantic_role,
+            evidence: component.evidence.text,
+            needsReview: component.needs_review,
+          })),
+        breakdownApproximate: transaction.breakdown_approximate === true,
+        allocationRows: allocationRows.filter((row) =>
+          row.transactionId === (transaction.id ?? `${entry.input.id}-${index}`)
+        ),
+      };
+    }),
+    amountBreakdown: deriveAmountBreakdown(entry.extraction, entry.input.id),
+    allocationRows,
     thought: entry.sync === "synced"
-      ? "Finn parsed this note and saved its financial details."
+      ? entry.extraction.interpretation_summary ||
+        "Finn parsed this note and saved its financial details."
       : entry.sync === "blocked"
         ? "This note is saved on this device and needs your attention before it can sync."
         : "This note is saved on this device and will sync automatically.",
@@ -95,7 +190,7 @@ export function receiptJournalEntry(
   sync: ReturnType<typeof syncMetadata>,
 ): JournalEntry {
   const attachment = receipt.attachment;
-  const merchant = attachment?.merchant_name ?? "Receipt";
+  const merchantName = attachment?.merchant_name?.trim() || null;
   const transactions = receipt.remote?.extraction.transactions ?? [];
   const accountingTotal = transactions.reduce(
     (sum, transaction) =>
@@ -107,8 +202,8 @@ export function receiptJournalEntry(
   return {
     id: receipt.request.entry_id,
     date: receipt.request.selected_date,
-    note: merchant,
-    merchant,
+    note: receiptJournalText(merchantName, receipt.lines),
+    merchant: merchantName ?? "",
     category: uiCategory(receipt.lines[0]?.category_id ?? "other"),
     status: receipt.status === "complete" ? "ready" : "review",
     time: receipt.status === "complete" || receipt.status === "needs_review"
@@ -120,6 +215,7 @@ export function receiptJournalEntry(
         name: line.description,
         quantity: line.quantity ?? 1,
         amountMinor: Number(line.amount_minor),
+        currency: line.currency,
         unitPriceMinor: line.unit_price_minor === null
           ? null
           : Number(line.unit_price_minor),
@@ -131,6 +227,10 @@ export function receiptJournalEntry(
         provisional: line.provisional,
       };
     }),
+    amountBreakdown: deriveReceiptAmountBreakdown(
+      receipt.lines,
+      receipt.request.entry_id,
+    ),
     accountingTotalMinor: transactions.length ? accountingTotal : undefined,
     thought: {
       preparing: "Preparing a scan-quality copy of your receipt.",
@@ -223,10 +323,11 @@ export function correctedTextExtraction(
         Number(transactionUnitPrice(original) * item.quantity) === Math.abs(item.amountMinor)
       ? original.unit_price_minor
       : null;
-    const uiOriginal = uiCategory(original.category_id);
-    const categoryId = item.category === uiOriginal
-      ? item.categoryId ?? original.category_id
-      : item.category;
+    const categoryId = item.categoryId ?? (
+      item.category === uiCategory(original.category_id)
+        ? original.category_id
+        : item.category
+    );
     return {
       ...original,
       description: item.name.trim(),
@@ -239,9 +340,35 @@ export function correctedTextExtraction(
       needs_review: amount === null,
       unresolved: amount === null ? ["amount"] : [],
       evidence: null,
+      primary_amount_role: "personal_total",
+      group_total_minor: amount,
+      user_share_minor: amount,
+      paid_by_user_minor: original.cash_flow === "out" ? amount : null,
+      split_method: "not_applicable",
+      participant_count: 1,
+      allocation_status: "not_applicable",
     };
   });
-  return { ...current.extraction, transactions, unresolved: [] };
+  const retainedComponents = (current.extraction.amount_components ?? []).filter(
+    (component) => {
+      const transaction = transactions[component.transaction_ordinal];
+      if (!transaction?.amount_minor) return false;
+      const total = (current.extraction.amount_components ?? [])
+        .filter((candidate) =>
+          candidate.transaction_ordinal === component.transaction_ordinal
+        )
+        .reduce((sum, candidate) => sum + BigInt(candidate.line_total_minor), 0n);
+      return total === BigInt(transaction.amount_minor);
+    },
+  );
+  return {
+    ...current.extraction,
+    transactions,
+    amount_components: retainedComponents,
+    interpretation_summary:
+      "You corrected this entry. Finn preserved only arithmetic components that still match the edited total.",
+    unresolved: [],
+  };
 }
 
 function transactionUnitPrice(transaction: Transaction) {

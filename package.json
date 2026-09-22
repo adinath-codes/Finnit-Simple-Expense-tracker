@@ -20,7 +20,6 @@
     "expo-image-manipulator": "~57.0.19",
     "expo-image-picker": "~57.0.19",
     "expo-linking": "~57.0.10",
-    "expo-location": "~57.0.19",
     "expo-network": "~57.0.2",
     "expo-notifications": "~57.0.20",
     "expo-router": "~57.0.22",
@@ -33,6 +32,7 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
+    "react-native-keyboard-controller": "1.21.9",
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
@@ -59,6 +59,8 @@
     "test:receipt": "node --experimental-transform-types --test supabase/tests/receipt.test.ts",
     "test:journal": "node --experimental-transform-types --test tests/unit/journal-offline.test.ts",
     "test:currency": "node --experimental-transform-types --test tests/unit/currency-catalog.test.ts",
+    "test:money": "node --experimental-transform-types --test supabase/tests/money-evidence.test.ts",
+    "test:search": "node --experimental-transform-types --test supabase/tests/search.test.ts",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
   },
   "private": true

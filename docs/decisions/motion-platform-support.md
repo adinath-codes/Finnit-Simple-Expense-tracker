@@ -21,7 +21,7 @@ Implementation status is source changes only. At the user's explicit request, no
 | Bookmark state / entry saved as shortcut | Native SF Symbol scale. The entry confirmation uses an explicit success event. | No SF Symbol scale. Confirmation icon and text still appear. |
 | Save note, save preset, add preset to journal | One native checkmark bounce after the local operation succeeds, with a visible confirmation. | No SF Symbol bounce. Confirmation icon/text and opacity reveal remain. |
 | All shared buttons | 120ms opacity and scale to 0.97, no universal icon bounce. | Same shared Reanimated press feedback. |
-| Startup, onboarding hydration, quick-capture hydration | Delayed skeletons with 1.5s clipped gradient shimmer; content reveal on readiness. | Same shared skeleton/shimmer primitives wherever the feature is available. Quick capture remains iOS-only as before. |
+| Startup and onboarding hydration | Delayed skeletons with 1.5s clipped gradient shimmer; content reveal on readiness. | Same shared skeleton/shimmer primitives. The retired quick-capture route redirects to the journal. |
 | Search contexts and first results | Skeletons after 150ms pending; fade loaded content over 180ms. Refresh of the same request retains prior results; pagination appends without replaying row entrances. | Same shared loading behavior. |
 | Entry references; saved-entry create/edit form; custom search dates | 200ms layout transition and 150ms content fades; disclosure chevrons rotate with expanded state. | Same shared Reanimated effects. |
 | Saved-entry insert/delete | Stable keys and layout/fade effects for editing operations; search focus/input suppresses list motion. | Same shared Reanimated effects. |

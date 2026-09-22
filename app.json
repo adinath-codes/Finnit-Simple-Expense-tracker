@@ -47,12 +47,6 @@
                     }
                ],
                [
-                    "expo-location",
-                    {
-                         "locationWhenInUsePermission": "Allow Finn to add an approximate place to entries you choose to save."
-                    }
-               ],
-               [
                     "expo-splash-screen",
                     {
                          "backgroundColor": "#FCF8F5",

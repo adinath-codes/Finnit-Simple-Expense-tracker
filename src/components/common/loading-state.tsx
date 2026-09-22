@@ -83,9 +83,9 @@ export function LoadingState({ variant = "startup", label = "Loading…", active
             <SkeletonBlock height={82} radius={20} />
             <SkeletonBlock height={82} radius={20} />
           </> : <>
-            <SkeletonBlock height={86} radius={20} />
-            <SkeletonBlock height={86} radius={20} />
-            <SkeletonBlock height={86} radius={20} />
+            <SkeletonBlock width="85%" height={20} />
+            <SkeletonBlock width="70%" height={20} />
+            <SkeletonBlock width="78%" height={20} />
           </>}
         </View>
       </ShimmerContext.Provider>

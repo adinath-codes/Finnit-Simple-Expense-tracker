@@ -24,13 +24,60 @@ export type SearchItem = {
   merchant_name: string | null;
   amount_status: "confirmed" | "missing" | "estimated";
   needs_review: boolean;
+  metric_minor?: string | null;
+  metric_confirmed?: boolean;
+  primary_amount_role?: string;
+  group_total_minor?: string | null;
+  user_share_minor?: string | null;
+  paid_by_user_minor?: string | null;
+  split_method?: string;
+  participant_count?: number | null;
+  quantity_unit?: string | null;
+  amount_components?: {
+    ordinal: number;
+    label: string;
+    quantity: number;
+    unit_price_minor: string;
+    line_total_minor: string;
+    semantic_role: string;
+    needs_review: boolean;
+  }[];
+  participants?: {
+    display_name: string | null;
+    party_kind: string;
+    participant_count: number;
+    role: string;
+    share_minor: string | null;
+    split_method: string;
+    needs_review: boolean;
+  }[];
+  contexts?: { name: string; needs_review: boolean }[];
 };
 export type SearchResult = {
+  reason?: string;
+  advanced_answer?: {
+    kind: "amount" | "date" | "count" | "comparison" | "list";
+    label: string;
+    rows: {
+      value_minor?: string;
+      value_date?: string;
+      value_count?: string;
+      currency?: string;
+      label?: string;
+    }[];
+    start_date: string;
+    end_date: string;
+  };
+  sql_session_id?: string;
+  explanation?: string;
   needs_filters?: boolean;
   suggested_filters?: SearchPlan;
   applied_filters?: SearchPlan;
   totals?: MoneyTotal[];
   matching_count?: number;
+  known_split_count?: number;
+  unknown_split_count?: number;
+  metric?: SearchPlan["metric"];
   transactions?: SearchItem[];
   categories?: { currency: string; category_id: string; total_minor: string }[];
   merchants?: {
