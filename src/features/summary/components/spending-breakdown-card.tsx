@@ -101,7 +101,7 @@ export function SpendingBreakdownCard({ visible }: { visible: boolean }) {
                 .filter((item) => item.category === category)
                 .reduce(
                   (itemSum, item) =>
-                    itemSum + item.amountMinor * item.quantity,
+                    itemSum + item.amountMinor,
                   0,
                 ),
             0,

@@ -9,6 +9,7 @@ import {
   correctedTextExtraction,
   journalEntriesFromCache,
 } from "../../src/features/journal/services/journal-adapter.ts";
+import { entryTotal } from "../../src/utils/amounts.ts";
 import { presetCaptureText } from "../../src/features/presets/services/preset-format.ts";
 import type { CachedEntry, JournalCache } from "../../src/types/sync.ts";
 
@@ -254,6 +255,34 @@ test("text correction matches transaction IDs and preserves collapsed categories
   assert.equal(extraction.transactions[0].category_id, "bills");
   assert.equal(extraction.transactions[0].amount_minor, "125000");
   assert.equal(extraction.transactions[0].category_source, "user_correction");
+});
+
+test("quantity describes an already-total backend amount without multiplying it again", () => {
+  const threeCoffees: CachedEntry = {
+    ...cachedEntry,
+    extraction: {
+      ...cachedEntry.extraction,
+      transactions: [{
+        ...transaction,
+        description: "3 coffees",
+        amount_minor: "45000",
+        quantity: 3,
+        unit_price_minor: null,
+      }],
+    },
+  };
+  const entry = journalEntriesFromCache(normalizeJournalCache({
+    version: 1,
+    entries: { [threeCoffees.input.id]: threeCoffees },
+    jobs: [],
+  }))[0];
+
+  assert.equal(entry.items[0].amountMinor, 45000);
+  assert.equal(entryTotal(entry), 45000);
+
+  const corrected = correctedTextExtraction(threeCoffees, entry);
+  assert.equal(corrected.transactions[0].amount_minor, "45000");
+  assert.equal(corrected.transactions[0].unit_price_minor, null);
 });
 
 test("editing note text does not turn a missing amount into a confirmed zero", () => {

@@ -4,7 +4,10 @@ export type EntryItem = {
   id: string;
   name: string;
   quantity: number;
+  /** Total line amount in minor units, matching the backend's `amount_minor`. */
   amountMinor: number;
+  /** Optional per-unit price supplied by the backend; never used for totals. */
+  unitPriceMinor?: number | null;
   amountMissing?: boolean;
   category: Category;
   /** Preserves backend categories that the four-category journal UI collapses. */

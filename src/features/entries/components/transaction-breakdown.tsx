@@ -40,7 +40,7 @@ export function TransactionBreakdown({
           >
             <Text style={styles.name}>{item.name}</Text>
             <Text style={styles.amount}>
-              {money(item.amountMinor * item.quantity)}
+              {money(item.amountMinor)}
             </Text>
             <Icon
               name={expanded === item.id ? "up" : "down"}
@@ -60,9 +60,17 @@ export function TransactionBreakdown({
                 <ItemMetric
                   accent="#F77B96"
                   icon="wallet"
-                  label="Per item"
+                  label="Total"
                   value={money(item.amountMinor)}
                 />
+                {item.unitPriceMinor !== null && item.unitPriceMinor !== undefined && (
+                  <ItemMetric
+                    accent="#F77B96"
+                    icon="wallet"
+                    label="Per item"
+                    value={money(item.unitPriceMinor)}
+                  />
+                )}
                 <ItemMetric
                   accent={Categories[item.category].color}
                   icon={Categories[item.category].icon}
@@ -83,9 +91,9 @@ export function TransactionBreakdown({
                   </View>
                   <View style={shared.row}>
                     <View style={{ flex: 2 }}>
-                      <Text style={styles.fieldLabel}>Amount per item</Text>
+                      <Text style={styles.fieldLabel}>Total amount</Text>
                       <TextInput
-                        accessibilityLabel="Amount per item"
+                        accessibilityLabel="Total amount"
                         keyboardType="decimal-pad"
                         value={amount}
                         onChangeText={setAmount}
@@ -172,6 +180,7 @@ export function TransactionBreakdown({
                           name: description.trim(),
                           quantity: Number(quantity),
                           amountMinor: (kind === "discount" ? -1 : 1) * Math.round(Number(amount) * 100),
+                          unitPriceMinor: null,
                           category,
                           categoryId: categoryChanged ? category : item.categoryId,
                           kind,
@@ -186,7 +195,7 @@ export function TransactionBreakdown({
                               ? [...entry.items, updated]
                               : entry.items.map((current) => current.id === item.id ? updated : current),
                             thought:
-                              "You updated this entry. The total now reflects your amounts and quantities; your original note is preserved.",
+                              "You updated this entry. The total now reflects your line amounts; your original note is preserved.",
                           });
                         } catch { return; }
                         if (pendingItem?.id === item.id) setPendingItem(null);

@@ -270,16 +270,19 @@ export async function correctReceiptEntry(entry: JournalEntry) {
       const previous = receipt.lines.find((line) =>
         line.id === item.id || line.ordinal === ordinal,
       );
-      const amount = item.amountMinor * item.quantity;
+      const amount = item.amountMinor;
+      const unitPrice = item.kind !== "discount" && previous?.unit_price_minor !== null &&
+          previous?.unit_price_minor !== undefined && item.quantity > 1 &&
+          Number(previous.unit_price_minor) * item.quantity === Math.abs(amount)
+        ? previous.unit_price_minor
+        : null;
       return {
         id: previous?.id,
         ordinal,
         kind: item.kind ?? previous?.kind ?? "item",
         description: item.name.trim(),
         quantity: item.quantity,
-        unit_price_minor: item.kind !== "discount" && item.quantity > 1
-          ? String(Math.abs(item.amountMinor))
-          : null,
+        unit_price_minor: unitPrice === null ? null : String(Math.abs(Number(unitPrice))),
         amount_minor: String(item.kind === "discount" ? -Math.abs(amount) : Math.abs(amount)),
         currency: receipt.attachment?.currency ?? receipt.request.default_currency,
         category_id: item.categoryId ?? item.category,

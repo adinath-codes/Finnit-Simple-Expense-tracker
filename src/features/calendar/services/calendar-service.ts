@@ -50,7 +50,7 @@ export function buildCalendarMonth({
       (totalsByDate.get(entry.date) ?? 0) + entryTotal(entry),
     );
     for (const item of entry.items) {
-      categoryTotals[item.category] += item.amountMinor * item.quantity;
+      categoryTotals[item.category] += item.amountMinor;
     }
   }
 

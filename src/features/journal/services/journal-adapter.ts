@@ -61,7 +61,10 @@ export function textJournalEntry(
       id: transaction.id ?? `${entry.input.id}-${index}`,
       name: transaction.description,
       quantity: transaction.quantity ?? 1,
-      amountMinor: Number(transaction.unit_price_minor ?? transaction.amount_minor ?? 0),
+      amountMinor: Number(transaction.amount_minor ?? 0),
+      unitPriceMinor: transaction.unit_price_minor === null
+        ? null
+        : Number(transaction.unit_price_minor),
       amountMissing: transaction.amount_minor === null,
       category: uiCategory(transaction.category_id),
       categoryId: transaction.category_id,
@@ -112,18 +115,14 @@ export function receiptJournalEntry(
       ? `${receipt.lines.length} item${receipt.lines.length === 1 ? "" : "s"}`
       : "Just now",
     items: receipt.lines.map((line) => {
-      const quantity = line.quantity ?? 1;
-      const total = Number(line.amount_minor);
-      const unit = line.unit_price_minor === null
-        ? quantity > 1 && total % quantity === 0 ? total / quantity : total
-        : Number(line.unit_price_minor);
       return {
         id: line.id ?? `${receipt.request.entry_id}-${line.ordinal}`,
         name: line.description,
-        quantity: line.unit_price_minor === null && quantity > 1 && total % quantity !== 0
-          ? 1
-          : quantity,
-        amountMinor: unit,
+        quantity: line.quantity ?? 1,
+        amountMinor: Number(line.amount_minor),
+        unitPriceMinor: line.unit_price_minor === null
+          ? null
+          : Number(line.unit_price_minor),
         category: uiCategory(line.category_id),
         categoryId: line.category_id,
         kind: line.kind,
@@ -218,7 +217,12 @@ export function correctedTextExtraction(
     if (!original) throw new Error("This journal line no longer exists.");
     const amount = item.amountMissing
       ? null
-      : String(Math.abs(item.amountMinor * item.quantity));
+      : String(Math.abs(item.amountMinor));
+    const unitPrice = amount !== null && original.unit_price_minor !== null &&
+        item.quantity > 1 &&
+        Number(transactionUnitPrice(original) * item.quantity) === Math.abs(item.amountMinor)
+      ? original.unit_price_minor
+      : null;
     const uiOriginal = uiCategory(original.category_id);
     const categoryId = item.category === uiOriginal
       ? item.categoryId ?? original.category_id
@@ -228,9 +232,7 @@ export function correctedTextExtraction(
       description: item.name.trim(),
       amount_minor: amount,
       amount_status: amount === null ? "missing" : "confirmed",
-      unit_price_minor: amount !== null && item.quantity > 1
-        ? String(Math.abs(item.amountMinor))
-        : null,
+      unit_price_minor: unitPrice,
       quantity: item.quantity,
       category_id: categoryId,
       category_source: "user_correction",
@@ -240,4 +242,8 @@ export function correctedTextExtraction(
     };
   });
   return { ...current.extraction, transactions, unresolved: [] };
+}
+
+function transactionUnitPrice(transaction: Transaction) {
+  return Number(transaction.unit_price_minor ?? 0);
 }

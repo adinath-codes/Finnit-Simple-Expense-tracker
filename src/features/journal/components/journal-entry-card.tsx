@@ -292,7 +292,7 @@ export function JournalEntryCard({
               {item.needsReview && <View accessibilityLabel="Needs review" style={styles.reviewDot} />}
             </View>
             <Text style={styles.receiptAmount}>
-              {money(item.amountMinor * item.quantity, currency)}
+              {money(item.amountMinor, currency)}
             </Text>
           </ContentFade>
         ))}

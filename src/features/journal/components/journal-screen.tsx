@@ -57,7 +57,7 @@ export default function JournalScreen() {
   >([]);
   const [failedSubmissions, setFailedSubmissions] = useState<Record<string, boolean>>({});
   const [receiptError, setReceiptError] = useState<string | null>(null);
-  const [tool, setTool] = useState<"add" | "receipt" | null>(null);
+  const [tool, setTool] = useState<"add" | "voice" | "receipt" | null>(null);
   const input = useRef<TextInput>(null);
   const entryInputs = useRef(new Map<string, TextInput>());
   const lastReturnSubmission = useRef<string | null>(null);
@@ -448,6 +448,7 @@ export default function JournalScreen() {
             draft={draft}
             input={input}
             onSave={processing.requestManualCommit}
+            onInsert={setDraft}
             onReceiptCaptured={attachReceiptPhoto}
             onDismiss={() => setFocused(false)}
             tool={tool}

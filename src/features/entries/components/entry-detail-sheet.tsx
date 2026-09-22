@@ -16,6 +16,7 @@ import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
 import type { EntryItem } from "@/types/domain";
 import { entryTotal } from "@/utils/amounts";
+import { money } from "@/utils/currency";
 import { TransactionBreakdown } from "./transaction-breakdown";
 import { ReceiptPreview } from "./receipt-preview";
 import { retryReceipt } from "@/features/camera/services/receipt-service";
@@ -470,39 +471,23 @@ function AmountExpression({
 }) {
   return (
     <Text
-      accessibilityLabel="Item quantity times amount"
+      accessibilityLabel="Item quantities and line totals"
       style={styles.amountExpression}
     >
       {items.map((item, index) => {
-        const { symbol, amount } = unitAmountParts(item.amountMinor, currency);
         return (
           <Fragment key={item.id}>
             {index > 0 && <Text style={styles.amountOperator}> + </Text>}
-            <Text>{item.quantity} × </Text>
-            <Text style={styles.currencySymbol}>{symbol}</Text>
-            <Text>{amount}</Text>
+            {item.quantity > 1 && item.unitPriceMinor !== null && item.unitPriceMinor !== undefined
+              ? <Text>{item.quantity} × {money(item.unitPriceMinor, currency)} = {money(item.amountMinor, currency)}</Text>
+              : item.quantity > 1
+                ? <Text>{item.quantity} items · {money(item.amountMinor, currency)}</Text>
+                : <Text>{money(item.amountMinor, currency)}</Text>}
           </Fragment>
         );
       })}
     </Text>
   );
-}
-
-function unitAmountParts(amountMinor: number, currency: string) {
-  const formatter = new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: amountMinor % 100 ? 2 : 0,
-  });
-  const parts = formatter.formatToParts(amountMinor / 100);
-  return {
-    symbol: parts.find((part) => part.type === "currency")?.value ?? currency,
-    amount: parts
-      .filter((part) => part.type !== "currency")
-      .map((part) => part.value)
-      .join("")
-      .trim(),
-  };
 }
 
 function sourceWebsite(

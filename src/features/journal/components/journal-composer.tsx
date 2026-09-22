@@ -27,12 +27,14 @@ import { SpendingBreakdownCard } from "@/features/summary/components/spending-br
 import { ReceiptCameraSheet } from "@/features/camera/components/receipt-camera-sheet";
 import type { ReceiptPhoto } from "@/types/domain";
 import { subscribePendingJournalChangeCount } from "../services/journal-service";
+import { VoiceRecordingWaveform } from "./voice-recording-waveform";
 
 export function JournalComposer({
      focused,
      draft,
      input,
      onSave,
+     onInsert,
      onReceiptCaptured,
      onDismiss,
      tool,
@@ -42,10 +44,11 @@ export function JournalComposer({
      draft: string;
      input: RefObject<TextInput | null>;
      onSave: () => void;
+     onInsert: (note: string) => void;
      onReceiptCaptured: (photo: ReceiptPhoto) => void;
      onDismiss: () => void;
-     tool: "add" | "receipt" | null;
-     setTool: (tool: "add" | "receipt" | null) => void;
+     tool: "add" | "voice" | "receipt" | null;
+     setTool: (tool: "add" | "voice" | "receipt" | null) => void;
 }) {
      const { entries, selectedDate, goals, settings, syncStatus } = useJournal();
      const insets = useSafeAreaInsets();
@@ -82,6 +85,11 @@ export function JournalComposer({
           onDismiss();
 
      };
+     const insertVoicePreview = () => {
+          onInsert("Coffee on the way to work 180");
+          setTool(null);
+          requestAnimationFrame(() => input.current?.focus());
+     };
      const categoryTotal = (category: string) =>
           dayEntries.reduce(
                (sum, entry) =>
@@ -90,7 +98,7 @@ export function JournalComposer({
                          .filter((item) => item.category === category)
                          .reduce(
                               (acc, item) =>
-                                   acc + item.amountMinor * item.quantity,
+                                   acc + item.amountMinor,
                               0,
                          ),
                0,
@@ -104,12 +112,25 @@ export function JournalComposer({
                     style={[
                          styles.footer,
                          {
-                              paddingHorizontal: focused ? 28 : 36,
+                              paddingHorizontal:
+                                   tool === "voice" ? 16 : focused ? 28 : 36,
                               paddingBottom: 16,
                          },
                     ]}
                >
 
+                              {tool === "voice" ? (
+                                   <VoiceRecordingControls
+                                        onConfirm={insertVoicePreview}
+                                        onCancel={() => {
+                                             setTool(null);
+                                             requestAnimationFrame(() =>
+                                                  input.current?.focus(),
+                                             );
+                                        }}
+                                   />
+                              ) : (
+                                   <>
                               <SpendingBreakdownCard visible={summaryOpen} />
                               {isOffline && (
                                    <OfflineQueueStatus
@@ -228,6 +249,16 @@ export function JournalComposer({
                                    </View>
                                    {(focused || keepToolbar) && (
                                         <>
+                                             {focused && (
+                                                  <ToolbarButton
+                                                       name="mic"
+                                                       color={Finn.primary}
+                                                       label="Start voice preview"
+                                                       onPress={() =>
+                                                            openTool("voice")
+                                                       }
+                                                  />
+                                             )}
                                              <ZoomLink href="/settings/presets"><ToolbarButton
                                                   name="plus"
                                                   color="#EDB16D"
@@ -268,6 +299,8 @@ export function JournalComposer({
                                         </>
                                    )}
                               </View>
+                                   </>
+                              )}
 
                </View>
                <ReceiptCameraSheet
@@ -326,6 +359,12 @@ export function JournalComposer({
                                         }}
                                    />
                               )}
+                              <MenuRow
+                                   icon="mic"
+                                   title="Voice note"
+                                   detail="Try a sample voice entry"
+                                   onPress={() => setTool("voice")}
+                              />
                          </View>
                     </View>
                </Modal>
@@ -410,6 +449,43 @@ function SyncIssueStatus({
      );
 }
 
+function VoiceRecordingControls({
+     onConfirm,
+     onCancel,
+}: {
+     onConfirm: () => void;
+     onCancel: () => void;
+}) {
+     return (
+          <View
+               accessibilityLabel="Voice preview recording"
+               accessibilityLiveRegion="polite"
+               style={styles.voiceControls}
+          >
+               <VoiceRecordingWaveform
+                    accessibilityLabel="Animated voice preview"
+                    accessibilityValueText="No audio is recorded"
+                    style={styles.waveformSurface}
+               />
+               <Button
+                    label="Use voice preview"
+                    accessibilityHint="Adds the sample voice entry to the journal"
+                    onPress={onConfirm}
+                    style={styles.voiceAction}
+               >
+                    <Icon name="check" color={Finn.primary} size={20} />
+               </Button>
+               <Button
+                    label="Cancel voice preview"
+                    onPress={onCancel}
+                    style={styles.voiceAction}
+               >
+                    <Icon name="close" color="#EA5D67" size={19} />
+               </Button>
+          </View>
+     );
+}
+
 const ToolbarButton = forwardRef<View, Omit<ButtonProps, "children"> & {
      name: JournalGlyphName; color?: string;
 }>(function ToolbarButton({ name, color = Finn.ink, ...props }, ref) {
@@ -472,6 +548,30 @@ const styles = StyleSheet.create({
      },
      syncIssueStatus: { backgroundColor: "rgba(255,244,242,0.92)" },
      syncProgressText: { color: Finn.muted },
+     voiceControls: {
+          alignItems: "center",
+          flexDirection: "row",
+          gap: 10,
+     },
+     waveformSurface: {
+          backgroundColor: "rgba(255,255,255,0.92)",
+          borderColor: "rgba(255,255,255,0.96)",
+          borderRadius: 24,
+          borderWidth: 1,
+          boxShadow: "0px 8px 26px rgba(161, 125, 75, 0.11)",
+          flex: 1,
+          height: 48,
+     },
+     voiceAction: {
+          backgroundColor: "rgba(255,255,255,0.94)",
+          borderColor: "rgba(255,255,255,0.98)",
+          borderRadius: 22,
+          borderWidth: 1,
+          boxShadow: "0px 8px 22px rgba(161, 125, 75, 0.11)",
+          height: 44,
+          minHeight: 44,
+          width: 44,
+     },
      toolButton: {
           width: 44,
           height: 44,
