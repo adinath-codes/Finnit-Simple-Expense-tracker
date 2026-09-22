@@ -1,5 +1,5 @@
 import {
-  captureJournalNote,
+  capturePresetJournalNote,
   createCaptureInput,
 } from "@/features/journal/services/journal-service";
 import type { Preset } from "@/types/domain";
@@ -12,10 +12,19 @@ export async function capturePreset(
   currency: string,
 ) {
   const input = createCaptureInput(
-    presetCaptureText(preset),
+    presetCaptureText(preset, currency),
     currency,
     selectedDate,
   );
-  await captureJournalNote(input);
+  await capturePresetJournalNote({
+    input,
+    preset: {
+      id: preset.id,
+      name: preset.name,
+      note: preset.note,
+      amount_minor: String(preset.amountMinor),
+      category_id: preset.category,
+    },
+  });
   return input.id;
 }

@@ -8,6 +8,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import { AppState } from "react-native";
+import * as Network from "expo-network";
 import { createEmptyJournal } from "@/storage/journal-repository";
 import {
   clearLegacyPreferences,
@@ -36,7 +37,6 @@ import {
 import {
   deleteReceipt,
   correctReceiptEntry,
-  refreshRemoteReceipts,
   recoverPreparingReceipts,
 } from "@/features/camera/services/receipt-service";
 import {
@@ -54,11 +54,15 @@ import {
 import { readJournalCache, subscribeJournalCache } from "@/lib/offline/database";
 import { currentPreferences } from "@/lib/offline/cache-schema";
 import { startJournalSync } from "@/lib/offline/sync-queue";
+import { refreshWithPolicy } from "@/lib/offline/refresh-coordinator";
+import { getSupabase } from "@/lib/supabase/client";
 import {
   acceptRemoteEntryVersion,
   keepLocalEntryVersion,
   retryEntrySync,
 } from "@/features/journal/services/sync-recovery-service";
+import { clearCalendarCache } from "@/features/calendar/services/calendar-service";
+import { clearSummaryCaches } from "@/features/summary/services/summary-service";
 
 function errorMessage(error: unknown) {
   if (!(error instanceof Error)) return "Couldn’t save that change on this device.";
@@ -101,6 +105,8 @@ function useJournalState() {
 
   useEffect(() => {
     const userId = session?.user.id;
+    clearCalendarCache();
+    clearSummaryCaches();
     if (!userId) {
       setCache(null);
       setOwnerId(null);
@@ -110,9 +116,11 @@ function useJournalState() {
     }
 
     let active = true;
-    let lastRefresh = 0;
     let unsubscribeCache: () => void = () => undefined;
     let stopSync: () => void = () => undefined;
+    let revisionChannel: ReturnType<ReturnType<typeof getSupabase>["channel"]> | null = null;
+    let connected: boolean | undefined;
+    let revisionTimer: ReturnType<typeof setTimeout> | null = null;
     const load = async () => {
       const next = await readJournalCache(userId);
       if (active) {
@@ -120,14 +128,18 @@ function useJournalState() {
         setOwnerId(userId);
       }
     };
-    const refreshAll = () => {
-      lastRefresh = Date.now();
+    const refreshAll = (force = false) => {
       void Promise.allSettled([
-        refreshJournal(),
-        refreshRemoteReceipts(),
+        refreshWithPolicy(userId, "journal", 15_000, () => refreshJournal(userId), force),
         recoverPreparingReceipts(),
-        refreshSettingsForAccount(userId),
-        refreshPresetsForAccount(userId),
+        refreshWithPolicy(
+          userId, "settings", 5 * 60_000,
+          () => refreshSettingsForAccount(userId), force,
+        ),
+        refreshWithPolicy(
+          userId, "presets", 5 * 60_000,
+          () => refreshPresetsForAccount(userId), force,
+        ),
       ]);
     };
 
@@ -142,31 +154,61 @@ function useJournalState() {
         ).then(() => legacy ? clearLegacyPreferences() : undefined),
       )
       .then(load)
-      .then(async () => {
-        await Promise.allSettled([
-          refreshSettingsForAccount(userId),
-          refreshPresetsForAccount(userId),
-        ]);
-      })
-      .then(load)
       .then(() => {
         if (!active) return;
         unsubscribeCache = subscribeJournalCache(() => { void load(); }, userId);
         stopSync = startJournalSync();
-        refreshAll();
+        revisionChannel = getSupabase()
+          .channel(`journal-revision:${userId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "journal_search_revisions",
+              filter: `user_id=eq.${userId}`,
+            },
+            (event) => {
+              const incoming = (event.new as { revision?: number | string } | null)
+                ?.revision;
+              if (incoming == null) return;
+              void readJournalCache(userId).then((snapshot) => {
+                if (!active) return;
+                const known = snapshot.metadata.lastServerRevision;
+                if (known && BigInt(String(incoming)) <= BigInt(known)) return;
+                if (revisionTimer) clearTimeout(revisionTimer);
+                revisionTimer = setTimeout(() => {
+                  revisionTimer = null;
+                  void refreshWithPolicy(
+                    userId, "journal", 15_000, () => refreshJournal(userId), true,
+                  ).catch(() => undefined);
+                }, 250);
+              }).catch(() => undefined);
+            },
+          )
+          .subscribe();
+        refreshAll(true);
       })
       .catch((error) => {
         if (active) setMutationError(errorMessage(error));
       });
 
     const appState = AppState.addEventListener("change", (state) => {
-      if (state === "active" && Date.now() - lastRefresh > 15_000) refreshAll();
+      if (state === "active") refreshAll(true);
+    });
+    const network = Network.addNetworkStateListener((state) => {
+      const next = state.isConnected === true && state.isInternetReachable !== false;
+      if (next && connected === false) refreshAll(true);
+      connected = next;
     });
     return () => {
       active = false;
       unsubscribeCache();
       stopSync();
       appState.remove();
+      network.remove();
+      if (revisionTimer) clearTimeout(revisionTimer);
+      if (revisionChannel) void getSupabase().removeChannel(revisionChannel);
     };
   }, [session?.user.id]);
 
@@ -179,6 +221,8 @@ function useJournalState() {
   const presets = ownedCache?.local.presets ?? [];
   const goals = ownedCache?.local.goals ?? [];
   const settingsReady = settingsBootstrapReady && (!session || !!ownedCache);
+  const cacheAccountId = ownerId ?? "signed-out";
+  const contentVersion = ownedCache?.metadata.contentVersion ?? 0;
 
   const runMutation = useCallback(async <T,>(operation: () => Promise<T>) => {
     setMutationError(null);
@@ -295,7 +339,8 @@ function useJournalState() {
     const journalJobs = ownedCache?.jobs.filter((job) =>
       job.endpoint === "parse-entry" ||
       job.endpoint === "correct-entry" ||
-      job.endpoint === "scan-receipt",
+      job.endpoint === "scan-receipt" ||
+      job.endpoint === "apply-preset",
     ) ?? [];
     const conflicts = journalJobs.filter((job) =>
       job.state === "blocked" && job.endpoint === "correct-entry" &&
@@ -329,6 +374,8 @@ function useJournalState() {
     settings,
     settingsReady,
     goals,
+    cacheAccountId,
+    contentVersion,
     selectedDate,
     syncStatus,
     mutationError,

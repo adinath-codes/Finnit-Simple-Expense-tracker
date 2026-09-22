@@ -79,6 +79,42 @@ test("v1 cache migration preserves entries and outbox", () => {
   assert.equal(migrated.local.settings.currency, "INR");
 });
 
+test("v3 normalization retains receipt lines, local images, conflicts and pending jobs", () => {
+  const receiptId = "22222222-2222-4222-8222-222222222222";
+  const request = {
+    entry_id: receiptId,
+    attachment_id: "33333333-3333-4333-8333-333333333333",
+    captured_at: "2026-09-20T11:00:00.000Z",
+    timezone: "Asia/Kolkata",
+    selected_date: "2026-09-20",
+    default_currency: "INR",
+  };
+  const line = { id: "line-1", ordinal: 0, kind: "item", description: "Coffee",
+    amount_minor: "180", currency: "INR" };
+  const shadow = { id: receiptId, revision: 3, source_type: "receipt",
+    receipt: { lines: [line] } };
+  const job = { id: "scan-1", userId: "account-a", entryId: receiptId,
+    endpoint: "scan-receipt", payload: request, state: "pending", attempts: 0,
+    nextAttemptAt: 0 };
+  const migrated = normalizeJournalCache({
+    version: 3, entries: {},
+    receipts: { [receiptId]: {
+      request, localUri: "file:///pending-receipt.jpg", width: 1200, height: 1800,
+      prepared: true, status: "queued", lines: [line], remoteShadow: shadow,
+    } },
+    jobs: [job],
+    metadata: { lastServerRevision: "12", contentVersion: 7,
+      sqliteMigrationVersion: 0,
+      validatedAt: { journal: 1, settings: 2, presets: 3, contexts: 4 } },
+  });
+  assert.equal(migrated.receipts[receiptId].localUri, "file:///pending-receipt.jpg");
+  assert.deepEqual(migrated.receipts[receiptId].lines, [line]);
+  assert.deepEqual(migrated.receipts[receiptId].remoteShadow, shadow);
+  assert.deepEqual(migrated.jobs[0].payload, request);
+  assert.equal(migrated.metadata.lastServerRevision, "12");
+  assert.equal(migrated.metadata.contentVersion, 7);
+});
+
 test("journal cache keys isolate accounts", () => {
   assert.notEqual(journalCacheKey("account-a"), journalCacheKey("account-b"));
 });

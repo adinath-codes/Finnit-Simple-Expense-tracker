@@ -171,37 +171,22 @@ export async function requireQuota(ctx: Context) {
     throw new ApiError(429, "daily_request_limit");
 }
 export async function catalog(ctx: Context): Promise<Catalog> {
-  const rows = async (table: string, columns: string, order: string) => {
-    const items: Record<string, unknown>[] = [];
-    for (let offset = 0; offset < 5000; offset += 500) {
-      const { data, error } = await ctx.db
-        .from(table)
-        .select(columns)
-        .order(order)
-        .range(offset, offset + 499);
-      if (error) throw new ApiError(503, "catalog_unavailable");
-      items.push(...(data as unknown as Record<string, unknown>[]));
-      if (data.length < 500) return items;
-    }
-    // Never silently skip a user's category override after hitting a row limit.
-    throw new ApiError(422, "catalog_limit_reached");
-  };
-  const results = await Promise.all([
-    rows("categories", "id,name,parent_id", "id"),
-    rows("merchants", "id,canonical_name,default_category_id,user_id", "id"),
-    rows("merchant_aliases", "alias,merchant_id,user_id", "id"),
-    rows("category_rules", "merchant_key,category_id", "merchant_key"),
-    rows("people", "name", "name"),
-    rows("contexts", "name", "name"),
-  ]);
+  const document = await rpc<Record<string, unknown>>(
+    ctx.admin,
+    "finn_catalog_document",
+    { p_user: ctx.userId },
+  );
+  await metric(ctx, document._cache_hit === true
+    ? "catalog_cache_hit"
+    : "catalog_cache_miss");
   return {
-    categories: results[0],
-    merchants: results[1],
-    aliases: results[2],
-    rules: results[3],
-    people: results[4],
-    contexts: results[5],
-  } as unknown as Catalog;
+    categories: document.categories,
+    merchants: document.merchants,
+    aliases: document.aliases,
+    rules: document.rules,
+    people: document.people,
+    contexts: document.contexts,
+  } as Catalog;
 }
 export async function metric(
   ctx: Context,

@@ -37,8 +37,8 @@ import {
 } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
 import type { Category } from "@/types/domain";
-import { entryTotal } from "@/utils/amounts";
 import { currencySymbol, moneyValue } from "@/utils/currency";
+import { cachedDayBreakdown } from "../services/summary-service";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
@@ -76,7 +76,9 @@ type RingSegment = {
 };
 
 export function SpendingBreakdownCard({ visible }: { visible: boolean }) {
-  const { entries, selectedDate, settings } = useJournal();
+  const {
+    entries, selectedDate, settings, cacheAccountId, contentVersion,
+  } = useJournal();
   const reducedMotion = useReducedMotion();
   const reveal = useSharedValue(0);
   const ringReveal = useSharedValue(0);
@@ -84,32 +86,13 @@ export function SpendingBreakdownCard({ visible }: { visible: boolean }) {
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(
     null,
   );
-  const dayEntries = useMemo(
-    () => entries.filter((entry) => entry.date === selectedDate),
-    [entries, selectedDate],
-  );
-  const total = dayEntries.reduce((sum, entry) => sum + entryTotal(entry), 0);
-  const categoryValues = useMemo(
-    () =>
-      Object.fromEntries(
-        GoalRingPalette.map(({ category }) => [
-          category,
-          dayEntries.reduce(
-            (entrySum, entry) =>
-              entrySum +
-              entry.items
-                .filter((item) => item.category === category)
-                .reduce(
-                  (itemSum, item) =>
-                    itemSum + item.amountMinor,
-                  0,
-                ),
-            0,
-          ),
-        ]),
-      ) as Record<Category, number>,
-    [dayEntries],
-  );
+  const { total, categoryValues } = cachedDayBreakdown({
+    accountId: cacheAccountId,
+    contentVersion,
+    currency: settings.currency,
+    selectedDate,
+    entries,
+  });
   const segments = useMemo(
     () => makeRingSegments(categoryValues),
     [categoryValues],

@@ -147,6 +147,38 @@ export type CaptureInput = {
   /** Coarse city/region/country label; never coordinates or a street address. */
   approximate_place?: string;
 };
+export type PresetSnapshot = {
+  id: string;
+  name: string;
+  note: string;
+  amount_minor: string;
+  category_id: "food" | "transport" | "shopping" | "other";
+};
+export type PresetCaptureInput = {
+  input: CaptureInput;
+  preset: PresetSnapshot;
+};
+export type JournalSyncRequest = {
+  afterRevision?: string;
+  snapshotRevision?: string;
+  cursor?: unknown;
+  limit?: number;
+};
+export type JournalSyncPage = {
+  snapshotRevision: string;
+  changes: SavedEntry[];
+  nextCursor: unknown | null;
+  resetRequired: boolean;
+  bootstrap: boolean;
+};
+/** PostgREST preserves the SQL RPC's snake_case JSON keys on the wire. */
+export type JournalSyncRpcPage = {
+  snapshot_revision: string;
+  changes: SavedEntry[];
+  next_cursor: { entry_id: string; revision?: string } | null;
+  reset_required: boolean;
+  bootstrap: boolean;
+};
 export type Catalog = {
   categories: { id: string; name: string; parent_id?: string | null }[];
   merchants: {
@@ -200,6 +232,7 @@ export type SavedEntry = Omit<CaptureInput, "raw_text"> & {
   extraction_schema_version?: number;
   interpretation_summary?: string | null;
   receipt?: ReceiptAttachment | null;
+  capture_request?: CaptureInput | ReceiptScanRequest;
 };
 
 export const RECEIPT_LINE_KINDS = [

@@ -14,6 +14,7 @@ export async function callBackend<T>(
   endpoint:
     | "parse-entry"
     | "correct-entry"
+    | "apply-preset"
     | "ask-money"
     | "ask-sql"
     | "request-quota-review",

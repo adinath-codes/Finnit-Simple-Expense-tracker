@@ -1,5 +1,5 @@
 import { randomUUID } from "expo-crypto";
-import { retryReceipt, refreshRemoteReceipts } from "@/features/camera/services/receipt-service";
+import { retryReceipt } from "@/features/camera/services/receipt-service";
 import { currentUserId, getSupabase } from "@/lib/supabase/client";
 import { changeJournalCache, readJournalCache } from "@/lib/offline/database";
 import { syncJournal } from "@/lib/offline/sync-queue";
@@ -105,7 +105,6 @@ export async function keepLocalEntryVersion(entryId: string) {
 export async function acceptRemoteEntryVersion(entryId: string) {
   const userId = await currentUserId();
   const cache = await readJournalCache(userId);
-  const isReceipt = !!cache.receipts[entryId];
   const conflict = cache.jobs.find(
     (job) => job.entryId === entryId && job.endpoint === "correct-entry" &&
       job.state === "blocked" && job.error === CONFLICT_CODE,
@@ -113,6 +112,7 @@ export async function acceptRemoteEntryVersion(entryId: string) {
   if (!conflict) throw new Error("This entry no longer has a version conflict.");
   const wasEntryDeleted = cache.entries[entryId]?.deleted;
   const wasReceiptDeleted = cache.receipts[entryId]?.deleted;
+  const previousCheckpoint = cache.metadata.lastServerRevision;
 
   await changeJournalCache(userId, (state) => {
     state.jobs = state.jobs.filter((job) => !(job.entryId === entryId &&
@@ -122,11 +122,13 @@ export async function acceptRemoteEntryVersion(entryId: string) {
     if (entry) entry.deleted = false;
     const receipt = state.receipts[entryId];
     if (receipt) receipt.deleted = false;
+    // The remote revision may already have been consumed as a conflict shadow.
+    // Force a complete authoritative page walk after the local job is removed.
+    state.metadata.lastServerRevision = null;
   });
 
   try {
-    if (isReceipt) await refreshRemoteReceipts();
-    else await refreshJournal();
+    await refreshJournal();
   } catch (error) {
     // Do not lose the user's unresolved choice if the remote refresh itself
     // fails. Restoring the blocked job makes the resolution action available
@@ -139,6 +141,7 @@ export async function acceptRemoteEntryVersion(entryId: string) {
       if (entry) entry.deleted = wasEntryDeleted;
       const receipt = state.receipts[entryId];
       if (receipt) receipt.deleted = wasReceiptDeleted;
+      state.metadata.lastServerRevision = previousCheckpoint;
     });
     throw error;
   }

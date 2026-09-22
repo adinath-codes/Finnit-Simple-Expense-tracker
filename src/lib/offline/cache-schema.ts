@@ -64,6 +64,12 @@ export function emptyJournalCache(): JournalCache {
     entries: {},
     receipts: {},
     jobs: [],
+    metadata: {
+      lastServerRevision: null,
+      contentVersion: 0,
+      sqliteMigrationVersion: 0,
+      validatedAt: { journal: 0, settings: 0, presets: 0, contexts: 0 },
+    },
     local: {
       settings: defaultPreferences(),
       presets: [],
@@ -99,6 +105,29 @@ export function normalizeJournalCache(value: unknown): JournalCache {
     ).map((job) => job.endpoint === "scan-receipt"
       ? { ...job, payload: receiptRequest(job.payload) }
       : job),
+    metadata: (() => {
+      const value = raw.metadata && typeof raw.metadata === "object"
+        ? raw.metadata as Partial<JournalCache["metadata"]>
+        : {};
+      const validated = value.validatedAt ?? {} as JournalCache["metadata"]["validatedAt"];
+      return {
+        lastServerRevision: typeof value.lastServerRevision === "string"
+          ? value.lastServerRevision
+          : null,
+        contentVersion: Number.isSafeInteger(value.contentVersion)
+          ? Number(value.contentVersion)
+          : 0,
+        sqliteMigrationVersion: Number.isSafeInteger(value.sqliteMigrationVersion)
+          ? Number(value.sqliteMigrationVersion)
+          : 0,
+        validatedAt: {
+          journal: Number(validated.journal) || 0,
+          settings: Number(validated.settings) || 0,
+          presets: Number(validated.presets) || 0,
+          contexts: Number(validated.contexts) || 0,
+        },
+      };
+    })(),
     ...(raw.catalog ? { catalog: raw.catalog as JournalCache["catalog"] } : {}),
     local: {
       settings: currentPreferences(local.settings),

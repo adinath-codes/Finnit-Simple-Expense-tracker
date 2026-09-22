@@ -1,16 +1,12 @@
-import type { Category, Preset } from "../../../types/domain.ts";
+import type { Preset } from "../../../types/domain.ts";
+import { presetCaptureText as sharedPresetCaptureText } from "../../../../supabase/functions/_shared/preset.ts";
 
-const CATEGORY_CONTEXT: Record<Category, string> = {
-  food: "food",
-  transport: "transport",
-  shopping: "shopping",
-  other: "other expense",
-};
-
-export function presetCaptureText(preset: Preset) {
-  const amount = (preset.amountMinor / 100).toFixed(
-    preset.amountMinor % 100 === 0 ? 0 : 2,
-  );
-  const note = preset.note.trim() || preset.name.trim();
-  return `${note} · ${amount} ${CATEGORY_CONTEXT[preset.category]}`;
+export function presetCaptureText(preset: Preset, currency = "INR") {
+  return sharedPresetCaptureText({
+    id: preset.id,
+    name: preset.name,
+    note: preset.note,
+    amount_minor: String(preset.amountMinor),
+    category_id: preset.category,
+  }, currency);
 }

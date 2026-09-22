@@ -2,8 +2,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BackendError } from "@/lib/ai/api";
 import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
 import type { SearchPlan } from "@/lib/supabase/database.types";
+import { changeJournalCache, readJournalCache } from "@/lib/offline/database";
 import { explainSearch, recentSearchContexts, searchJournal, searchWithSql, sqlSourcePage } from "../services/ask-service";
 import type { ContextResult, SearchResult } from "../types/ask.types";
+import {
+  askCacheKey,
+  readAskResultCache,
+  writeAskResultCache,
+} from "../services/ask-result-cache";
+import { currentJournalRevision } from "../services/journal-revision-service";
+import { recordCacheMetric } from "@/lib/offline/cache-metrics";
+import { canReuseAskResult, canStoreAskResult } from "../services/ask-cache-policy";
+
+function referenceDay(timezone: string) {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((candidate) => candidate.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 
 export function searchError(error: unknown) {
   if (error instanceof BackendError) {
@@ -34,6 +52,7 @@ export function useSearch() {
   resultRef.current = result;
   const moreBusy = useRef(false);
   const lastInput = useRef<SearchInput | null>(null);
+  const lastCacheKey = useRef<string | null>(null);
   const account = useRef<string | null>(null);
 
   useEffect(() => {
@@ -61,6 +80,7 @@ export function useSearch() {
         generation.current += 1;
         account.current = id;
         lastInput.current = null;
+        lastCacheKey.current = null;
         setResult(null);
         resultRef.current = null;
         setContexts(null);
@@ -109,7 +129,40 @@ export function useSearch() {
     const controller = new AbortController();
     setLoadingContexts(true);
     setContextError(null);
-    void recentSearchContexts(controller.signal, userId)
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    void (async () => {
+      const startedAt = Date.now();
+      const revision = await currentJournalRevision(userId);
+      const key = await askCacheKey({
+        kind: "context_cards", timezone, reference_day: referenceDay(timezone), version: 1,
+      });
+      let cached: ContextResult | null = null;
+      try {
+        cached = await readAskResultCache<ContextResult>(userId, key, revision);
+      } catch { /* A cache failure must not hide fresh context cards. */ }
+      if (cached) {
+        void changeJournalCache(userId, (cache) => {
+          cache.metadata.validatedAt.contexts = Date.now();
+        }).catch(() => undefined);
+        recordCacheMetric(userId, "ask_result", {
+          hit: true, durationMs: Date.now() - startedAt,
+          rows: cached.contexts.length, bytes: JSON.stringify(cached).length,
+        });
+        return cached;
+      }
+      const data = await recentSearchContexts(controller.signal, userId);
+      try {
+        await writeAskResultCache(userId, key, revision, data, 5 * 60_000);
+      } catch { /* Fresh data remains authoritative. */ }
+      void changeJournalCache(userId, (cache) => {
+        cache.metadata.validatedAt.contexts = Date.now();
+      }).catch(() => undefined);
+      recordCacheMetric(userId, "ask_result", {
+        hit: false, durationMs: Date.now() - startedAt,
+        rows: data.contexts.length, bytes: JSON.stringify(data).length,
+      });
+      return data;
+    })()
       .then((data) => {
         if (!controller.signal.aborted) setContexts(data);
       })
@@ -133,6 +186,7 @@ export function useSearch() {
     setLoadingMore(false);
     setLoadingExplanation(false);
     moreBusy.current = false;
+    lastCacheKey.current = null;
   }, []);
   const run = useCallback(
     async (input: SearchInput) => {
@@ -164,12 +218,46 @@ export function useSearch() {
       const version = generation.current;
       setLoading(true);
       try {
+        const startedAt = Date.now();
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const [serverRevision, localCache] = await Promise.all([
+          currentJournalRevision(userId),
+          readJournalCache(userId),
+        ]);
+        const cacheKey = await askCacheKey({
+          input,
+          timezone,
+          reference_day: referenceDay(timezone),
+          local_content_version: localCache.metadata.contentVersion,
+          version: 1,
+        });
+        lastCacheKey.current = cacheKey;
+        let cached: SearchResult | null = null;
+        try {
+          cached = await readAskResultCache<SearchResult>(
+            userId,
+            cacheKey,
+            serverRevision,
+          );
+        } catch { /* Execute the authoritative request on cache failure. */ }
+        if (canReuseAskResult(cached, serverRevision)) {
+          recordCacheMetric(userId, "ask_result", {
+            hit: true, durationMs: Date.now() - startedAt,
+            rows: cached.transactions?.length ?? 0,
+            bytes: JSON.stringify(cached).length,
+          });
+          if (version === generation.current && !controller.signal.aborted) {
+            setResult(cached);
+            resultRef.current = cached;
+          }
+          return;
+        }
         let data = await searchJournal(
           "filters" in input
             ? { filters: input.filters }
             : {
                 query: input.query,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                timezone,
                 selected_range: input.range,
               },
           controller.signal,
@@ -179,7 +267,7 @@ export function useSearch() {
           try {
             data = await searchWithSql({
               query: input.query,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              timezone,
               selected_range: input.range,
             }, controller.signal, userId);
           } catch {
@@ -188,8 +276,22 @@ export function useSearch() {
           }
         }
         if (version === generation.current && !controller.signal.aborted) {
+          recordCacheMetric(userId, "ask_result", {
+            hit: false, durationMs: Date.now() - startedAt,
+            rows: data.transactions?.length ?? 0,
+            bytes: JSON.stringify(data).length,
+          });
           setResult(data);
           resultRef.current = data;
+          if (canStoreAskResult(data)) {
+            void writeAskResultCache(
+              userId,
+              cacheKey,
+              data.revision,
+              data,
+              data.sql_session_id ? 14 * 60 * 1000 : undefined,
+            ).catch(() => undefined);
+          }
           if (data.revision && (data.sql_session_id || data.applied_filters)) {
             setLoadingExplanation(true);
             void explainSearch(data.sql_session_id
@@ -201,7 +303,21 @@ export function useSearch() {
                 if (answer.stale) {
                   setResult((current) => current ? { ...current, stale: true, has_more: false } : current);
                 } else if (answer.explanation) {
-                  setResult((current) => current ? { ...current, explanation: answer.explanation } : current);
+                  setResult((current) => {
+                    if (!current) return current;
+                    const next = { ...current, explanation: answer.explanation };
+                    resultRef.current = next;
+                    if (canStoreAskResult(next)) {
+                      void writeAskResultCache(
+                        userId,
+                        cacheKey,
+                        next.revision,
+                        next,
+                        next.sql_session_id ? 14 * 60 * 1000 : undefined,
+                      ).catch(() => undefined);
+                    }
+                    return next;
+                  });
                 }
               })
               .catch(() => { /* The screen has a factual fixed-text fallback. */ })
@@ -249,7 +365,7 @@ export function useSearch() {
         return;
       }
       const ids = new Set(current.transactions?.map((t) => t.id));
-      setResult({
+      const next = {
         ...current,
         next_cursor: page.next_cursor,
         has_more: page.has_more,
@@ -257,7 +373,18 @@ export function useSearch() {
           ...(current.transactions ?? []),
           ...(page.transactions ?? []).filter((t) => !ids.has(t.id)),
         ],
-      });
+      };
+      setResult(next);
+      resultRef.current = next;
+      if (lastCacheKey.current && canStoreAskResult(next)) {
+        void writeAskResultCache(
+          userId,
+          lastCacheKey.current,
+          current.revision,
+          next,
+          next.sql_session_id ? 14 * 60 * 1000 : undefined,
+        ).catch(() => undefined);
+      }
     } catch (err) {
       if (version === generation.current && !controller.signal.aborted)
         setPageError(searchError(err));

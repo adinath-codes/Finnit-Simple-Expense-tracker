@@ -89,7 +89,7 @@ npx supabase login
 npx supabase link --project-ref YOUR_FINN_PROJECT_REF
 npx supabase db push
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry ask-money ask-sql request-quota-review delete-account scan-receipt --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review delete-account scan-receipt --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 Apply all migrations in filename order:
@@ -108,12 +108,20 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260922090903_ask_finn_function_privileges.sql`: removes an inherited public event-trigger function privilege from the reader.
 - `supabase/migrations/20260922102945_ask_finn_auth_schema_usage.sql`: records the managed-auth compatibility attempt retained in deployed migration history.
 - `supabase/migrations/20260922103031_ask_finn_claim_scope_no_auth.sql`: scopes the reader from the verified transaction-local subject without depending on managed `auth` schema grants.
+- `supabase/migrations/20260922130000_revision_aware_caching.sql`: adds the revision change log and paged journal sync RPC, bounded private Ask/catalog caches, cache metrics, and realtime revision invalidation.
+
+The caching migration was applied to the linked Finn project on September 22,
+2026. The dependent `parse-entry`, `correct-entry`, `scan-receipt`, `ask-money`,
+`ask-sql`, and `apply-preset` functions were deployed afterward. The public
+schema types in `src/lib/supabase/generated.types.ts` were generated from that
+deployed schema. No native client release is implied by these server steps.
 
 No separate seed step is needed. If the base backend is already deployed, push
 the currency migration first, then redeploy `parse-entry`, `correct-entry`,
 `ask-money`, and `scan-receipt` before shipping the expanded picker. Onboarding,
 settings, and presets use the Data API directly with authenticated, owner-scoped
-RLS and do not require their own Edge Function.
+RLS. Saved-entry capture uses the authenticated `apply-preset` function so it can
+commit exact user-approved values without reserving or calling Gemini.
 CLI configuration was generated with `supabase init`, and the migration filename
 was generated with `supabase migration new`.
 
@@ -395,9 +403,11 @@ money. The live capture/auth integration uses these service entry points:
 - `searchJournal()` / `spendingSummary()` return server-computed money; `recentSearchContexts()` loads the search landing cards.
 - `financialInsight()` reads the RLS-protected SQL insight views.
 
-The outbox uses a single account-scoped AsyncStorage document for entry+job
-durability, serialized writes, exponential backoff, stable IDs and per-entry
-ordering. It is not an encrypted or multi-process database. A cache read/storage
+The outbox uses account-scoped SQLite tables on iOS/Android and an
+account-scoped AsyncStorage document on web. Native entry+job writes use one
+exclusive transaction; all platforms retain serialized writes, exponential
+backoff, stable IDs, and per-entry ordering. The offline store is not encrypted.
+A cache read/storage
 failure rejects capture; journal and quick-capture callers keep the draft and
 show a retryable local error. Corrections are accepted after the prior change
 for that entry has synchronized. Pending and permanently blocked jobs remain
@@ -442,11 +452,27 @@ calls/tokens/optional cost, failures, corrections, and search success/zero resul
 Service logs contain error codes and HTTP status only, not notes, tokens or model
 responses. Private UTC day/month counters enforce AI/API limits atomically.
 
-Validation was explicitly skipped. Before using real financial data, a later
-authorized validation pass should cover the migration, two-user RLS isolation,
-concurrent retries/corrections, amount/date edge cases, Gemini output rejection,
-offline recovery and Android-device UI behavior. No production-readiness or
-accuracy guarantee is inferred from source implementation alone.
+Client cache telemetry contains only enum cache names, hit/miss counts, latency
+buckets, row counts, and response byte totals. It never submits questions,
+answers, notes, amounts, receipt text, or cached payloads. Server plan,
+explanation, and catalog events use the existing private backend event table.
+
+Release the database migration before any dependent client or function. Ship
+delta sync/refresh/Ask caches first and retain the legacy full-refresh fallback
+for one client release. Enable the SQLite client only after delta-sync errors are
+below 0.5%, reconciliation mismatches remain zero, and median transferred bytes
+fall by at least 80%. Native releases must be rebuilt after adding `expo-sqlite`;
+web continues to use the same repository contract over AsyncStorage.
+
+Client type checking, lint, the deterministic journal, receipt, money,
+currency, search, preset-scale, and explanation-cache tests, plus Node SQLite
+schema/transaction checks, are part of this change. A local database reset/lint
+still requires Docker or Podman. Before a dependent client release, run the
+live two-user RLS/delta-pagination suite against a staging project and complete
+the Android migration/offline/reconnect/account-switching checklist on a
+connected device. The September 22 server rollout had a live owner-versus-
+nonowner sync smoke check and receipt-line reconciliation; it did not complete
+those client-release gates.
 
 Reference documentation consulted: [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/),
 [Gemini models](https://ai.google.dev/gemini-api/docs/models),

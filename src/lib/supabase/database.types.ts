@@ -1,6 +1,5 @@
-/** Shared API wire types; generated SQL types should live in a separate file. */
-// Wire contracts are shared with the backend. Generate full Database types from
-// Supabase after deploying the migration; do not generate from another project.
+/** Generated SQL schema types and shared API wire contracts. */
+export type { Database, Json } from "./generated.types";
 export type {
   CaptureInput,
   Catalog,
@@ -9,6 +8,11 @@ export type {
   ReceiptCorrectionInput,
   ReceiptLine,
   ManualReceiptInput,
+  JournalSyncPage,
+  JournalSyncRpcPage,
+  JournalSyncRequest,
+  PresetCaptureInput,
+  PresetSnapshot,
   ReceiptLineKind,
   ReceiptScanEvent,
   ReceiptScanRequest,

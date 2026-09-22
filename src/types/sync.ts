@@ -9,6 +9,7 @@ import type {
   ReceiptScanRequest,
   ReceiptScanStatus,
   SavedEntry,
+  PresetCaptureInput,
 } from "@/lib/supabase/database.types";
 import type { Goal, Preferences, Preset } from "@/types/domain";
 export type CorrectionInput = {
@@ -50,6 +51,7 @@ export type SyncJob = {
     | "parse-entry"
     | "correct-entry"
     | "scan-receipt"
+    | "apply-preset"
     | "sync-settings"
     | "sync-preset"
     | "delete-preset";
@@ -64,6 +66,7 @@ export type SyncJob = {
     | SettingsSyncInput
     | PresetSyncInput
     | PresetDeleteInput
+    | PresetCaptureInput
     | ReceiptScanRequest;
   state: "pending" | "running" | "blocked";
   attempts: number;
@@ -74,6 +77,8 @@ export type CachedEntry = {
   input: CaptureInput;
   extraction: Extraction;
   remote?: SavedEntry;
+  /** Latest server document retained while an optimistic local job is pending. */
+  remoteShadow?: SavedEntry;
   sync: "pending" | "synced" | "blocked";
   deleted?: boolean;
 };
@@ -87,14 +92,28 @@ export type CachedReceipt = {
   lines: ReceiptLine[];
   attachment?: ReceiptAttachment;
   remote?: SavedEntry;
+  /** Latest server document retained while an optimistic local job is pending. */
+  remoteShadow?: SavedEntry;
   deleted?: boolean;
   error?: string;
+};
+export type CacheMetadata = {
+  lastServerRevision: string | null;
+  contentVersion: number;
+  sqliteMigrationVersion: number;
+  validatedAt: {
+    journal: number;
+    settings: number;
+    presets: number;
+    contexts: number;
+  };
 };
 export type JournalCache = {
   version: 3;
   entries: Record<string, CachedEntry>;
   receipts: Record<string, CachedReceipt>;
   jobs: SyncJob[];
+  metadata: CacheMetadata;
   catalog?: Catalog;
   local: {
     settings: Preferences;

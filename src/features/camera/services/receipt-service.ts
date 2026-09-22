@@ -390,8 +390,9 @@ export async function listLocalReceipts() {
 }
 
 /** Rehydrate extracted receipt text. Source images are never stored remotely. */
-export async function refreshRemoteReceipts() {
-  const userId = await currentUserId();
+export async function refreshRemoteReceipts(expectedUserId?: string) {
+  const userId = expectedUserId ?? await currentUserId();
+  if (await currentUserId() !== userId) throw new Error("Account changed during sync.");
   const db = getSupabase();
   const [entriesResult, attachmentsResult, linesResult] = await Promise.all([
     db.from("journal_entries")
@@ -403,6 +404,7 @@ export async function refreshRemoteReceipts() {
   ]);
   if (entriesResult.error || attachmentsResult.error || linesResult.error)
     throw new Error("Could not refresh receipts.");
+  if (await currentUserId() !== userId) throw new Error("Account changed during sync.");
   const attachments = new Map(
     attachmentsResult.data.map((attachment) => [attachment.entry_id, attachment]),
   );

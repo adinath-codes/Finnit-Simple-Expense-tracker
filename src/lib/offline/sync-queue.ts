@@ -22,6 +22,7 @@ import type {
 import type { SyncJob } from "@/types/sync";
 import type { Preferences, Preset } from "@/types/domain";
 import { changeJournalCache, readJournalCache } from "./database";
+import { invalidateRefresh } from "./refresh-coordinator";
 
 const running = new Map<string, Promise<void>>();
 
@@ -198,6 +199,7 @@ export function syncJournal(userId: string): Promise<void> {
           await changeJournalCache(userId, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
+          await invalidateRefresh(userId, "journal");
           continue;
         }
         if (job.endpoint === "sync-settings") {
@@ -208,6 +210,7 @@ export function syncJournal(userId: string): Promise<void> {
           await changeJournalCache(userId, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
+          await invalidateRefresh(userId, "settings");
           continue;
         }
         if (job.endpoint === "sync-preset") {
@@ -218,6 +221,7 @@ export function syncJournal(userId: string): Promise<void> {
           await changeJournalCache(userId, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
+          await invalidateRefresh(userId, "presets");
           continue;
         }
         if (job.endpoint === "delete-preset") {
@@ -228,6 +232,7 @@ export function syncJournal(userId: string): Promise<void> {
           await changeJournalCache(userId, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
+          await invalidateRefresh(userId, "presets");
           continue;
         }
         const { entry } = await callBackend<{ entry: SavedEntry }>(
@@ -246,6 +251,7 @@ export function syncJournal(userId: string): Promise<void> {
               local.extraction = entry.extraction;
               local.sync = "synced";
               local.deleted = !!entry.deleted_at;
+              delete local.remoteShadow;
               local.input = {
                 ...local.input,
                 raw_text: entry.raw_text ?? local.input.raw_text,
@@ -255,6 +261,9 @@ export function syncJournal(userId: string): Promise<void> {
           const receipt = state.receipts[job.entryId];
           if (receipt) {
             receipt.remote = entry;
+            if (!state.jobs.some((j) => j.entryId === job.entryId)) {
+              delete receipt.remoteShadow;
+            }
             if (entry.receipt) {
               localReceiptImage = receipt.localUri;
               receipt.localUri = undefined;
@@ -271,6 +280,7 @@ export function syncJournal(userId: string): Promise<void> {
           const local = new File(localReceiptImage);
           if (local.exists) local.delete();
         }
+        await invalidateRefresh(userId, "journal");
       } catch (error) {
         const permanent = error instanceof BackendError && !error.retryable;
         await changeJournalCache(userId, (state) => {
@@ -306,6 +316,10 @@ export function syncJournal(userId: string): Promise<void> {
             receipt.error = queued.error;
           }
         });
+        if (error instanceof BackendError &&
+          error.code === "revision_or_idempotency_conflict") {
+          await invalidateRefresh(userId, "journal");
+        }
         if (!permanent) return;
       }
     }

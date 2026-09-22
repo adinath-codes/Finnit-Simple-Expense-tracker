@@ -1,6 +1,6 @@
 import { ContentFade } from "@/components/ui/motion";
 import { Motion } from "@/constants/motion";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppSheet, sheetStyles as shared } from "@/components/sheets/app-sheet";
@@ -10,19 +10,27 @@ import { useJournal } from "@/providers/app-providers";
 import { CalendarGrid } from "./calendar-grid";
 import { CalendarSpendingChart } from "./calendar-spending-chart";
 import {
-  buildCalendarMonth,
+  cachedCalendarMonth,
   isCurrentMonth,
   monthStart,
   moveMonth,
 } from "../services/calendar-service";
 
 export default function CalendarScreen() {
-  const { selectedDate, setSelectedDate, today, entries, settings } = useJournal();
+  const {
+    selectedDate, setSelectedDate, today, entries, settings,
+    cacheAccountId, contentVersion,
+  } = useJournal();
   const [month, setMonth] = useState(() => monthStart(selectedDate));
-  const calendar = useMemo(
-    () => buildCalendarMonth({ month, entries, selectedDate, today }),
-    [entries, month, selectedDate, today],
-  );
+  const calendar = cachedCalendarMonth({
+    accountId: cacheAccountId,
+    contentVersion,
+    currency: settings.currency,
+    month,
+    entries,
+    selectedDate,
+    today,
+  });
   const viewingCurrentMonth = isCurrentMonth(month, today);
 
   return (

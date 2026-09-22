@@ -16,6 +16,26 @@ type ReceiptSummaryLine = {
   description: string;
 };
 
+const textViews = new WeakMap<CachedEntry, Map<string, JournalEntry>>();
+const receiptViews = new WeakMap<CachedReceipt, Map<string, JournalEntry>>();
+
+function cachedView<T extends object>(
+  owner: T,
+  sync: ReturnType<typeof syncMetadata>,
+  cache: WeakMap<T, Map<string, JournalEntry>>,
+  build: () => JournalEntry,
+) {
+  const key = JSON.stringify(sync);
+  const views = cache.get(owner) ?? new Map<string, JournalEntry>();
+  cache.set(owner, views);
+  const existing = views.get(key);
+  if (existing) return existing;
+  if (views.size >= 4) views.clear();
+  const result = build();
+  views.set(key, result);
+  return result;
+}
+
 export function receiptJournalText(
   merchantName: string | null | undefined,
   lines: ReceiptSummaryLine[],
@@ -276,7 +296,10 @@ export function journalEntriesFromCache(cache: JournalCache) {
       )
       .map((entry) => ({
         capturedAt: entry.input.captured_at,
-        entry: textJournalEntry(entry, syncMetadata(cache, entry.input.id, entry.sync)),
+        entry: (() => {
+          const sync = syncMetadata(cache, entry.input.id, entry.sync);
+          return cachedView(entry, sync, textViews, () => textJournalEntry(entry, sync));
+        })(),
       })),
     ...Object.values(cache.receipts)
       .filter((entry) =>
@@ -286,9 +309,8 @@ export function journalEntriesFromCache(cache: JournalCache) {
       )
       .map((entry) => ({
         capturedAt: entry.request.captured_at,
-        entry: receiptJournalEntry(
-          entry,
-          syncMetadata(
+        entry: (() => {
+          const sync = syncMetadata(
             cache,
             entry.request.entry_id,
             entry.status === "failed"
@@ -296,8 +318,10 @@ export function journalEntriesFromCache(cache: JournalCache) {
               : entry.remote
                 ? "synced"
                 : "pending",
-          ),
-        ),
+          );
+          return cachedView(entry, sync, receiptViews, () =>
+            receiptJournalEntry(entry, sync));
+        })(),
       })),
   ].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
     .map((value) => value.entry);

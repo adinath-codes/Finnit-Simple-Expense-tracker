@@ -89,7 +89,7 @@ Run the preview with `node node_modules/expo/bin/cli start --web`. Run type chec
 
 ## Implemented text backend — September 19, 2026
 
-The text backend migrations and five original Edge Functions are deployed to the linked Finn project; receipt deployment is staged separately. Its client
+The text, receipt, and caching backend migrations are deployed to the linked Finn project; dependent Edge Functions include the new `apply-preset` route. Its client
 search page reads authenticated Supabase data through its own hook. The main journal
 provider starts empty and is wired to authenticated durable capture/cache/sync services.
 Read `docs/backend/DEPLOYMENT.md` for deployment, API contracts, monetary semantics,
@@ -112,6 +112,7 @@ limits, and the current integration boundary.
 | `supabase/migrations/20260922090903_ask_finn_function_privileges.sql` | Removes the reader role's inherited access to a platform public event-trigger function. |
 | `supabase/migrations/20260922102945_ask_finn_auth_schema_usage.sql` | Deployed managed-auth compatibility migration retained for ordered production history. |
 | `supabase/migrations/20260922103031_ask_finn_claim_scope_no_auth.sql` | Verified-subject RLS helper and view policies that avoid protected auth-schema access. |
+| `supabase/migrations/20260922130000_revision_aware_caching.sql` | Account revision change log, fixed-snapshot delta sync, bounded Ask/catalog caches, cache metrics, and realtime invalidation. |
 | `supabase/config.toml` | CLI-generated local project settings and authenticated Edge Function entry points. |
 | `supabase/.gitignore` | Excludes CLI project links, temporary files and local secrets. |
 | `supabase/functions/deno.json` | Server TypeScript runtime and formatting configuration, separate from Expo. |
@@ -129,6 +130,8 @@ limits, and the current integration boundary.
 | `supabase/functions/_shared/search.ts` | Deterministic query-to-filter parsing and allowlisted search-plan validation. |
 | `supabase/functions/_shared/ask-sql-guard.ts` | PostgreSQL 17 AST allowlist for the curated cohort and typed answer SELECT shapes. |
 | `supabase/functions/_shared/ask-sql.ts` | Restricted-role read-only execution, answer/source consistency, private sessions, revision paging, and grounded explanations. |
+| `supabase/functions/_shared/cache.ts` | Versioned SHA-256 cache keys and strict generic-explanation cacheability checks. |
+| `supabase/functions/_shared/preset.ts` | AI-free preset note formatting and deterministic extraction using ISO currency minor units. |
 | `supabase/functions/parse-entry/index.ts` | Idempotent Gemini-only text interpretation, grounded validation, and authoritative commit. |
 | `supabase/functions/correct-entry/index.ts` | Revision-checked text reparse, manual correction, and deletion with optional explicit personal category rules. |
 | `supabase/functions/ask-money/index.ts` | Authenticated natural-language/explicit-filter search with SQL-only financial totals. |
@@ -136,17 +139,28 @@ limits, and the current integration boundary.
 | `supabase/functions/request-quota-review/index.ts` | Authenticated, deduplicated support escalation for accounts that reach the AI allowance. |
 | `supabase/functions/delete-account/index.ts` | Authenticated, server-only deletion of the caller's account and cascading owner data. |
 | `supabase/functions/scan-receipt/index.ts` | Authenticated transient multipart image parsing, Gemini structured-output stream, progressive NDJSON rows, and text-only authoritative commit. |
+| `supabase/functions/apply-preset/index.ts` | Idempotent, authenticated preset snapshot commit with no Gemini request. |
 | `src/features/auth/` | Session provider, email/password auth, Google/Apple OAuth, callback handling, recovery, and reset UI. |
 | `src/features/legal/` | Shared readable legal-document surface used by the bundled privacy policy and terms. |
 | `src/lib/supabase/client.ts` | Lazy publishable-key client, explicit optional anonymous auth and session identity. |
 | `src/lib/supabase/session-storage.ts` | AsyncStorage session persistence adapter. |
-| `src/lib/supabase/database.types.ts` | Shared backend wire type exports; live generated schema types await Finn deployment. |
+| `src/lib/supabase/database.types.ts` | Shared backend wire types plus the generated SQL schema type exports. |
+| `src/lib/supabase/generated.types.ts` | CLI-generated public-schema types from the linked Finn database after caching migration deployment. |
 | `src/lib/ai/api.ts` | Authenticated Edge requests, session refresh, bounded timeout and typed retry errors. |
-| `src/lib/offline/database.ts` | Serialized account-scoped durable cache/outbox document and subscriptions. |
+| `src/lib/offline/database.ts` | Serialized account-scoped snapshot facade, structural sharing, and subscriptions over the platform repository. |
 | `src/lib/offline/cache-schema.ts` | Versioned cache defaults, account keys, and lossless v1/v2-to-v3 normalization for semantic entries, receipts, outbox jobs, presets, goals, and settings. |
 | `src/lib/offline/sync-queue.ts` | Ordered retry queue, revision-conflict retention and foreground sync lifecycle. |
+| `src/lib/offline/persistent-store.types.ts` | Shared native/web offline repository contract. |
+| `src/lib/offline/persistent-store.ts` | Platform-resolved offline repository entry point for shared imports. |
+| `src/lib/offline/persistent-store.native.ts` | Normalized account-scoped SQLite persistence, atomic entry/outbox writes, verified rollback-safe AsyncStorage migration, and deletion. |
+| `src/lib/offline/persistent-store.web.ts` | Web AsyncStorage repository implementation behind the shared contract. |
+| `src/lib/offline/sqlite.native.ts` | Expo SQLite WAL/foreign-key schema for entries, receipts/lines, jobs, settings, presets, goals, metadata, Ask results, and metrics. |
+| `src/lib/offline/refresh-coordinator.ts` | Account/resource request coalescing and 15-second/5-minute freshness policy. |
+| `src/lib/offline/cache-metrics.ts` | Locally aggregated, bounded, content-free cache telemetry. |
+| `src/lib/cache/lru.ts` | Small bounded process-local LRU used by derived UI calculations. |
 | `src/types/sync.ts` | Cached entry, correction/deletion payload, durable job and cache types. |
-| `src/features/journal/services/journal-service.ts` | Durable unparsed capture, local reads, and authoritative remote refresh. |
+| `src/features/journal/services/journal-service.ts` | Durable capture, deterministic presets, fixed-snapshot delta sync, conflict shadows, and one-release full-refresh fallback. |
+| `src/features/journal/services/journal-sync-merge.ts` | Pure complete-server-document merge with pending local edit and conflict-shadow protection. |
 | `src/features/journal/services/journal-adapter.ts` | Pure cached-record-to-UI adaptation and revision-safe text correction payload construction. |
 | `src/features/journal/services/sync-recovery-service.ts` | Entry-scoped retry plus explicit local-or-remote revision-conflict resolution. |
 | `src/features/entries/services/entries-service.ts` | Offline reparse/manual correction/Gemini correction/deletion queue commands using server revisions while retaining the current breakdown during AI work. |
@@ -160,7 +174,11 @@ limits, and the current integration boundary.
 | `supabase/tests/ask-sql-role.test.ts` | Live restricted-login RLS, date-window, write/function denial, and answer-to-five-item-source consistency checks. |
 | `supabase/migrations/20260922050000_fix_receipt_search_terms.sql` | Post-deploy receipt writer repair that groups JSON text extraction correctly for linked-database lint and runtime execution. |
 | `src/features/ask/services/ask-service.ts` | Search request and exact per-currency result contracts. |
-| `src/features/summary/services/summary-service.ts` | SQL-based spending summaries and RLS-protected financial insight reads. |
+| `src/features/ask/services/ask-result-cache.ts` | Web 50-root/24-hour revision-keyed Ask result cache; native uses the sibling SQLite implementation. |
+| `src/features/ask/services/ask-result-cache.native.ts` | Native SQLite-backed revision-keyed Ask answer storage. |
+| `src/features/ask/services/ask-cache-policy.ts` | Successful, complete response eligibility and authoritative-revision reuse checks. |
+| `src/features/ask/services/journal-revision-service.ts` | Coalesced authoritative journal revision verification for persisted Ask answers. |
+| `src/features/summary/services/summary-service.ts` | Bounded revision-keyed derived summaries/breakdowns plus SQL-backed financial insight reads. |
 | `src/features/support/components/quota-reached-modal.tsx` | Calm global quota notice with a support-review action and email fallback. |
 | `src/features/support/services/` | Quota-reached event fan-out and authenticated support-request submission. |
 
@@ -497,7 +515,7 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 | `src/lib/supabase/database.types.ts` | Generated database types. Once generation is configured, do not hand-edit. |
 | `src/lib/ai/contracts.ts` | Client/server request and response contracts for parsing, receipts, and Ask. |
 | `src/lib/ai/api.ts` | Authenticated calls to server-side AI endpoints; never contains AI provider secrets. |
-| `src/lib/offline/database.ts` | Serialized account-scoped AsyncStorage transaction boundary and cache subscriptions. |
+| `src/lib/offline/database.ts` | Shared snapshot facade over native SQLite and web AsyncStorage repositories. |
 | `src/lib/offline/sync-queue.ts` | Durable background jobs for sync, AI enrichment, transient receipt parsing, and currency conversion. |
 | `src/providers/app-providers.tsx` | Auth-scoped durable journal snapshot, background refresh/sync lifecycle, and async UI mutation commands. |
 | `src/services/currency-service.ts` | Exchange-rate retrieval/cache with deferred conversion when offline. |
@@ -532,6 +550,7 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 | `supabase/functions/scan-receipt/index.ts` | **Planned:** receipt OCR/extraction without exposing provider secrets. |
 | `supabase/functions/ask-money/index.ts` | Bounded context/catalog reads, cached Gemini filter interpretation, SQL totals and cursor-based source pages. |
 | `supabase/functions/ask-sql/index.ts` | Guarded advanced questions through a dedicated read-only role and private revision-aware source sessions. |
+| `supabase/functions/apply-preset/index.ts` | Deterministic preset insertion from an immutable client snapshot; never calls Gemini. |
 | `supabase/functions/delete-account/index.ts` | Verifies the caller and deletes that auth user through a server-only admin client. |
 | `supabase/functions/convert-currency/index.ts` | **Planned only if needed:** trusted exchange-rate proxy/cache. |
 
@@ -568,10 +587,15 @@ Supabase safety requirements:
 | Directory | Functionality |
 | --- | --- |
 | `tests/unit/journal-offline.test.ts` | Cache migration, adapter fidelity, correction, and preset-capture regression tests. |
+| `tests/unit/journal-sync-merge.test.ts` | Repeated remote versions, tombstones, complete receipt lines, and pending-local conflict preservation. |
+| `tests/unit/ask-cache-policy.test.ts` | Answer eligibility and revision-safe cache reuse rules. |
+| `tests/unit/sqlite-schema.test.ts` | Native SQLite schema, receipt-line foreign keys, account isolation, and atomic entry/outbox rollback in Node SQLite. |
+| `tests/unit/supabase-function-config.test.ts` | Guards every configured Edge Function entrypoint against cross-function deployment. |
 | `tests/integration/` | Repository, offline queue, local database, and API boundary tests. |
 | `tests/e2e/` | Critical user flows: offline capture, reopen, sync, correction, receipt, and Ask source inspection. |
 | `supabase/tests/` | SQL/RLS tests separate from client tests. |
 | `supabase/tests/money-evidence.test.ts` | Grounded amount evidence and exact minor-unit conversion tests; semantic interpretation remains Gemini-only. |
+| `supabase/tests/cache.test.ts` | Zero/two/three-decimal preset capture and safe explanation-cache eligibility tests. |
 
 ## Fast search guide
 

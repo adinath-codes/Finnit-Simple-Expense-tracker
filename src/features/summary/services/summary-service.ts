@@ -2,8 +2,17 @@
 import { getSupabase } from "@/lib/supabase/client";
 import { searchJournal } from "@/features/ask/services/ask-service";
 import type { Category, JournalEntry } from "@/types/domain";
-import { itemAccountingAmount } from "@/utils/amounts";
+import { entryTotal, itemAccountingAmount } from "@/utils/amounts";
 import type { PeriodSummary, SummaryPeriod } from "../types/summary.types";
+import { LruCache } from "@/lib/cache/lru";
+
+const periodCache = new LruCache<PeriodSummary>(12);
+type DayBreakdown = {
+  entries: JournalEntry[];
+  total: number;
+  categoryValues: Record<Category, number>;
+};
+const dayBreakdownCache = new LruCache<DayBreakdown>(12);
 
 const emptyCategoryTotals = (): Record<Category, number> => ({
   food: 0,
@@ -117,6 +126,55 @@ export function buildPeriodSummary({
     ),
     categoryTotals,
   };
+}
+
+export function cachedPeriodSummary({
+  accountId,
+  contentVersion,
+  currency,
+  ...input
+}: Parameters<typeof buildPeriodSummary>[0] & {
+  accountId: string;
+  contentVersion: number;
+  currency: string;
+}) {
+  const key = [
+    accountId, contentVersion, currency, input.period, input.anchorDate, input.today,
+  ].join(":");
+  return periodCache.get(key) ?? periodCache.set(key, buildPeriodSummary(input));
+}
+
+export function cachedDayBreakdown({
+  accountId,
+  contentVersion,
+  currency,
+  selectedDate,
+  entries,
+}: {
+  accountId: string;
+  contentVersion: number;
+  currency: string;
+  selectedDate: string;
+  entries: JournalEntry[];
+}) {
+  const key = [accountId, contentVersion, currency, selectedDate].join(":");
+  const cached = dayBreakdownCache.get(key);
+  if (cached) return cached;
+  const selected = entries.filter((entry) => entry.date === selectedDate);
+  const categoryValues = emptyCategoryTotals();
+  let total = 0;
+  for (const entry of selected) {
+    total += entryTotal(entry);
+    for (const item of entry.items) {
+      categoryValues[item.category] += item.amountMinor;
+    }
+  }
+  return dayBreakdownCache.set(key, { entries: selected, total, categoryValues });
+}
+
+export function clearSummaryCaches() {
+  periodCache.clear();
+  dayBreakdownCache.clear();
 }
 
 export function spendingSummary(startDate: string, endDate: string) {

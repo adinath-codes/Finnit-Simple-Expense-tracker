@@ -2,6 +2,9 @@ import type { Category, JournalEntry } from "@/types/domain";
 import { entryTotal, itemAccountingAmount } from "@/utils/amounts";
 import { currencySymbol, money } from "@/utils/currency";
 import type { CalendarMonth } from "../types/calendar.types";
+import { LruCache } from "@/lib/cache/lru";
+
+const monthCache = new LruCache<CalendarMonth>(12);
 
 function dateKey(year: number, monthIndex: number, day: number) {
   return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -81,6 +84,27 @@ export function buildCalendarMonth({
     categoryTotals,
     days,
   };
+}
+
+export function cachedCalendarMonth({
+  accountId,
+  contentVersion,
+  currency,
+  ...input
+}: Parameters<typeof buildCalendarMonth>[0] & {
+  accountId: string;
+  contentVersion: number;
+  currency: string;
+}) {
+  const monthKey = `${input.month.getFullYear()}-${input.month.getMonth()}`;
+  const key = [
+    accountId, contentVersion, currency, monthKey, input.selectedDate, input.today,
+  ].join(":");
+  return monthCache.get(key) ?? monthCache.set(key, buildCalendarMonth(input));
+}
+
+export function clearCalendarCache() {
+  monthCache.clear();
 }
 
 export function compactMoney(amountMinor: number, currency: string) {

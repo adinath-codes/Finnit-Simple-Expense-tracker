@@ -12,10 +12,16 @@ import {
 import { syncJournal } from "@/lib/offline/sync-queue";
 import type {
   CaptureInput,
+  JournalSyncRpcPage,
+  PresetCaptureInput,
   SavedEntry,
 } from "@/lib/supabase/database.types";
 import { capture } from "../../../../supabase/functions/_shared/validation";
 import { pendingExtraction } from "../../../../supabase/functions/_shared/pending-entry";
+import { presetExtraction } from "../../../../supabase/functions/_shared/preset";
+import { refreshRemoteReceipts } from "@/features/camera/services/receipt-service";
+import { recordCacheMetric } from "@/lib/offline/cache-metrics";
+import { mergeRemoteEntry } from "./journal-sync-merge";
 
 export function createCaptureInput(
   rawText: string,
@@ -65,8 +71,37 @@ export async function captureJournalNote(value: CaptureInput) {
   void syncJournal(userId).catch(() => undefined);
   return saved;
 }
-export async function listLocalJournal() {
-  const cache = await readJournalCache(await currentUserId());
+
+/** Save a trusted preset snapshot and its deterministic structure before sync. */
+export async function capturePresetJournalNote(value: PresetCaptureInput) {
+  const input = capture(value.input);
+  const userId = await currentUserId();
+  const saved = await changeJournalCache(userId, (cache) => {
+    const existing = cache.entries[input.id];
+    if (existing) return existing;
+    const local = {
+      input,
+      extraction: presetExtraction(value.preset, input),
+      sync: "pending" as const,
+    };
+    cache.entries[input.id] = local;
+    cache.jobs.push({
+      id: input.id,
+      userId,
+      entryId: input.id,
+      endpoint: "apply-preset",
+      payload: value,
+      state: "pending",
+      attempts: 0,
+      nextAttemptAt: 0,
+    });
+    return local;
+  });
+  void syncJournal(userId).catch(() => undefined);
+  return saved;
+}
+export async function listLocalJournal(userId?: string) {
+  const cache = await readJournalCache(userId ?? await currentUserId());
   return Object.values(cache.entries)
     .filter((entry) => !entry.deleted)
     .sort((a, b) => b.input.captured_at.localeCompare(a.input.captured_at));
@@ -104,9 +139,8 @@ export function subscribePendingJournalChangeCount(
   };
 }
 
-/** Fetch remote rows without mixing fixture data or overwriting unsynced edits. */
-export async function refreshJournal() {
-  const userId = await currentUserId();
+/** One-release fallback for servers that do not yet expose delta sync. */
+async function refreshJournalLegacy(userId: string) {
   const db = getSupabase();
   let after: string | undefined;
   while (true) {
@@ -121,6 +155,7 @@ export async function refreshJournal() {
     if (after) query = query.gt("id", after);
     const { data, error } = await query;
     if (error) throw error;
+    if (await currentUserId() !== userId) throw new Error("Account changed during sync.");
     await changeJournalCache(userId, (cache) => {
       for (const row of data) {
         if (row.original_text === null) continue;
@@ -144,5 +179,74 @@ export async function refreshJournal() {
     if (data.length < 200) break;
     after = data[data.length - 1].id;
   }
-  return listLocalJournal();
+  return listLocalJournal(userId);
+}
+
+async function refreshJournalDelta(userId: string, resetAttempted = false) {
+  const startedAt = Date.now();
+  const db = getSupabase();
+  const initial = await readJournalCache(userId);
+  const afterRevision = initial.metadata.lastServerRevision;
+  let snapshotRevision: string | undefined;
+  let cursor: JournalSyncRpcPage["next_cursor"] = null;
+  let changed = 0;
+  let responseBytes = 0;
+  while (true) {
+    const { data, error } = await db.rpc("finn_sync_journal", {
+      p_after_revision: afterRevision,
+      p_snapshot_revision: snapshotRevision ?? null,
+      p_cursor: cursor,
+      p_limit: 200,
+    });
+    if (error) throw error;
+    if (await currentUserId() !== userId) throw new Error("Account changed during sync.");
+    const page = data as JournalSyncRpcPage;
+    responseBytes += JSON.stringify(data).length;
+    if (
+      !page || !/^\d{1,19}$/.test(page.snapshot_revision) ||
+      !Array.isArray(page.changes)
+    ) throw new Error("Invalid journal sync response.");
+    if (page.reset_required) {
+      if (resetAttempted) throw new Error("Journal sync could not reset safely.");
+      await changeJournalCache(userId, (cache) => {
+        cache.metadata.lastServerRevision = null;
+      });
+      return refreshJournalDelta(userId, true);
+    }
+    snapshotRevision ??= page.snapshot_revision;
+    if (page.snapshot_revision !== snapshotRevision)
+      throw new Error("Journal sync snapshot changed during pagination.");
+    changed += page.changes.length;
+    await changeJournalCache(userId, (cache) => {
+      for (const entry of page.changes) mergeRemoteEntry(cache, entry);
+    });
+    cursor = page.next_cursor;
+    if (!cursor) break;
+  }
+  await changeJournalCache(userId, (cache) => {
+    cache.metadata.lastServerRevision = snapshotRevision ?? afterRevision ?? "0";
+  });
+  recordCacheMetric(userId, "delta_sync", {
+    hit: changed === 0,
+    durationMs: Date.now() - startedAt,
+    rows: changed,
+    bytes: responseBytes,
+  });
+  return changed;
+}
+
+/** Fetch only changed entry documents, falling back to the legacy full reads. */
+export async function refreshJournal(userId?: string) {
+  const ownerId = userId ?? await currentUserId();
+  if (await currentUserId() !== ownerId) throw new Error("Account changed during sync.");
+  try {
+    await refreshJournalDelta(ownerId);
+  } catch {
+    if (await currentUserId() !== ownerId) throw new Error("Account changed during sync.");
+    await Promise.all([
+      refreshJournalLegacy(ownerId),
+      refreshRemoteReceipts(ownerId),
+    ]);
+  }
+  return listLocalJournal(ownerId);
 }
