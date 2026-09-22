@@ -23,6 +23,10 @@ import {
   validateReceiptLine,
   validateReceiptModel,
 } from "../_shared/receipt.ts";
+import {
+  estimatedGeminiCost,
+  geminiModel,
+} from "../_shared/gemini.ts";
 
 const encoder = new TextEncoder();
 const responseHeaders = {
@@ -88,8 +92,7 @@ async function streamGemini(
   categories: { id: string; name: string }[],
   onText: (text: string) => void,
 ) {
-  const model = env("GEMINI_MODEL", "gemini-3.8-flash");
-  if (!/^gemini-[a-z0-9.-]+$/.test(model)) throw new ApiError(503, "invalid_model");
+  const model = geminiModel("extraction");
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
     {
@@ -261,7 +264,12 @@ Deno.serve(async (request) => {
               },
               p_lines: validated.lines,
               p_extraction: validated.extraction,
-              p_audit: { model, model_result: modelResult, validated_result: validated },
+              p_audit: {
+                model,
+                model_role: "extraction",
+                model_result: modelResult,
+                validated_result: validated,
+              },
             });
             const inputTokens = usage.promptTokenCount ?? 0;
             const outputTokens = (usage.candidatesTokenCount ?? 0) +
@@ -270,7 +278,16 @@ Deno.serve(async (request) => {
               model,
               input_tokens: inputTokens,
               output_tokens: outputTokens,
-              metadata: { line_count: validated.lines.length, reconciled: validated.reconciled },
+              estimated_cost_usd: estimatedGeminiCost(
+                "extraction",
+                inputTokens,
+                outputTokens,
+              ),
+              metadata: {
+                model_role: "extraction",
+                line_count: validated.lines.length,
+                reconciled: validated.reconciled,
+              },
             });
             const attachment = entry.receipt as ReceiptAttachment;
             lineEvent(controller, { type: "final", entry, attachment, lines: attachment.lines });

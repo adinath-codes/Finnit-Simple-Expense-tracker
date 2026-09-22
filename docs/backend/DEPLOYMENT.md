@@ -30,25 +30,50 @@ using your Gemini API key:
 
 ```dotenv
 GEMINI_API_KEY=your_google_ai_studio_key
-GEMINI_MODEL=gemini-3.8-flash
+GEMINI_EXTRACTION_MODEL=gemini-3.5-flash-lite
+GEMINI_REASONING_MODEL=gemini-3.1-flash-lite
+GEMINI_FAST_MODEL=gemini-3.5-flash-lite
 GEMINI_MAX_OUTPUT_TOKENS=4096
 GEMINI_TIMEOUT_MS=20000
-FINN_AI_DAILY_LIMIT=30
-FINN_AI_MONTHLY_LIMIT=300
-FINN_AI_MINUTE_LIMIT=5
+GEMINI_EXTRACTION_INPUT_USD_PER_MILLION=0.30
+GEMINI_EXTRACTION_OUTPUT_USD_PER_MILLION=2.50
+GEMINI_REASONING_INPUT_USD_PER_MILLION=0.25
+GEMINI_REASONING_OUTPUT_USD_PER_MILLION=1.50
+GEMINI_FAST_INPUT_USD_PER_MILLION=0.30
+GEMINI_FAST_OUTPUT_USD_PER_MILLION=2.50
+FINN_AI_DAILY_LIMIT=60
+FINN_AI_MONTHLY_LIMIT=600
+FINN_AI_MINUTE_LIMIT=10
 FINN_API_DAILY_LIMIT=1000
 FINN_API_MONTHLY_LIMIT=20000
 FINN_API_MINUTE_LIMIT=120
+# A URL for the dedicated finn_ask_reader login. Provision its password outside
+# migrations and use the session-pooler host with TLS.
+FINN_ASK_READ_DB_URL=postgresql://finn_ask_reader.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres?sslmode=require
 ```
 
-Optional `GEMINI_INPUT_USD_PER_MILLION` and `GEMINI_OUTPUT_USD_PER_MILLION` enable
-estimated cost reporting. Leave them unset until you have verified pricing for
-your model/account. Token usage is recorded regardless; an unknown cost is null.
+The role-specific price settings enable estimated cost reporting. Verify them
+against the provider's current prices when deploying; token usage is recorded
+even when a price is absent or invalid, and then estimated cost is null.
 
-`gemini-3.8-flash` was the latest stable Flash in Google's model catalog on
-September 19, 2026. The explicit stable ID is configurable so a moving alias cannot
-silently change interpretation behavior. The user's request for Flash supersedes
-the pasted checklist's older Flash-Lite suggestion.
+Financial extraction, corrections, and receipt reading use the extraction model.
+Complex fixed-search and guarded SQL plans use the reasoning model. Short
+verified-fact explanations use the fast model. Explicit stable IDs prevent a
+moving alias from changing behavior silently. `GEMINI_MODEL` is deprecated and
+no longer selects a model. There is no cross-model retry, so a provider failure
+cannot silently consume a second quota reservation.
+
+The linked production Gemini project returned `404 NOT_FOUND` for
+`gemini-2.5-flash-lite` during the September 22, 2026 rollout. The verified fast
+model is therefore the stable `gemini-3.5-flash-lite`; do not restore 2.5 without
+first proving availability with the production API key.
+
+Production verification also showed that 3.1 Flash-Lite generated valid guarded
+SQL plans but failed strict amount-evidence validation for simple journal notes.
+The extraction role therefore uses 3.5 Flash-Lite, which passed the same contract.
+All Gemini requests use the selected model's provider-default thinking behavior;
+Finn does not force a thinking level. This keeps each stable model compatible with
+its supported thinking modes.
 
 Supabase injects `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEYS` and
 `SUPABASE_SECRET_KEYS` into Edge Functions. The code uses the `default` named keys,
@@ -64,7 +89,7 @@ npx supabase login
 npx supabase link --project-ref YOUR_FINN_PROJECT_REF
 npx supabase db push
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry ask-money request-quota-review delete-account scan-receipt --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry ask-money ask-sql request-quota-review delete-account scan-receipt --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 Apply all migrations in filename order:
@@ -79,6 +104,10 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260920160000_expand_spendable_iso_currencies.sql`: adds the current spendable ISO 4217 codes and exact minor-unit scales before clients can select them.
 - `supabase/migrations/20260922022045_revision_aware_entry_enrichment.sql`: makes reparse claims revision-aware and exposes private mutation retries.
 - `supabase/migrations/20260922035031_transaction_semantics_v2.sql`: adds hierarchical categories, transaction participants/contexts/allocations, exact amount components, AI-operation idempotency, and metric-aware search.
+- `supabase/migrations/20260922085151_ask_finn_guarded_sql.sql`: creates the curated Ask Finn view, dedicated read role, owner policies, and expiring private SQL sessions.
+- `supabase/migrations/20260922090903_ask_finn_function_privileges.sql`: removes an inherited public event-trigger function privilege from the reader.
+- `supabase/migrations/20260922102945_ask_finn_auth_schema_usage.sql`: records the managed-auth compatibility attempt retained in deployed migration history.
+- `supabase/migrations/20260922103031_ask_finn_claim_scope_no_auth.sql`: scopes the reader from the verified transaction-local subject without depending on managed `auth` schema grants.
 
 No separate seed step is needed. If the base backend is already deployed, push
 the currency migration first, then redeploy `parse-entry`, `correct-entry`,
@@ -88,7 +117,7 @@ RLS and do not require their own Edge Function.
 CLI configuration was generated with `supabase init`, and the migration filename
 was generated with `supabase migration new`.
 
-Deploy all six functions, not only the database. They are responsible for auth,
+Deploy all functions, not only the database. They are responsible for auth,
 validation, quotas, parsing, and correction. `verify_jwt=false` in `config.toml`
 supports modern API keys; it does **not** make these public APIs. Every handler
 requires a bearer session token and validates it with `auth.getUser()` before any
@@ -269,7 +298,7 @@ removes any remaining local image; there is no backend image cleanup job.
   "query": "how much did I spend on Uber with Aswin last month?",
   "timezone": "Asia/Kolkata",
   "selected_range": { "start_date": "2026-09-01", "end_date": "2026-10-01" },
-  "limit": 20
+  "limit": 5
 }
 ```
 
@@ -301,7 +330,7 @@ Editable filter requests can send `filters` instead of `query`:
 ```
 
 For more items, send the returned `applied_filters` as `filters`, plus
-`cursor: next_cursor`, `revision`, and `limit: 20`. Limits are 1–30. Nonzero offsets
+`cursor: next_cursor`, `revision`, and `limit: 5`. Limits are 1–30. Nonzero offsets
 are rejected. Subsequent pages use the `(occurred_on, entry_id, id)` cursor, perform
 no model call, and omit totals/counts; clients retain the first page's answer.
 If the journal changes between pages, `{ stale: true }` requests a fresh first
@@ -322,13 +351,25 @@ plan. Valid model interpretations are cached per user for 24 hours (up to 30
 plans), keyed by question hash, day, selected range and the relevant catalog.
 Pages and filter changes never call Gemini. Catalog payloads include only up to
 50 matching entities of each type and the fixed category list. No transaction
-history is sent to the model. Source items arrive in pages of 20 and are displayed
+history is sent to the model. Source items arrive in pages of five and are displayed
 in a virtualized list with an explicit Show more button.
 
-An unsupported/uncertain natural-language query returns `needs_filters: true`
-and `suggested_filters`, without a possibly misleading total. Gemini can only
-propose this allowlisted plan; it cannot issue SQL, invent entity IDs, see the
-whole journal, or calculate financial answers.
+An unsupported fixed-plan question is offered to `ask-sql`. Gemini receives the
+curated `ask_read.transactions` contract and returns two PostgreSQL SELECTs: one
+matching transaction IDs and one calculating the typed answer from that cohort.
+Both statements must pass the PostgreSQL 17 AST allowlist before execution. The
+Edge Function runs them in a repeatable-read, read-only transaction through the
+dedicated `finn_ask_reader` login with a five-second statement timeout. RLS, the
+view, and transaction-local settings independently enforce the verified user and
+a date window of at most ten years. The role has no table writes or callable
+public functions.
+
+Validated cohort SQL and its journal revision live for 15 minutes in a private
+session. Pages fetch five source transactions without another SQL-generation
+call and fail stale if the journal revision changes. Gemini explanations receive
+only the verified answer rows, count, and range; the client uses factual fixed
+text if explanation generation fails. Invalid model SQL executes nothing and
+returns the clarification state.
 
 ## 4. App integration boundary
 

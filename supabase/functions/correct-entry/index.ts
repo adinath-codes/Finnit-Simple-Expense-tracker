@@ -6,6 +6,7 @@ import {
   EXTRACTION_PROMPT_VERSION,
   EXTRACTION_SCHEMA_VERSION,
   extractionInputHash,
+  geminiModel,
 } from "../_shared/gemini.ts";
 import { withApproximatePlace } from "../_shared/entry-context.ts";
 import { CURRENCIES } from "../_shared/contracts.ts";
@@ -71,7 +72,7 @@ serve(async (body, ctx) => {
       original.approximate_place !== input.approximate_place
     ) throw new ApiError(400, "invalid_capture_metadata");
     const inputHash = await extractionInputHash(input);
-    const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const model = geminiModel("extraction");
     const claim = await rpc<string>(ctx.admin, "finn_claim_ai_operation", {
       p_user: ctx.userId,
       p_operation_id: operationId,
@@ -110,6 +111,7 @@ serve(async (body, ctx) => {
         p_audit: {
           event: "gemini_reparse",
           model,
+          model_role: "extraction",
           schema_version: EXTRACTION_SCHEMA_VERSION,
           prompt_version: EXTRACTION_PROMPT_VERSION,
           input_hash: inputHash,
@@ -143,7 +145,7 @@ serve(async (body, ctx) => {
       expectedRevision: Number(revision),
       instruction,
     });
-    const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const model = geminiModel("extraction");
     const claim = await rpc<string>(ctx.admin, "finn_claim_ai_operation", {
       p_user: ctx.userId,
       p_operation_id: operationId,
@@ -209,6 +211,7 @@ serve(async (body, ctx) => {
         p_audit: {
           event: "gemini_correction",
           model,
+          model_role: "extraction",
           schema_version: EXTRACTION_SCHEMA_VERSION,
           prompt_version: EXTRACTION_PROMPT_VERSION,
           input_hash: inputHash,

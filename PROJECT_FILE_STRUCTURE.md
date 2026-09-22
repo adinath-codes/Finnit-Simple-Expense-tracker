@@ -108,6 +108,10 @@ limits, and the current integration boundary.
 | `supabase/migrations/20260920160000_expand_spendable_iso_currencies.sql` | Additive ISO 4217 spendable-currency catalog expansion for onboarding, settings, and capture validation. |
 | `supabase/migrations/20260922022045_revision_aware_entry_enrichment.sql` | Revision-scoped Gemini claims and private mutation lookup for idempotent text reparses. |
 | `supabase/migrations/20260922035031_transaction_semantics_v2.sql` | Hierarchical categories, amount roles, participants, allocations, transaction contexts/components, AI-operation idempotency, and metric-aware Ask Finn RPC. |
+| `supabase/migrations/20260922085151_ask_finn_guarded_sql.sql` | Curated read-only journal view, dedicated Ask Finn reader role/RLS, and private expiring advanced-search sessions. |
+| `supabase/migrations/20260922090903_ask_finn_function_privileges.sql` | Removes the reader role's inherited access to a platform public event-trigger function. |
+| `supabase/migrations/20260922102945_ask_finn_auth_schema_usage.sql` | Deployed managed-auth compatibility migration retained for ordered production history. |
+| `supabase/migrations/20260922103031_ask_finn_claim_scope_no_auth.sql` | Verified-subject RLS helper and view policies that avoid protected auth-schema access. |
 | `supabase/config.toml` | CLI-generated local project settings and authenticated Edge Function entry points. |
 | `supabase/.gitignore` | Excludes CLI project links, temporary files and local secrets. |
 | `supabase/functions/deno.json` | Server TypeScript runtime and formatting configuration, separate from Expo. |
@@ -120,12 +124,15 @@ limits, and the current integration boundary.
 | `supabase/functions/_shared/pending-entry.ts` | Unparsed local placeholder used while an explicitly submitted note waits for Gemini. |
 | `supabase/functions/_shared/entry-context.ts` | Adds the user-approved coarse place label to a validated interpretation. |
 | `supabase/functions/_shared/runtime.ts` | Session verification, RLS/admin clients, request bounds, quotas, catalogs and private-text-free metrics. |
-| `supabase/functions/_shared/gemini.ts` | Bounded Gemini Flash structured output and evidence-grounded interpretation validation. |
+| `supabase/functions/_shared/gemini.ts` | Role-based Gemini Flash-Lite selection, role-specific cost metrics, bounded structured output, and evidence-grounded interpretation validation. |
 | `supabase/functions/_shared/receipt.ts` | Strict receipt evidence/money validation, partial JSON row parsing, reconciliation, and correction validation. |
 | `supabase/functions/_shared/search.ts` | Deterministic query-to-filter parsing and allowlisted search-plan validation. |
+| `supabase/functions/_shared/ask-sql-guard.ts` | PostgreSQL 17 AST allowlist for the curated cohort and typed answer SELECT shapes. |
+| `supabase/functions/_shared/ask-sql.ts` | Restricted-role read-only execution, answer/source consistency, private sessions, revision paging, and grounded explanations. |
 | `supabase/functions/parse-entry/index.ts` | Idempotent Gemini-only text interpretation, grounded validation, and authoritative commit. |
 | `supabase/functions/correct-entry/index.ts` | Revision-checked text reparse, manual correction, and deletion with optional explicit personal category rules. |
 | `supabase/functions/ask-money/index.ts` | Authenticated natural-language/explicit-filter search with SQL-only financial totals. |
+| `supabase/functions/ask-sql/index.ts` | Authenticated advanced Ask Finn route for validated SQL search, five-item pages, and verified-fact explanations. |
 | `supabase/functions/request-quota-review/index.ts` | Authenticated, deduplicated support escalation for accounts that reach the AI allowance. |
 | `supabase/functions/delete-account/index.ts` | Authenticated, server-only deletion of the caller's account and cascading owner data. |
 | `supabase/functions/scan-receipt/index.ts` | Authenticated transient multipart image parsing, Gemini structured-output stream, progressive NDJSON rows, and text-only authoritative commit. |
@@ -148,6 +155,9 @@ limits, and the current integration boundary.
 | `supabase/tests/receipt.test.ts` | Deterministic receipt parsing, arbitrary stream boundaries, reconciliation, discounts, confidence, limits, and malformed-output tests. |
 | `supabase/tests/money-evidence.test.ts` | Exact minor-unit parsing, multiplier-aware money tokenization, deterministic equal allocations/remainder handling, mixed-currency evidence, and pending-entry safety tests. |
 | `supabase/tests/search.test.ts` | Metric-aware deterministic query planning, backwards-compatible defaults, and query-plan allowlist tests. |
+| `supabase/tests/gemini-config.test.ts` | Extraction/reasoning/fast model defaults, override isolation, identifier validation, and role-specific cost estimation. |
+| `supabase/tests/ask-sql-guard.test.ts` | Valid aggregate/date/count plans plus hostile writes, CTEs, functions, schemas, joins, unions, and output-limit rejection. |
+| `supabase/tests/ask-sql-role.test.ts` | Live restricted-login RLS, date-window, write/function denial, and answer-to-five-item-source consistency checks. |
 | `supabase/migrations/20260922050000_fix_receipt_search_terms.sql` | Post-deploy receipt writer repair that groups JSON text extraction correctly for linked-database lint and runtime execution. |
 | `src/features/ask/services/ask-service.ts` | Search request and exact per-currency result contracts. |
 | `src/features/summary/services/summary-service.ts` | SQL-based spending summaries and RLS-protected financial insight reads. |
@@ -422,14 +432,14 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 
 | File | Functionality |
 | --- | --- |
-| `components/ask-screen.tsx` | Minimal Ask Finn page with question prompts, recent topics, editable filters/dates, result skeletons, grounded answer, and Show more sources. |
+| `components/ask-screen.tsx` | Ask Finn page with the requested value first, verified-fact explanation, editable fixed-plan filters, reusable source cards, and five-item Show more paging. |
 | `components/ask-thread.tsx` | User questions and grounded financial answers. |
 | `components/ask-composer.tsx` | Financial-history question input. |
-| `components/source-entry-list.tsx` | Grouped dated source notes with expandable item/category/merchant/amount details. |
-| `hooks/use-search.ts` | Auth-scoped context and search requests, cancellation, result state, cursor paging, retry, and stale-result handling. |
+| `components/source-entry-list.tsx` | Reusable per-transaction evidence card with message, description, date, exact amount, review state, detail expansion, and entry link. |
+| `hooks/use-search.ts` | Auth-scoped fixed/advanced search, separate explanation loading, cancellation, private-session cursor paging, retry, and stale-result handling. |
 | `services/search-format.ts` | Exact BigInt currency presentation and calendar-range formatting. |
-| `services/ask-service.ts` | Typed authenticated search/context calls with a 20-item page default. |
-| `types/ask.types.ts` | Exact-money answer, active context, source item, and cursor request/response contracts. |
+| `services/ask-service.ts` | Typed authenticated fixed/advanced search, explanation, context, and five-item source-page calls. |
+| `types/ask.types.ts` | Typed amount/date/count/comparison answers, SQL sessions, exact-money sources, contexts, cursors, and response contracts. |
 
 ## Presets feature: `src/features/presets/`
 
@@ -516,11 +526,12 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 | `supabase/migrations/` | Versioned database schema, indexes, triggers, grants, and RLS policies. Create files with `supabase migration new <name>`; do not invent migration timestamps. |
 | `supabase/functions/_shared/` | Shared server-only helpers for auth checks, validation, AI providers, responses, and CORS. |
 | `supabase/tests/` | Database/RLS tests proving users cannot access one another's financial data. |
-| `supabase/config.toml` | CLI-generated project settings and three authenticated text-backend function entry points. |
+| `supabase/config.toml` | CLI-generated project settings and authenticated backend function entry points, including guarded Ask Finn SQL. |
 | `supabase/seed.sql` | **Planned:** deterministic local-only development data, added when a real schema exists. |
 | `supabase/functions/parse-entry/index.ts` | Gemini-only text interpretation with grounded evidence validation and idempotent commits. |
 | `supabase/functions/scan-receipt/index.ts` | **Planned:** receipt OCR/extraction without exposing provider secrets. |
 | `supabase/functions/ask-money/index.ts` | Bounded context/catalog reads, cached Gemini filter interpretation, SQL totals and cursor-based source pages. |
+| `supabase/functions/ask-sql/index.ts` | Guarded advanced questions through a dedicated read-only role and private revision-aware source sessions. |
 | `supabase/functions/delete-account/index.ts` | Verifies the caller and deletes that auth user through a server-only admin client. |
 | `supabase/functions/convert-currency/index.ts` | **Planned only if needed:** trusted exchange-rate proxy/cache. |
 

@@ -14,6 +14,57 @@ import { env, metric, positiveEnv, reserve, type Context } from "./runtime.ts";
 const nullableString = { type: ["string", "null"] };
 export const EXTRACTION_SCHEMA_VERSION = 3;
 export const EXTRACTION_PROMPT_VERSION = "transaction-semantics-v3-equal-groups";
+export type GeminiModelRole = "extraction" | "reasoning" | "fast";
+
+type ReadEnvironment = (name: string) => string | undefined;
+const readEnvironment: ReadEnvironment = (name) => Deno.env.get(name);
+const MODEL_CONFIG = {
+  extraction: {
+    modelEnvironment: "GEMINI_EXTRACTION_MODEL",
+    defaultModel: "gemini-3.5-flash-lite",
+    inputRateEnvironment: "GEMINI_EXTRACTION_INPUT_USD_PER_MILLION",
+    outputRateEnvironment: "GEMINI_EXTRACTION_OUTPUT_USD_PER_MILLION",
+  },
+  reasoning: {
+    modelEnvironment: "GEMINI_REASONING_MODEL",
+    defaultModel: "gemini-3.1-flash-lite",
+    inputRateEnvironment: "GEMINI_REASONING_INPUT_USD_PER_MILLION",
+    outputRateEnvironment: "GEMINI_REASONING_OUTPUT_USD_PER_MILLION",
+  },
+  fast: {
+    modelEnvironment: "GEMINI_FAST_MODEL",
+    defaultModel: "gemini-3.5-flash-lite",
+    inputRateEnvironment: "GEMINI_FAST_INPUT_USD_PER_MILLION",
+    outputRateEnvironment: "GEMINI_FAST_OUTPUT_USD_PER_MILLION",
+  },
+} as const;
+
+export function geminiModel(
+  role: GeminiModelRole = "reasoning",
+  read: ReadEnvironment = readEnvironment,
+) {
+  const config = MODEL_CONFIG[role];
+  const model = read(config.modelEnvironment) || config.defaultModel;
+  if (!/^gemini-[a-z0-9.-]+$/.test(model))
+    throw new ApiError(503, "invalid_model");
+  return model;
+}
+
+export function estimatedGeminiCost(
+  role: GeminiModelRole,
+  inputTokens: number,
+  outputTokens: number,
+  read: ReadEnvironment = readEnvironment,
+): number | null {
+  const config = MODEL_CONFIG[role];
+  const inputRate = Number(read(config.inputRateEnvironment));
+  const outputRate = Number(read(config.outputRateEnvironment));
+  if (
+    !Number.isFinite(inputRate) || inputRate < 0 ||
+    !Number.isFinite(outputRate) || outputRate < 0
+  ) return null;
+  return (inputTokens * inputRate + outputTokens * outputRate) / 1_000_000;
+}
 
 async function jsonHash(value: unknown) {
   const encoded = new TextEncoder().encode(JSON.stringify(value));
@@ -45,13 +96,15 @@ export async function generate(
   task: string,
   data: unknown,
   schema: unknown,
-  options?: { systemInstruction?: string },
+  options?: {
+    systemInstruction?: string;
+    modelRole?: GeminiModelRole;
+  },
 ): Promise<unknown> {
   if (!Deno.env.get("GEMINI_API_KEY"))
     throw new ApiError(503, "ai_not_configured");
-  const model = env("GEMINI_MODEL", "gemini-3.8-flash");
-  if (!/^gemini-[a-z0-9.-]+$/.test(model))
-    throw new ApiError(503, "invalid_model");
+  const modelRole = options?.modelRole ?? "reasoning";
+  const model = geminiModel(modelRole);
   const prompt = JSON.stringify(data);
   // Small bounded context; never a journal/history dump.
   if (prompt.length > 20000) throw new ApiError(400, "ai_context_too_large");
@@ -104,24 +157,19 @@ export async function generate(
   }
   const body = await response.json();
   const usage = body.usageMetadata ?? {};
-  const inRate = Deno.env.get("GEMINI_INPUT_USD_PER_MILLION");
-  const outRate = Deno.env.get("GEMINI_OUTPUT_USD_PER_MILLION");
   const inputTokens = usage.promptTokenCount ?? 0;
   const outputTokens =
     (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
-  const priced =
-    inRate &&
-    outRate &&
-    Number.isFinite(Number(inRate)) &&
-    Number.isFinite(Number(outRate));
   await metric(ctx, "ai_call", {
     model,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
-    estimated_cost_usd: priced
-      ? (inputTokens * Number(inRate) + outputTokens * Number(outRate)) /
-        1000000
-      : null,
+    estimated_cost_usd: estimatedGeminiCost(
+      modelRole,
+      inputTokens,
+      outputTokens,
+    ),
+    metadata: { model_role: modelRole },
   });
   const candidate = body.candidates?.[0];
   if (candidate?.finishReason !== "STOP")
@@ -408,6 +456,7 @@ export async function enrich(
         .slice(0, 20),
     },
     schema,
+    { modelRole: "extraction" },
   );
   const model = object(modelResult);
   if (

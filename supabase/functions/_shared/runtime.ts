@@ -154,15 +154,15 @@ export async function reserve(
     p_bucket: bucket,
     p_minute: positiveEnv(
       bucket === "ai" ? "FINN_AI_MINUTE_LIMIT" : "FINN_API_MINUTE_LIMIT",
-      bucket === "ai" ? 5 : 120,
+      bucket === "ai" ? 10 : 120,
     ),
     p_daily: positiveEnv(
       bucket === "ai" ? "FINN_AI_DAILY_LIMIT" : "FINN_API_DAILY_LIMIT",
-      bucket === "ai" ? 30 : 1000,
+      bucket === "ai" ? 60 : 1000,
     ),
     p_monthly: positiveEnv(
       bucket === "ai" ? "FINN_AI_MONTHLY_LIMIT" : "FINN_API_MONTHLY_LIMIT",
-      bucket === "ai" ? 300 : 20000,
+      bucket === "ai" ? 600 : 20000,
     ),
   });
 }

@@ -1,6 +1,7 @@
 import { MaskedView } from "@expo/ui/community/masked-view";
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import { Image } from "expo-image";
+import { router } from "expo-router";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ const ASK_GRADIENT_ID = "ask-finn-blue";
 
 function AskFinnLabel() {
   const label = (
-    <View style={styles.askLabel}>
+    <View pointerEvents="none" style={styles.askLabel}>
       <JournalGlyph name="sparkle" size={13} color="#000000" />
       <Text maxFontSizeMultiplier={1.3} style={styles.askText}>
         Ask Finn
@@ -22,7 +23,7 @@ function AskFinnLabel() {
   );
 
   return Platform.OS === "web" ? (
-    <View style={styles.askLabel}>
+    <View pointerEvents="none" style={styles.askLabel}>
       <JournalGlyph
         name="sparkle"
         size={13}
@@ -31,7 +32,7 @@ function AskFinnLabel() {
       <Text style={[styles.askText, styles.askTextWeb]}>Ask Finn</Text>
     </View>
   ) : (
-    <MaskedView maskElement={label} style={styles.askLabelMask}>
+    <MaskedView pointerEvents="none" maskElement={label} style={styles.askLabelMask}>
       <Svg height="100%" width="100%">
         <Defs>
           <LinearGradient
@@ -75,12 +76,13 @@ export function JournalHeader() {
         <Text style={styles.todayText}>{dayLabel(selectedDate, today)}</Text>
       </Button></ZoomLink>
       <View style={[styles.side, styles.actions]}>
-        <ZoomLink href="/search"><Button
+        <Button
           label="Ask Finn"
+          onPress={() => router.push("/search")}
           style={[styles.settings, styles.askButton]}
         >
           <AskFinnLabel />
-        </Button></ZoomLink>
+        </Button>
         <ZoomLink href="/settings"><Button
           label="Open settings"
           style={styles.settings}
