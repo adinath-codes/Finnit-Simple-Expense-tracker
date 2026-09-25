@@ -4,6 +4,7 @@ import type { Preferences } from "../../types/domain.ts";
 
 export const defaultPreferences = (): Preferences => ({
   currency: "INR",
+  analyticsEnabled: true,
   location: false,
   reminders: false,
   reminderFrequency: "Every evening",

@@ -20,10 +20,11 @@ only listed “life outside”; that project was not assumed to belong to Finn a
 was not changed.
 
 Set the project's public URL and publishable key in an ignored local `.env` file.
-The Expo app uses only `EXPO_PUBLIC_SUPABASE_URL`,
-`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and the optional
-`EXPO_PUBLIC_FINN_ANONYMOUS_AUTH`. The publishable key must start with
-`sb_publishable_`; do not use an admin key.
+The Expo app uses the public Supabase settings plus the public,
+platform-specific RevenueCat SDK keys documented in
+`docs/paywall/REVENUECAT.md`. The Supabase publishable key must start with
+`sb_publishable_`; do not use an admin key. No RevenueCat secret API key belongs
+in Expo.
 
 Create an ignored `.env.server` containing only the following server settings,
 using your Gemini API key:
@@ -47,6 +48,8 @@ FINN_AI_MINUTE_LIMIT=10
 FINN_API_DAILY_LIMIT=1000
 FINN_API_MONTHLY_LIMIT=20000
 FINN_API_MINUTE_LIMIT=120
+REVENUECAT_SECRET_API_KEY=sk_your_secret_revenuecat_api_key
+REVENUECAT_ENTITLEMENT_ID=premium
 # A URL for the dedicated finn_ask_reader login. Provision its password outside
 # migrations and use the session-pooler host with TLS.
 FINN_ASK_READ_DB_URL=postgresql://finn_ask_reader.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres?sslmode=require
@@ -109,12 +112,23 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260922102945_ask_finn_auth_schema_usage.sql`: records the managed-auth compatibility attempt retained in deployed migration history.
 - `supabase/migrations/20260922103031_ask_finn_claim_scope_no_auth.sql`: scopes the reader from the verified transaction-local subject without depending on managed `auth` schema grants.
 - `supabase/migrations/20260922130000_revision_aware_caching.sql`: adds the revision change log and paged journal sync RPC, bounded private Ask/catalog caches, cache metrics, and realtime revision invalidation.
+- `supabase/migrations/20260922165037_account_deletion_grace_period.sql`: adds private 30-day account-deletion requests, recovery cancellation, and the bounded hourly `pg_cron` purge.
 
 The caching migration was applied to the linked Finn project on September 22,
 2026. The dependent `parse-entry`, `correct-entry`, `scan-receipt`, `ask-money`,
 `ask-sql`, and `apply-preset` functions were deployed afterward. The public
 schema types in `src/lib/supabase/generated.types.ts` were generated from that
 deployed schema. No native client release is implied by these server steps.
+
+Premium functions require `REVENUECAT_SECRET_API_KEY` and verify the
+authenticated Supabase UUID against `REVENUECAT_ENTITLEMENT_ID`. These server
+values never belong in Expo. The `delete-account` function intentionally remains
+available without Premium so a paywalled user can delete their account.
+
+The account-deletion grace-period migration and updated `delete-account`
+function are implemented locally but are not deployed as of September 22, 2026.
+Enabling their automated permanent purge on the linked project requires an
+explicit production deployment approval.
 
 No separate seed step is needed. If the base backend is already deployed, push
 the currency migration first, then redeploy `parse-entry`, `correct-entry`,
@@ -149,10 +163,14 @@ and intentionally do not belong in this repository.
 
 Existing sessions can capture offline after their first sign-in. Signing out is
 local to the current device and does not upload one account's cached notes to
-another. `delete-account` verifies the caller's access token, deletes only that
-authenticated user with the server-only admin client, and relies on the schema's
-`ON DELETE CASCADE` ownership links. The app then clears that account's local
-journal cache and onboarding answers.
+another. `delete-account` verifies the caller's access token and creates a
+private, idempotent deletion request whose server timestamp expires after 30
+days. The app clears that account's local journal cache and onboarding answers,
+then globally revokes refresh sessions. Signing in before expiry cancels the
+request and confirms recovery in-app. The migration enables `pg_cron`; an hourly
+bounded job permanently removes expired Auth users, allowing the schema's
+`ON DELETE CASCADE` ownership links to remove synced journal data. A failed user
+purge remains queued for a later run without blocking the rest of the batch.
 
 Rebuild the native development app for the SDK 57 `expo-image-picker`,
 `expo-image-manipulator`, `expo-file-system`, and `expo-crypto` modules. Restart

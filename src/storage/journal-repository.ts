@@ -3,6 +3,7 @@ import type { JournalSeed, Preferences } from "@/types/domain";
 export function createDefaultPreferences(): Preferences {
   return {
     currency: "INR",
+    analyticsEnabled: true,
     location: false,
     reminders: false,
     reminderFrequency: "Every evening",

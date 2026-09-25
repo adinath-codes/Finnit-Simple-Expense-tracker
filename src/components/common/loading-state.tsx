@@ -8,7 +8,15 @@ import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { ContentFade } from "@/components/ui/motion";
 
 const ShimmerContext = createContext<SharedValue<number> | null>(null);
-export type LoadingVariant = "startup" | "contexts" | "results" | "onboarding" | "capture";
+export type LoadingVariant =
+  | "startup"
+  | "contexts"
+  | "results"
+  | "journal"
+  | "explanation"
+  | "transactions"
+  | "onboarding"
+  | "capture";
 
 export function SkeletonBlock({ width = "100%", height = 16, radius = 8 }: {
   width?: DimensionValue; height?: number; radius?: number;
@@ -82,6 +90,18 @@ export function LoadingState({ variant = "startup", label = "Loading…", active
             <SkeletonBlock width="62%" height={40} />
             <SkeletonBlock height={82} radius={20} />
             <SkeletonBlock height={82} radius={20} />
+          </> : variant === "journal" ? <>
+            <SkeletonBlock width="78%" height={18} />
+            <SkeletonBlock width="48%" height={18} />
+            <SkeletonBlock width="88%" height={18} />
+            <SkeletonBlock width="58%" height={18} />
+          </> : variant === "explanation" ? <>
+            <SkeletonBlock width="34%" height={20} />
+            <SkeletonBlock width="94%" />
+            <SkeletonBlock width="72%" />
+          </> : variant === "transactions" ? <>
+            <SkeletonBlock height={118} radius={20} />
+            <SkeletonBlock height={118} radius={20} />
           </> : <>
             <SkeletonBlock width="85%" height={20} />
             <SkeletonBlock width="70%" height={20} />

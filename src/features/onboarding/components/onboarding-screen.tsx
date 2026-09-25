@@ -65,6 +65,11 @@ import type {
   OnboardingOption,
   QuestionStep,
 } from "@/features/onboarding/types/onboarding.types";
+import { FINN_ONBOARDING_FLOW_VERSION } from "@/features/onboarding/types/onboarding.types";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 import { useJournal } from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
 import { currencySymbol } from "@/utils/currency";
@@ -101,6 +106,11 @@ export default function OnboardingScreen() {
         setStepIndex(snapshot.stepIndex);
         setAnswers(snapshot.answers);
         setReady(true);
+        captureAnalytics(ANALYTICS_EVENTS.onboardingStarted, {
+          flow_version: FINN_ONBOARDING_FLOW_VERSION,
+          resumed: snapshot.stepIndex > 0,
+          starting_step_index: snapshot.stepIndex,
+        });
       })
       .catch(() => {
         if (!active) return;
@@ -117,6 +127,17 @@ export default function OnboardingScreen() {
     currentStep.kind === "question"
       ? answers[currentStep.questionId]
       : undefined;
+
+  useEffect(() => {
+    if (!ready) return;
+    captureAnalytics(ANALYTICS_EVENTS.onboardingStepViewed, {
+      flow_version: FINN_ONBOARDING_FLOW_VERSION,
+      step_id: currentStep.id,
+      step_kind: currentStep.kind,
+      step_index: stepIndex,
+      total_steps: onboardingSteps.length,
+    });
+  }, [currentStep.id, currentStep.kind, ready, stepIndex]);
 
   const goBack = useCallback(() => {
     if (currencySearchOpen && currentStep.kind === "question" && currentStep.questionId === "currency") {
@@ -161,6 +182,11 @@ export default function OnboardingScreen() {
           await updateSettings({ currency: answers.currency });
         }
         await completeOnboarding(answers);
+        captureAnalytics(ANALYTICS_EVENTS.onboardingCompleted, {
+          flow_version: FINN_ONBOARDING_FLOW_VERSION,
+          answered_questions: Object.keys(answers).length,
+          total_questions: onboardingSteps.filter((step) => step.kind === "question").length,
+        });
         setOnboardingComplete(true);
         router.replace((session ? "/" : "/sign-in") as Href);
         return;
@@ -168,6 +194,12 @@ export default function OnboardingScreen() {
 
       const nextIndex = stepIndex + 1;
       await saveOnboardingProgress(nextIndex, answers);
+      captureAnalytics(ANALYTICS_EVENTS.onboardingStepCompleted, {
+        flow_version: FINN_ONBOARDING_FLOW_VERSION,
+        step_id: currentStep.id,
+        step_kind: currentStep.kind,
+        step_index: stepIndex,
+      });
       setDirection(1);
       setStepIndex(nextIndex);
     } catch {
@@ -183,6 +215,10 @@ export default function OnboardingScreen() {
     setError(null);
     try {
       await skipOnboardingForExistingAccount();
+      captureAnalytics(ANALYTICS_EVENTS.onboardingSkipped, {
+        flow_version: FINN_ONBOARDING_FLOW_VERSION,
+        step_index: stepIndex,
+      });
       setOnboardingComplete(true);
       router.replace((session ? "/" : "/sign-in") as Href);
     } catch {
@@ -196,6 +232,13 @@ export default function OnboardingScreen() {
     setError(null);
     const nextAnswers = { ...answers, [questionId]: id };
     setAnswers(nextAnswers);
+    captureAnalytics(ANALYTICS_EVENTS.onboardingOptionSelected, {
+      flow_version: FINN_ONBOARDING_FLOW_VERSION,
+      question_id: questionId,
+      option_id: id,
+      step_index: stepIndex,
+      changed: answers[questionId] !== undefined && answers[questionId] !== id,
+    });
     void saveOnboardingProgress(stepIndex, nextAnswers).catch(() => {
       setError("Finn could not save that choice yet. Please try once more.");
     });

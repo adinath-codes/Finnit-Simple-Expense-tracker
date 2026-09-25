@@ -16,3 +16,12 @@ export type CalendarMonth = {
   categoryTotals: Record<Category, number>;
   days: CalendarDay[];
 };
+
+export type CalendarCategoryItem = {
+  id: string;
+  entryId: string;
+  date: string;
+  message: string;
+  amountMinor: number;
+  amountNeedsReview: boolean;
+};

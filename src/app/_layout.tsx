@@ -1,10 +1,16 @@
-import { Stack, DefaultTheme, ThemeProvider } from "expo-router";
+import {
+     Stack,
+     DefaultTheme,
+     ThemeProvider,
+     useNavigationContainerRef,
+} from "expo-router";
+import * as Sentry from "@sentry/react-native";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useMotionPreference } from "@/hooks/use-motion-preference";
-import { LoadingState } from "@/components/common/loading-state";
 import { ContentFade } from "@/components/ui/motion";
+import { AnimatedSplashOverlay } from "@/components/animated-icon";
 import { AppProviders } from "@/providers/app-providers";
 import { Finn } from "@/constants/theme";
 import { useEffect } from "react";
@@ -13,14 +19,58 @@ import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { QuotaReachedModalHost } from "@/features/support/components/quota-reached-modal";
+import { ToastProvider } from "@/components/ui/toast-provider";
+import { GuidanceToastHost } from "@/features/guidance/components/guidance-toast-host";
+import { ErrorRecoveryScreen } from "@/features/support/components/error-recovery-screen";
+import { SentryUserContext } from "@/lib/observability/sentry-user-context";
+import { sentryNavigationIntegration } from "@/lib/observability/sentry";
+import {
+     AnalyticsProvider,
+     AnalyticsRuntime,
+} from "@/lib/analytics/analytics-provider";
 import {
      SessionProvider,
      useSession,
 } from "@/features/auth/providers/session-provider";
+import {
+     SubscriptionProvider,
+     useSubscription,
+} from "@/features/paywall/providers/subscription-provider";
 
 void SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+function RootLayout() {
+     return (
+          <GestureHandlerRootView style={{ flex: 1 }}>
+               <KeyboardProvider>
+                    <SafeAreaProvider>
+                         <ToastProvider>
+                              <Sentry.ErrorBoundary
+                                   fallback={({ eventId, resetError }) => (
+                                        <ErrorRecoveryScreen
+                                             eventId={eventId}
+                                             onRetry={resetError}
+                                        />
+                                   )}
+                                   beforeCapture={(scope) => {
+                                        scope.setTag(
+                                             "surface",
+                                             "global_error_boundary",
+                                        );
+                                   }}
+                              >
+                                   <AnalyticsProvider>
+                                        <RootApplication />
+                                   </AnalyticsProvider>
+                              </Sentry.ErrorBoundary>
+                         </ToastProvider>
+                    </SafeAreaProvider>
+               </KeyboardProvider>
+          </GestureHandlerRootView>
+     );
+}
+
+function RootApplication() {
      const reduced = useMotionPreference();
      const [fontsLoaded, fontError] = useFonts(
           Platform.OS === "ios"
@@ -32,45 +82,58 @@ export default function RootLayout() {
                       "SFProDisplay-Black": require("../../assets/sf-pro-display/SF-Pro-Display-Black.otf"),
                  },
      );
-     useEffect(() => {
-          if (fontsLoaded || fontError) void SplashScreen.hideAsync();
-     }, [fontsLoaded, fontError]);
      if (fontError) throw fontError;
      if (!fontsLoaded) return null;
      return (
-          <GestureHandlerRootView style={{ flex: 1 }}>
-               <KeyboardProvider>
-               <SafeAreaProvider>
-                    <SessionProvider>
-                         <AppProviders>
-                              <ThemeProvider
-                                   value={{
-                                        ...DefaultTheme,
-                                        colors: {
-                                             ...DefaultTheme.colors,
-                                             background: Finn.canvas,
-                                        },
-                                   }}
-                              >
-                                   <StatusBar style="dark" />
-                                   <RootNavigator reduced={reduced} />
-                                   <QuotaReachedModalHost />
-                              </ThemeProvider>
-                         </AppProviders>
-                    </SessionProvider>
-               </SafeAreaProvider>
-               </KeyboardProvider>
-          </GestureHandlerRootView>
+          <SessionProvider>
+               <SentryUserContext />
+               <SubscriptionProvider>
+                    <AppProviders>
+                         <AnalyticsRuntime />
+                         <ThemeProvider
+                              value={{
+                                   ...DefaultTheme,
+                                   colors: {
+                                        ...DefaultTheme.colors,
+                                        background: Finn.canvas,
+                                   },
+                              }}
+                         >
+                              <StatusBar style="dark" />
+                              <RootNavigator reduced={reduced} />
+                              <QuotaReachedModalHost />
+                              <GuidanceToastHost />
+                         </ThemeProvider>
+                    </AppProviders>
+               </SubscriptionProvider>
+          </SessionProvider>
      );
 }
 
 function RootNavigator({ reduced }: { reduced: boolean }) {
      const { session, loading, onboardingComplete } = useSession();
-     if (loading) return <LoadingState label="Opening Finn…" />;
+     const subscription = useSubscription();
+     const navigationRef = useNavigationContainerRef();
+     const booting =
+          loading ||
+          (!!session &&
+               (subscription.state === "signed-out" ||
+                    subscription.state === "loading"));
+
+     useEffect(() => {
+          sentryNavigationIntegration.registerNavigationContainer(navigationRef);
+     }, [navigationRef]);
+
+     if (booting) return null;
+
+     const authenticated = onboardingComplete && !!session;
+     const premiumAccess = authenticated && subscription.isActive;
 
      return (
+          <>
           <ContentFade style={{ flex: 1 }}>
                <Stack
+                    ref={navigationRef}
                     screenOptions={{
                          headerShown: false,
                          contentStyle: { backgroundColor: Finn.canvas },
@@ -117,7 +180,27 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                               }}
                          />
                     </Stack.Protected>
-                    <Stack.Protected guard={onboardingComplete && !!session}>
+                    <Stack.Protected guard={authenticated && !subscription.isActive}>
+                         <Stack.Screen
+                              name="paywall"
+                              options={{
+                                   gestureEnabled: false,
+                                   animation: reduced ? "fade" : "default",
+                              }}
+                         />
+                    </Stack.Protected>
+                    <Stack.Protected guard={authenticated}>
+                         <Stack.Screen
+                              name="settings/index"
+                              options={{
+                                   presentation: "formSheet",
+                                   sheetAllowedDetents: [0.92, 1],
+                                   sheetGrabberVisible: true,
+                                   sheetCornerRadius: 30,
+                              }}
+                         />
+                    </Stack.Protected>
+                    <Stack.Protected guard={premiumAccess}>
                          <Stack.Screen name="index" />
                          <Stack.Screen name="search" />
                          <Stack.Screen
@@ -130,15 +213,6 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                          />
                          <Stack.Screen
                               name="entries/[entryId]"
-                              options={{
-                                   presentation: "formSheet",
-                                   sheetAllowedDetents: [0.92, 1],
-                                   sheetGrabberVisible: true,
-                                   sheetCornerRadius: 30,
-                              }}
-                         />
-                         <Stack.Screen
-                              name="settings/index"
                               options={{
                                    presentation: "formSheet",
                                    sheetAllowedDetents: [0.92, 1],
@@ -167,5 +241,9 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                     </Stack.Protected>
                </Stack>
           </ContentFade>
+          <AnimatedSplashOverlay reducedMotion={reduced} />
+          </>
      );
 }
+
+export default Sentry.wrap(RootLayout);

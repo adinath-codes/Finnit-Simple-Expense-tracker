@@ -16,6 +16,10 @@ import {
   openQuotaSupportEmail,
   requestQuotaReview,
 } from "../services/quota-support";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 export function QuotaReachedModalHost() {
   const [visible, setVisible] = useState(false);
@@ -45,6 +49,7 @@ export function QuotaReachedModalHost() {
     try {
       await requestQuotaReview();
       recorded = true;
+      captureAnalytics(ANALYTICS_EVENTS.quotaReviewRequested);
     } catch {
       // The mail composer remains a useful fallback if the alert cannot sync.
     }

@@ -5,3 +5,12 @@ export function dayLabel(date: string, today: string) {
     day: "numeric",
   });
 }
+
+export function displayDay(date: string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${date}T12:00:00Z`));
+}

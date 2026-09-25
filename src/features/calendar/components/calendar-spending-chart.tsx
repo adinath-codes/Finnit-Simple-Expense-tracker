@@ -3,6 +3,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { Button } from "@/components/ui/button";
 import {
   Categories,
   Finn,
@@ -38,11 +39,15 @@ export function CalendarSpendingChart({
   categoryTotals,
   currency,
   monthLabel,
+  onSelectCategory,
+  selectedCategory,
   totalMinor,
 }: {
   categoryTotals: Record<Category, number>;
   currency: string;
   monthLabel: string;
+  onSelectCategory: (category: Category) => void;
+  selectedCategory: Category | null;
   totalMinor: number;
 }) {
   const largestTotal = Math.max(
@@ -77,64 +82,95 @@ export function CalendarSpendingChart({
           const palette = GoalRingPalette.find(
             (item) => item.category === category,
           )!;
+          const selected = selectedCategory === category;
           const barHeight =
             amount > 0 && largestTotal > 0
               ? Math.max(32, (amount / largestTotal) * 150)
               : 0;
 
           return (
-            <View
-              accessible
-              accessibilityLabel={`${Categories[category].label}, ${money(amount, currency)}`}
-              key={category}
-              style={styles.column}
-            >
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.72}
-                numberOfLines={1}
-                style={styles.amount}
+            <View key={category} style={styles.columnFrame}>
+              <Button
+                accessibilityState={{ expanded: selected, selected }}
+                label={`${Categories[category].label}, ${money(amount, currency)}. ${selected ? "Hide" : "Show"} category items`}
+                onPress={() => onSelectCategory(category)}
+                style={styles.column}
               >
-                {compactMoney(amount, currency)}
-              </Text>
-              <View style={styles.barSlot}>
-                {amount > 0 ? (
-                  <View
-                    style={[
-                      styles.bar,
-                      {
-                        backgroundColor: palette.start,
-                        height: barHeight,
-                      },
-                    ]}
-                  >
+                <Text
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.72}
+                  numberOfLines={1}
+                  style={[
+                    styles.amount,
+                    selected && { color: palette.activeIcon },
+                  ]}
+                >
+                  {compactMoney(amount, currency)}
+                </Text>
+                <View style={styles.barSlot}>
+                  {amount > 0 ? (
                     <View
                       style={[
-                        styles.emojiBackdrop,
-                        { backgroundColor: palette.end },
+                        styles.bar,
+                        {
+                          backgroundColor: selected
+                            ? palette.activeStart
+                            : palette.start,
+                          borderColor: selected
+                            ? palette.activeIcon
+                            : "transparent",
+                          height: barHeight,
+                        },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.emojiBackdrop,
+                          {
+                            backgroundColor: selected
+                              ? palette.activeEnd
+                              : palette.end,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.emoji}>
+                          {CATEGORY_EMOJIS[category]}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <View
+                      style={[
+                        styles.zeroMarker,
+                        {
+                          backgroundColor: selected
+                            ? palette.activeEnd
+                            : palette.end,
+                          borderColor: selected
+                            ? palette.activeIcon
+                            : "transparent",
+                        },
                       ]}
                     >
                       <Text style={styles.emoji}>
                         {CATEGORY_EMOJIS[category]}
                       </Text>
                     </View>
-                  </View>
-                ) : (
-                  <View
-                    style={[
-                      styles.zeroMarker,
-                      { backgroundColor: palette.end },
-                    ]}
-                  >
-                    <Text style={styles.emoji}>
-                      {CATEGORY_EMOJIS[category]}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <Text numberOfLines={1} style={styles.label}>
-                {CATEGORY_LABELS[category]}
-              </Text>
+                  )}
+                </View>
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.label,
+                    selected && {
+                      color: palette.activeIcon,
+                      fontFamily: JournalType.bold,
+                    },
+                  ]}
+                >
+                  {CATEGORY_LABELS[category]}
+                </Text>
+              </Button>
             </View>
           );
         })}
@@ -201,9 +237,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 9,
   },
-  column: {
+  columnFrame: {
     flex: 1,
     minWidth: 0,
+  },
+  column: {
+    width: "100%",
     alignItems: "center",
   },
   amount: {
@@ -228,6 +267,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
     borderRadius: 17,
+    borderWidth: 2,
   },
   emojiBackdrop: {
     width: 26,
@@ -243,6 +283,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 11,
+    borderWidth: 2,
   },
   emoji: {
     fontSize: 15,

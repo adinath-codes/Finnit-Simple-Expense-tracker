@@ -1,112 +1,127 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { Image } from "expo-image";
 import { router, useIsFocused } from "expo-router";
-import { LoadingState } from "@/components/common/loading-state";
-import { ContentFade, Reveal, DisclosureChevron, MotionLayout } from "@/components/ui/motion";
+import Svg, { Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LoadingState } from "@/components/common/loading-state";
 import { Screen } from "@/components/common/screen";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
+import { ContentFade, MotionLayout } from "@/components/ui/motion";
 import { Finn, JournalType } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
 import type { SearchPlan } from "@/lib/supabase/database.types";
+import { useJournal } from "@/providers/app-providers";
 import { useSearch } from "../hooks/use-search";
 import {
-  exactMoney,
+  compactPeriodLabel,
   monthRange,
-  offsetDay,
-  periodLabel,
 } from "../services/search-format";
-import { SourceTransactionCard } from "./source-entry-list";
-import type { ActiveContext } from "../types/ask.types";
-import { date as validateDate } from "../../../../supabase/functions/_shared/validation";
+import type { ActiveContext, SearchItem } from "../types/ask.types";
+import { AskDateRangePopover } from "./ask-date-range-popover";
+import { AskMoneyAmount, SourceTransactionRow } from "./source-entry-list";
 
 const suggestions = [
-  "How much did I spend on Uber this month?",
-  "How much did I spend on food last week?",
-  "Show my transport spending this month",
+  "Spending this month",
+  "Food spending",
+  "Most expensive purchase",
+  "Who owes me?",
 ];
+
+const finnPaperwork = require("../../../../assets/images/character/header/finn-paperwork.png");
+const finnLaptop = require("../../../../assets/images/character/header/finn-laptop.png");
+
+function MoneyBagIcon({ size = 43 }: { size?: number }) {
+  return (
+    <Svg
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      height={size}
+      viewBox="0 0 48 48"
+      width={size}
+    >
+      <Path
+        d="M17 6h14l-3.2 7.1c5.6 3.1 10.2 9.6 10.2 17.2C38 38.4 32.2 43 24 43S10 38.4 10 30.3c0-7.6 4.6-14.1 10.2-17.2L17 6Zm3.9 8.6h6.2M24 19v17m5-13.1c-1.2-1.1-2.9-1.7-5-1.7-2.8 0-4.8 1.4-4.8 3.5 0 5 9.6 2.1 9.6 7 0 2.1-2 3.6-4.8 3.6-2.2 0-4.1-.7-5.4-2"
+        fill="none"
+        stroke={Finn.ink}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2.6}
+      />
+    </Svg>
+  );
+}
+
+function AskHero() {
+  return (
+    <View style={styles.hero}>
+      <Text accessibilityRole="header" style={styles.accessibleHeading}>
+        Ask Finn about your money.
+      </Text>
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.heroLine}>
+        <Text style={styles.heroTitle}>Ask</Text>
+        <Image contentFit="contain" source={finnPaperwork} style={styles.finnArtwork} />
+      </View>
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.heroLine}>
+        <Text style={styles.heroTitle}>about your</Text>
+        <MoneyBagIcon />
+      </View>
+    </View>
+  );
+}
 
 function answerLabelFor(plan?: SearchPlan) {
   switch (plan?.metric) {
-    case "group_total":
-      return "The group total was";
-    case "gross_spend":
-      return "The full transaction cost was";
-    case "paid_by_user":
-      return "You paid";
-    case "owed_to_user":
-      return "Owed to you";
-    case "user_owes":
-      return "You owe";
-    case "reimbursed":
-      return "Reimbursed";
+    case "group_total": return "The group total was";
+    case "gross_spend": return "The full transaction cost was";
+    case "paid_by_user": return "You paid";
+    case "owed_to_user": return "Owed to you";
+    case "user_owes": return "You owe";
+    case "reimbursed": return "Reimbursed";
   }
   if (plan?.direction === "expense") return "You spent";
   if (plan?.direction === "income") return "You received";
   return "Recorded money";
 }
 
-function metricLabelFor(plan?: SearchPlan) {
-  switch (plan?.metric) {
-    case "group_total":
-      return "Group total";
-    case "paid_by_user":
-      return "Paid by you";
-    case "owed_to_user":
-      return "Owed to you";
-    case "user_owes":
-      return "You owe";
-    case "reimbursed":
-      return "Reimbursed";
-    case "gross_spend":
-      return "Full transaction cost";
-    case "user_share":
-      return "Your recorded share";
-    default:
-      return "Recorded amount";
-  }
+function finnThinkingLabel(message: string) {
+  const copy = message.trim();
+  return `Finn thinks that ${copy}${/[.!?]$/.test(copy) ? "" : "."}`;
 }
 
 export default function SearchScreen() {
-  const { selectedDate } = useJournal();
+  const { selectedDate, today } = useJournal();
   const screenActive = useIsFocused();
+  const listRef = useRef<FlatList<SearchItem>>(null);
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [range, setRange] = useState(() => monthRange(selectedDate));
-  const [custom, setCustom] = useState(false);
-  const [start, setStart] = useState(range.start_date),
-    [end, setEnd] = useState(offsetDay(range.end_date, -1));
-  const [dateError, setDateError] = useState<string | null>(null);
+  const [rangeOpen, setRangeOpen] = useState(false);
   const search = useSearch();
   const result = search.result;
   const plan = result?.applied_filters;
   const advanced = result?.advanced_answer;
   const totals = result?.totals ?? [];
-  const reviewCount = totals.reduce(
-    (sum, total) => sum + Number(total.review_count),
-    0,
-  );
-  const confirmedCount = totals.reduce(
-    (sum, total) => sum + Number(total.confirmed_count),
-    0,
-  );
+  const reviewCount = totals.reduce((sum, total) => sum + Number(total.review_count), 0);
+  const confirmedCount = totals.reduce((sum, total) => sum + Number(total.confirmed_count), 0);
+
   const submit = (value = query) => {
     if (!value.trim()) return;
     Keyboard.dismiss();
     setQuery(value);
     setSubmitted(value);
+    requestAnimationFrame(() => listRef.current?.scrollToOffset({ animated: false, offset: 0 }));
     void search.run({ query: value.trim(), range });
   };
   const applyFilters = (filters: SearchPlan) => {
@@ -115,8 +130,6 @@ export default function SearchScreen() {
   };
   const changeRange = (next: typeof range) => {
     setRange(next);
-    setStart(next.start_date);
-    setEnd(offsetDay(next.end_date, -1));
     if (plan) applyFilters({ ...plan, ...next });
     else if (advanced && submitted) void search.run({ query: submitted, range: next });
     else {
@@ -151,31 +164,34 @@ export default function SearchScreen() {
   const activeRange = advanced
     ? { start_date: advanced.start_date, end_date: advanced.end_date }
     : plan
-    ? { start_date: plan.start_date, end_date: plan.end_date }
-    : range;
-  const filterChips = plan
-    ? (
-        [
-          ["direction", plan.direction],
-          ["merchant_id", result?.filter_labels?.merchant],
-          ["category_id", result?.filter_labels?.category],
-          ["person", plan.person],
-          ["context", plan.context],
-          ["currency", plan.currency],
-          ["text", plan.text],
-        ] as const
-      ).filter(([, value]) => !!value)
-    : [];
-  const metricLabel = metricLabelFor(plan);
+      ? { start_date: plan.start_date, end_date: plan.end_date }
+      : range;
   const answerRows = advanced?.rows.map((row, index) => {
-    const value = row.value_minor != null && row.currency
-      ? exactMoney(row.value_minor, row.currency)
-      : row.value_date ? new Date(`${row.value_date}T12:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
-      : row.value_count != null ? String(row.value_count)
-      : row.label ?? "—";
-    return { key: `${index}-${row.currency ?? row.label ?? ""}`, value, caption: [row.label, row.value_date && row.value_minor != null ? row.value_date : null, row.currency && advanced.rows.length > 1 ? row.currency : null].filter(Boolean).join(" · ") };
+    const money = row.value_minor != null && row.currency
+      ? { minor: row.value_minor, currency: row.currency }
+      : null;
+    const value = money
+      ? null
+      : row.value_date
+        ? new Date(`${row.value_date}T12:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+        : row.value_count != null
+          ? String(row.value_count)
+          : row.label ?? "—";
+    return {
+      key: `${index}-${row.currency ?? row.label ?? ""}`,
+      money,
+      value,
+      caption: [
+        row.label,
+        row.value_date && row.value_minor != null ? row.value_date : null,
+        row.currency && advanced.rows.length > 1 ? row.currency : null,
+      ].filter(Boolean).join(" · "),
+    };
   }) ?? totals.filter((total) => total.confirmed_count > 0).map((total) => ({
-    key: total.currency, value: exactMoney(total.total_minor, total.currency), caption: totals.length > 1 ? total.currency : "",
+    key: total.currency,
+    money: { minor: total.total_minor, currency: total.currency },
+    value: null,
+    caption: totals.length > 1 ? total.currency : "",
   }));
   const fallbackExplanation = advanced
     ? result?.matching_count === 0
@@ -185,258 +201,85 @@ export default function SearchScreen() {
       ? "No matching transactions were found. Try another period or adjust the filters."
       : `The answer uses ${confirmedCount} confirmed transaction${confirmedCount === 1 ? "" : "s"}${reviewCount ? `; ${reviewCount} unconfirmed amount${reviewCount === 1 ? " is" : "s are"} excluded from the total` : ""}.`;
   const showLanding = !submitted && !result && !search.loading && !search.error;
+  const showRecommendations = showLanding && !query.trim();
+  const explanation = result?.explanation ?? fallbackExplanation;
+
   return (
     <Screen journal>
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
         <View style={styles.header}>
           <IconButton
-            name="back"
             label="Back to journal"
+            name="back"
             onPress={() => router.back()}
+            style={styles.backButton}
           />
-          <Text accessibilityRole="header" style={styles.headerTitle}>
-            Ask Finn
-          </Text>
-          <View style={styles.headerSpacer} />
+          <Button
+            accessibilityState={{ expanded: rangeOpen }}
+            label="Change search period"
+            onPress={() => {
+              Keyboard.dismiss();
+              setRangeOpen(true);
+            }}
+            style={styles.rangeTrigger}
+          >
+            <Text style={styles.rangeTriggerText}>
+              {compactPeriodLabel(activeRange.start_date, activeRange.end_date, today)}
+            </Text>
+            <Icon name="down" size={12} color={Finn.secondary} />
+          </Button>
         </View>
-        <KeyboardAvoidingView
-          style={styles.safe}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
+
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.safe}>
           <FlatList
-            data={result?.transactions ?? []}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <SourceTransactionCard item={item} />}
-            contentContainerStyle={styles.content}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            ref={listRef}
+            contentContainerStyle={[styles.content, showLanding && styles.landingContent]}
+            data={search.loading ? [] : result?.transactions ?? []}
             initialNumToRender={6}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            keyExtractor={(item) => item.id}
             maxToRenderPerBatch={6}
+            renderItem={({ item }) => <SourceTransactionRow item={item} />}
             windowSize={7}
             ListHeaderComponent={
               <MotionLayout>
-                <View style={styles.searchBox}>
-                  <Icon
-                    name="search"
-                    size={19}
-                    color={Finn.muted}
-                    animation={false}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    value={query}
-                    onChangeText={setQuery}
-                    placeholder="Ask about your journal…"
-                    placeholderTextColor={Finn.muted}
-                    accessibilityLabel="Ask Finn about your journal"
-                    returnKeyType="search"
-                    onSubmitEditing={() => submit()}
-                    maxLength={500}
-                    autoCorrect={false}
-                  />
-                  {!!query && (
-                    <Button
-                      label="Clear search"
-                      onPress={clear}
-                      style={styles.clear}
-                    >
-                      <Icon name="close" size={14} color={Finn.muted} />
-                    </Button>
-                  )}
-                  <Button
-                    label="Ask Finn"
-                    disabled={!query.trim() || search.loading}
-                    onPress={() => submit()}
-                    style={styles.submit}
-                  >
-                    <Icon name="arrow" size={17} color="#FFFFFF" />
-                  </Button>
-                </View>
-                <View style={styles.period}>
-                  <Button
-                    label="Previous month"
-                    onPress={() =>
-                      changeRange(monthRange(activeRange.start_date, -1))
-                    }
-                    style={styles.monthArrow}
-                  >
-                    <Icon name="back" size={13} />
-                  </Button>
-                  <Button
-                    label="Change search date range"
-                    accessibilityState={{ expanded: custom }}
-                    onPress={() => {
-                      setStart(activeRange.start_date);
-                      setEnd(offsetDay(activeRange.end_date, -1));
-                      setCustom((v) => !v);
-                      setDateError(null);
-                    }}
-                    style={styles.periodButton}
-                  >
-                    <Icon name="calendar" size={13} color={Finn.secondary} />
-                    <Text style={styles.periodText}>
-                      {periodLabel(
-                        activeRange.start_date,
-                        activeRange.end_date,
-                      )}
-                    </Text>
-                    <DisclosureChevron expanded={custom} size={10} color={Finn.secondary} />
-                  </Button>
-                  <Button
-                    label="Next month"
-                    onPress={() =>
-                      changeRange(monthRange(activeRange.start_date, 1))
-                    }
-                    style={styles.monthArrow}
-                  >
-                    <Icon name="chevron" size={13} />
-                  </Button>
-                </View>
-                <Reveal open={custom} style={styles.datePanel}>
-                    <Text style={styles.small}>
-                      Choose your first and last day · YYYY-MM-DD.
-                    </Text>
-                    <View style={styles.dateRow}>
-                      <TextInput
-                        accessibilityLabel="Start date"
-                        value={start}
-                        onChangeText={setStart}
-                        placeholder="2026-09-01"
-                        maxLength={10}
-                        style={styles.dateInput}
-                      />
-                      <TextInput
-                        accessibilityLabel="Last day to include"
-                        value={end}
-                        onChangeText={setEnd}
-                        placeholder="2026-09-30"
-                        maxLength={10}
-                        style={styles.dateInput}
-                      />
-                    </View>
-                    {dateError && (
-                      <Text accessibilityRole="alert" style={styles.errorText}>
-                        {dateError}
-                      </Text>
-                    )}
-                    <Button
-                      label="Apply date range"
-                      onPress={() => {
-                        try {
-                          validateDate(start);
-                          validateDate(end);
-                          if (
-                            end < start ||
-                            Date.parse(end) - Date.parse(start) >=
-                              3660 * 86400000
-                          )
-                            throw Error();
-                          changeRange({
-                            start_date: start,
-                            end_date: offsetDay(end, 1),
-                          });
-                          setCustom(false);
-                          setDateError(null);
-                        } catch {
-                          setDateError(
-                            "Enter valid dates with the end on or after the start (up to 10 years).",
-                          );
-                        }
-                      }}
-                    >
-                      <Text style={styles.action}>Apply dates</Text>
-                    </Button>
-                </Reveal>
-                {search.loading && !result && (
-                  <LoadingState variant="results" label="Matching entries and calculating totals…" active={screenActive} />
-                )}
-                {search.loading && !!result && <Text accessibilityLiveRegion="polite" style={styles.small}>Recalculating from your journal…</Text>}
-                {search.error && (
+                {showLanding ? (
+                  <AskHero />
+                ) : submitted ? (
+                  <View style={styles.resultHero}>
+                    <Text accessibilityRole="header" style={styles.resultQuestion}>{submitted}</Text>
+                  </View>
+                ) : null}
+                {search.loading ? (
+                  <LoadingState active={screenActive} label="Matching entries and calculating totals…" variant="results" />
+                ) : null}
+                {search.error ? (
                   <View style={styles.card}>
-                    <Text accessibilityRole="alert" style={styles.body}>
-                      {search.error}
-                    </Text>
-                    <Button label="Retry search" onPress={search.retry}>
+                    <Text accessibilityRole="alert" style={styles.body}>{search.error}</Text>
+                    <Button label="Retry search" onPress={search.retry} style={styles.inlineAction}>
                       <Text style={styles.action}>Try again</Text>
                     </Button>
                   </View>
-                )}
-                {showLanding && (
-                  <View style={styles.landing}>
-                    <Text style={styles.landingLabel}>TRY ASKING</Text>
-                    {suggestions.map((suggestion) => (
-                      <Button
-                        key={suggestion}
-                        label={suggestion}
-                        onPress={() => submit(suggestion)}
-                        style={styles.suggestion}
-                      >
-                        <Text style={styles.suggestionText}>{suggestion}</Text>
-                        <Icon name="arrow" size={14} color={Finn.muted} />
-                      </Button>
-                    ))}
-                    <Text style={styles.explainer}>
-                      Finn checks your journal and shows the records behind each answer.
-                    </Text>
-                    {search.loadingContexts && !search.contexts ? (
-                      <View style={styles.recent}>
-                        <Text style={styles.landingLabel}>RECENT TOPICS</Text>
-                        <LoadingState variant="contexts" label="Finding recent topics…" active={screenActive} />
-                      </View>
-                    ) : search.contextError ? (
-                      <View style={styles.recent}>
-                        <Text style={styles.small}>{search.contextError}</Text>
-                        <Button label="Retry recent topics" onPress={search.reloadContexts}>
-                          <Text style={styles.action}>Try again</Text>
-                        </Button>
-                      </View>
-                    ) : search.contexts?.contexts.length ? (
-                      <View style={styles.recent}>
-                        <Text style={styles.landingLabel}>RECENT TOPICS</Text>
-                        {search.contexts.contexts.slice(0, 3).map((context) => (
-                          <Button
-                            key={context.id}
-                            label={`Ask about ${context.name}`}
-                            onPress={() => openContext(context)}
-                            style={styles.suggestion}
-                          >
-                            <Text style={styles.suggestionText}>{context.name}</Text>
-                            <Icon name="arrow" size={14} color={Finn.muted} />
-                          </Button>
-                        ))}
-                      </View>
-                    ) : null}
-                    <Text style={styles.footnote}>
-                      Answers use synced notes from your journal.
-                    </Text>
-                  </View>
-                )}
-                {result?.needs_filters && (
+                ) : null}
+                {result?.needs_filters ? (
                   <View style={styles.card}>
-                    <Text style={styles.sectionTitle}>
-                      Let’s narrow it down.
-                    </Text>
+                    <Text style={styles.sectionTitle}>Let’s narrow it down.</Text>
                     <Text style={styles.body}>Try a more specific question or period, such as “Uber this month”.</Text>
-                    <Text style={styles.small}>
-                      No total is shown until the question is clear.
-                    </Text>
+                    <Text style={styles.small}>No total is shown until the question is clear.</Text>
                   </View>
-                )}
-                {(plan || advanced) && (
+                ) : null}
+                {!search.loading && (plan || advanced) ? (
                   <ContentFade>
-                    <View
-                      style={styles.answer}
-                      accessibilityLiveRegion="polite"
-                    >
+                    <View accessibilityLiveRegion="polite" style={styles.answer}>
                       {result?.stale ? (
                         <>
                           <Text style={styles.answerTitle}>Your journal has changed.</Text>
-                          <Text style={styles.body}>
-                            Refresh to see an answer and entries that agree.
-                          </Text>
+                          <Text style={styles.body}>Refresh to see an answer and entries that agree.</Text>
                           <Button
                             label="Refresh search results"
                             onPress={() => plan ? applyFilters(plan) : void search.run({ query: submitted, range })}
+                            style={styles.inlineAction}
                           >
                             <Text style={styles.action}>Refresh answer</Text>
                           </Button>
@@ -445,310 +288,256 @@ export default function SearchScreen() {
                         <>
                           {answerRows.length ? answerRows.map((row) => (
                             <View key={row.key} style={styles.answerRow}>
-                              <Text style={styles.answerAmount}>{row.value}</Text>
-                              {!!row.caption && <Text style={styles.answerScope}>{row.caption}</Text>}
+                              {row.money ? (
+                                <AskMoneyAmount
+                                  currency={row.money.currency}
+                                  minor={row.money.minor}
+                                  style={styles.answerAmount}
+                                />
+                              ) : (
+                                <Text style={styles.answerAmount}>{row.value}</Text>
+                              )}
+                              {row.caption ? <Text style={styles.answerCaption}>{row.caption}</Text> : null}
                             </View>
-                          )) : <Text style={styles.answerAmount}>{result?.matching_count === 0 ? "No matches" : "Needs review"}</Text>}
+                          )) : (
+                            <Text style={styles.answerAmount}>{result?.matching_count === 0 ? "No matches" : "Needs review"}</Text>
+                          )}
                           <Text style={styles.answerTitle}>{advanced?.label ?? answerLabelFor(plan)}</Text>
-                          <Text style={styles.answerScope}>
-                            {advanced ? periodLabel(advanced.start_date, advanced.end_date) : `${metricLabel} · ${periodLabel(plan!.start_date, plan!.end_date)}`}
-                          </Text>
                         </>
                       )}
                     </View>
-                    {!result?.stale && <View style={styles.explanation}>
-                      <Text style={styles.sectionTitle}>Finn’s answer</Text>
-                      <Text style={styles.body}>{result?.explanation ?? fallbackExplanation}</Text>
-                      {search.loadingExplanation && <Text style={styles.small}>Finn is adding context…</Text>}
-                    </View>}
-                    {!!plan && <View style={styles.chips}>
-                      {filterChips.map(([key, label]) => (
-                        <Button key={key} label={`Remove ${label} filter`} onPress={() => applyFilters({ ...plan, [key]: null })} style={styles.chip}>
-                          <Text style={styles.chipText}>{label}</Text>
-                          <Icon name="close" size={10} color="#527661" />
-                        </Button>
-                      ))}
-                    </View>}
-                    {!!result?.matching_count && (
+                    {!result?.stale ? (
+                      search.loadingExplanation && !result?.explanation ? (
+                        <LoadingState active={screenActive} label="Finn is adding context…" variant="explanation" />
+                      ) : (
+                        <View style={styles.explanation}>
+                          <Text style={styles.accessibleCopy}>{finnThinkingLabel(explanation)}</Text>
+                          <View
+                            accessibilityElementsHidden
+                            importantForAccessibility="no-hide-descendants"
+                            style={styles.thinkingRow}
+                          >
+                            <Image contentFit="contain" source={finnLaptop} style={styles.thinkingFinn} />
+                            <Text style={styles.thinkingText}>thinks that “{explanation}”</Text>
+                          </View>
+                        </View>
+                      )
+                    ) : null}
+                    {result?.matching_count ? (
                       <View style={styles.sectionHeading}>
                         <Text style={styles.sectionTitle}>Transactions behind this answer</Text>
-                        <Text style={styles.small}>
-                          {result?.transactions?.length ?? 0} of{" "}
-                          {result?.matching_count} transactions
-                        </Text>
+                        <Text style={styles.small}>{result.transactions?.length ?? 0} of {result.matching_count}</Text>
                       </View>
-                    )}
+                    ) : null}
                   </ContentFade>
-                )}
+                ) : null}
               </MotionLayout>
             }
             ListFooterComponent={
-              (plan || advanced) ? (
+              !search.loading && (plan || advanced) ? (
                 <View style={styles.footer}>
-                  {search.pageError && (
-                    <Text accessibilityRole="alert" style={styles.errorText}>
-                      {search.pageError}
-                    </Text>
-                  )}
-                  {result?.has_more && !result.stale && (
-                    <Button
-                      label="Show more matching items"
-                      disabled={search.loadingMore || search.loading}
-                      onPress={() => void search.more()}
-                      style={styles.showMore}
-                    >
-                      {search.loadingMore ? (
-                        <ActivityIndicator color={Finn.primary} />
-                      ) : (
-                        <>
-                          <Text style={styles.action}>Show more</Text>
-                          <Icon name="down" size={13} color={Finn.primary} />
-                        </>
-                      )}
+                  {search.pageError ? <Text accessibilityRole="alert" style={styles.errorText}>{search.pageError}</Text> : null}
+                  {search.loadingMore ? (
+                    <LoadingState active={screenActive} label="Loading more matching transactions…" variant="transactions" />
+                  ) : result?.has_more && !result.stale ? (
+                    <Button label="Show more matching items" onPress={() => void search.more()} style={styles.showMore}>
+                      <Text style={styles.action}>Show more</Text>
+                      <Icon name="down" size={13} color={Finn.ink} />
                     </Button>
-                  )}
-                  {!!result?.transactions?.length && (
+                  ) : null}
+                  {result?.transactions?.length ? (
                     <Text style={styles.footnote}>
-                      {result?.stale
+                      {result.stale
                         ? "Refresh to reload these entries."
-                        : result?.has_more
+                        : result.has_more
                           ? "Five transactions at a time. The answer above includes all matches."
                           : "All matching items shown."}
                     </Text>
-                  )}
+                  ) : null}
                 </View>
               ) : null
             }
           />
+
+          <View style={styles.composerArea}>
+            {showRecommendations ? (
+              <ScrollView
+                contentContainerStyle={styles.recommendations}
+                horizontal
+                keyboardShouldPersistTaps="handled"
+                showsHorizontalScrollIndicator={false}
+              >
+                {suggestions.map((suggestion) => (
+                  <Button key={suggestion} label={suggestion} onPress={() => submit(suggestion)} style={styles.suggestionChip}>
+                    <Text style={styles.suggestionText}>{suggestion}</Text>
+                  </Button>
+                ))}
+                {search.contexts?.contexts.slice(0, 2).map((context) => (
+                  <Button
+                    key={context.id}
+                    label={`Ask about ${context.name}`}
+                    onPress={() => openContext(context)}
+                    style={styles.suggestionChip}
+                  >
+                    <Text style={styles.suggestionText}>{context.name}</Text>
+                  </Button>
+                ))}
+              </ScrollView>
+            ) : null}
+            <View style={styles.searchBox}>
+              <TextInput
+                accessibilityLabel="Ask Finn about your journal"
+                autoCorrect={false}
+                maxLength={500}
+                onChangeText={setQuery}
+                onSubmitEditing={() => submit()}
+                placeholder="Ask Finn about your money…"
+                placeholderTextColor={Finn.muted}
+                returnKeyType="search"
+                style={styles.input}
+                value={query}
+              />
+              {query ? (
+                <Button label="Clear search" onPress={clear} style={styles.clear}>
+                  <Icon name="close" size={14} color={Finn.secondary} />
+                </Button>
+              ) : null}
+              <Button disabled={!query.trim() || search.loading} label="Ask Finn" onPress={() => submit()} style={styles.submit}>
+                <Icon name="send" size={20} color={Finn.surface} />
+              </Button>
+            </View>
+          </View>
         </KeyboardAvoidingView>
+
+        <AskDateRangePopover
+          currentDay={today}
+          onApply={(next) => {
+            setRangeOpen(false);
+            changeRange(next);
+          }}
+          onDismiss={() => setRangeOpen(false)}
+          range={activeRange}
+          visible={rangeOpen}
+        />
       </SafeAreaView>
     </Screen>
   );
 }
+
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 10,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
-  headerTitle: {
-    fontFamily: JournalType.medium,
-    fontSize: 17,
-    color: Finn.ink,
+  backButton: { borderWidth: StyleSheet.hairlineWidth, borderColor: Finn.line },
+  rangeTrigger: { minHeight: 44, flexDirection: "row", gap: 5, paddingHorizontal: 4 },
+  rangeTriggerText: { fontFamily: JournalType.medium, fontSize: 14, color: Finn.ink },
+  content: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 24 },
+  landingContent: { flexGrow: 1 },
+  hero: { paddingTop: 48, paddingBottom: 24, gap: 1 },
+  accessibleHeading: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    color: "transparent",
+    fontSize: 1,
+    lineHeight: 1,
   },
-  headerSpacer: { width: 48 },
-  content: { paddingHorizontal: 22, paddingTop: 12, paddingBottom: 32 },
-  eyebrow: {
-    fontFamily: JournalType.medium,
-    fontSize: 10,
-    letterSpacing: 1.8,
-    color: "#817875",
-    marginBottom: 12,
-  },
-  searchBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingLeft: 16,
-    paddingRight: 7,
+  heroLine: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 58 },
+  heroTitle: { fontFamily: JournalType.regular, fontSize: 43, lineHeight: 49, letterSpacing: -1.8, color: Finn.ink },
+  finnArtwork: { width: 137, height: 64, marginTop: -4 },
+  resultHero: { paddingTop: 26, paddingBottom: 20 },
+  resultQuestion: { fontFamily: JournalType.regular, fontSize: 31, lineHeight: 36, letterSpacing: -1.1, color: Finn.ink },
+  composerArea: { paddingHorizontal: 18, paddingTop: 9, paddingBottom: 6, backgroundColor: Finn.canvas },
+  recommendations: { gap: 8, paddingRight: 18, paddingBottom: 10 },
+  suggestionChip: {
+    minHeight: 38,
+    paddingHorizontal: 14,
+    borderRadius: 20,
     backgroundColor: Finn.surface,
-    borderRadius: 22,
-    minHeight: 56,
-    borderWidth: 1,
-    borderColor: "#F2EAE4",
-  },
-  input: {
-    flex: 1,
-    fontFamily: JournalType.regular,
-    fontSize: 15,
-    color: Finn.ink,
-    paddingVertical: 16,
-    minWidth: 0,
-  },
-  clear: { width: 24, minHeight: 44 },
-  submit: {
-    width: 40,
-    height: 40,
-    minHeight: 40,
-    borderRadius: 22,
-    backgroundColor: Finn.ink,
-  },
-  period: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  periodButton: { flexDirection: "row", gap: 6, paddingHorizontal: 4 },
-  periodText: {
-    fontFamily: JournalType.regular,
-    fontSize: 11,
-    color: "#817875",
-  },
-  monthArrow: { width: 32 },
-  sectionHeading: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 14,
-    marginBottom: 14,
-  },
-  sectionTitle: {
-    fontFamily: JournalType.medium,
-    fontSize: 18,
-    letterSpacing: -0.3,
-    color: Finn.ink,
-  },
-  small: {
-    fontFamily: JournalType.regular,
-    fontSize: 12,
-    lineHeight: 18,
-    color: "#827B77",
-  },
-  body: {
-    fontFamily: JournalType.regular,
-    fontSize: 15,
-    lineHeight: 23,
-    color: "#635D59",
-  },
-  card: {
-    backgroundColor: "rgba(255,255,255,0.7)",
-    padding: 18,
-    borderRadius: 18,
-    gap: 12,
-    marginBottom: 12,
-  },
-  action: { fontFamily: JournalType.medium, fontSize: 14, color: "#238655" },
-  landing: { marginTop: 22 },
-  landingLabel: {
-    fontFamily: JournalType.medium,
-    fontSize: 10,
-    letterSpacing: 1.3,
-    color: Finn.muted,
-    marginBottom: 5,
-  },
-  explainer: {
-    fontFamily: JournalType.regular,
-    fontSize: 12,
-    lineHeight: 18,
-    color: "#817975",
-    marginTop: 14,
-    maxWidth: 290,
-  },
-  recent: { marginTop: 22, gap: 8 },
-  suggestion: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Finn.line,
   },
-  suggestionText: {
-    flex: 1,
-    fontFamily: JournalType.regular,
-    fontSize: 15,
-    lineHeight: 21,
-    color: "#625B57",
-  },
-  footnote: {
-    fontFamily: JournalType.regular,
-    fontSize: 11,
-    lineHeight: 18,
-    color: "#948A83",
-    textAlign: "center",
-    marginTop: 22,
-  },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
-  chip: {
+  suggestionText: { fontFamily: JournalType.medium, fontSize: 13, color: Finn.ink },
+  searchBox: {
+    minHeight: 60,
     flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 13,
-    minHeight: 36,
-    borderRadius: 18,
-    backgroundColor: Finn.primarySoft,
+    alignItems: "center",
+    gap: 6,
+    paddingLeft: 18,
+    paddingRight: 8,
+    borderRadius: 30,
+    backgroundColor: Finn.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Finn.line,
+    ...Finn.shadow,
   },
-  chipText: { fontFamily: JournalType.medium, fontSize: 12, color: "#527661" },
-  answer: {
+  input: { flex: 1, minWidth: 0, paddingVertical: 17, color: Finn.ink, fontFamily: JournalType.regular, fontSize: 16 },
+  clear: { width: 28, minHeight: 44 },
+  submit: { width: 46, height: 46, minHeight: 46, borderRadius: 23, backgroundColor: Finn.ink },
+  sectionHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 14, marginBottom: 14 },
+  sectionTitle: { fontFamily: JournalType.medium, fontSize: 18, letterSpacing: -0.3, color: Finn.ink },
+  small: { fontFamily: JournalType.regular, fontSize: 12, lineHeight: 18, color: Finn.secondary },
+  body: { fontFamily: JournalType.regular, fontSize: 15, lineHeight: 23, color: Finn.secondary },
+  card: {
+    padding: 18,
     borderRadius: 22,
     backgroundColor: Finn.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Finn.line,
+    gap: 12,
+    marginBottom: 12,
+  },
+  inlineAction: { alignSelf: "flex-start", minHeight: 40 },
+  action: { fontFamily: JournalType.medium, fontSize: 14, color: Finn.ink },
+  answer: {
+    minHeight: 150,
+    alignItems: "center",
     paddingHorizontal: 18,
     paddingVertical: 26,
-    alignItems: "center",
     marginBottom: 12,
-    minHeight: 150,
+    borderRadius: 28,
+    backgroundColor: Finn.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Finn.line,
     ...Finn.shadow,
   },
   answerRow: { alignItems: "center", marginBottom: 8 },
-  answerTitle: {
-    fontFamily: JournalType.medium,
-    fontSize: 15,
-    lineHeight: 22,
-    letterSpacing: -0.5,
-    color: Finn.secondary,
-    textAlign: "center",
-    marginTop: 4,
-  },
+  answerTitle: { marginTop: 4, color: Finn.secondary, fontFamily: JournalType.medium, fontSize: 15, lineHeight: 22, letterSpacing: -0.5, textAlign: "center" },
   answerAmount: {
+    color: Finn.ink,
     fontFamily: JournalType.bold,
     fontSize: 36,
     lineHeight: 46,
     letterSpacing: -1.2,
-    color: Finn.ink,
     textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
-  answerScope: {
-    fontFamily: JournalType.medium,
-    fontSize: 12,
-    lineHeight: 18,
-    color: "#716B67",
-    textAlign: "center",
+  answerCaption: { color: Finn.secondary, fontFamily: JournalType.medium, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  explanation: {
+    position: "relative",
+    marginVertical: 8,
+    marginBottom: 18,
   },
-  explanation: { paddingHorizontal: 3, gap: 8, marginBottom: 10 },
-  answerDetail: {
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    lineHeight: 20,
-    color: "#77716D",
-    marginTop: 14,
-  },
+  accessibleCopy: { position: "absolute", width: 1, height: 1, color: "transparent", fontSize: 1, lineHeight: 1 },
+  thinkingRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12 },
+  thinkingFinn: { width: 48, height: 51, flexShrink: 0 },
+  thinkingText: { flex: 1, color: Finn.secondary, fontFamily: JournalType.regular, fontSize: 15, lineHeight: 22 },
   footer: { paddingVertical: 8, gap: 10 },
   showMore: {
     flexDirection: "row",
     gap: 10,
+    minHeight: 48,
     borderRadius: 22,
     backgroundColor: Finn.surface,
-    minHeight: 48,
-    ...Finn.shadow,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Finn.line,
   },
-  errorText: {
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    lineHeight: 20,
-    color: Finn.danger,
-  },
-  datePanel: {
-    backgroundColor: Finn.surface,
-    padding: 16,
-    borderRadius: 18,
-    gap: 10,
-    marginBottom: 16,
-  },
-  dateRow: { flexDirection: "row", gap: 10 },
-  dateInput: {
-    flex: 1,
-    minHeight: 44,
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: Finn.wash,
-    fontFamily: JournalType.regular,
-    color: Finn.ink,
-  },
+  footnote: { marginTop: 22, color: Finn.muted, fontFamily: JournalType.regular, fontSize: 11, lineHeight: 18, textAlign: "center" },
+  errorText: { color: Finn.danger, fontFamily: JournalType.regular, fontSize: 13, lineHeight: 20 },
 });

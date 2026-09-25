@@ -34,3 +34,9 @@ export function saveJournalDrafts(userId: string, drafts: JournalDrafts) {
   writes.set(userId, next);
   return next;
 }
+
+export async function deleteJournalDrafts(userId: string) {
+  await writes.get(userId)?.catch(() => undefined);
+  await AsyncStorage.removeItem(key(userId));
+  writes.delete(userId);
+}

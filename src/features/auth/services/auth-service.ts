@@ -5,10 +5,21 @@ import * as Crypto from "expo-crypto";
 import type { Provider, Session } from "@supabase/supabase-js";
 import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
 import { deleteJournalCache } from "@/lib/offline/database";
+import { deleteJournalDrafts } from "@/features/journal/store/journal-draft-store";
+import { clearSeenGuidance } from "@/features/guidance/services/guidance-service";
+import {
+  ANALYTICS_EVENTS,
+  analyticsClient,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 WebBrowser.maybeCompleteAuthSession();
 
 export type SocialProvider = Extract<Provider, "apple" | "google">;
+
+let redirectAttempt:
+  | { key: string; promise: Promise<Session | null> }
+  | null = null;
 
 function requireBackend() {
   if (!isBackendConfigured()) {
@@ -23,10 +34,35 @@ function valueFromRedirect(url: string, key: string) {
   return parsed.searchParams.get(key) ?? fragment.get(key);
 }
 
-export async function finishAuthRedirect(url: string): Promise<Session | null> {
+export function hasAuthRedirectData(url: string) {
+  try {
+    return !!(
+      valueFromRedirect(url, "code") ||
+      valueFromRedirect(url, "access_token") ||
+      valueFromRedirect(url, "refresh_token") ||
+      valueFromRedirect(url, "error") ||
+      valueFromRedirect(url, "error_description")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function redirectAttemptKey(url: string) {
+  return (
+    valueFromRedirect(url, "code") ??
+    valueFromRedirect(url, "access_token") ??
+    url
+  );
+}
+
+async function exchangeAuthRedirect(url: string): Promise<Session | null> {
   const db = requireBackend();
   const errorDescription = valueFromRedirect(url, "error_description");
-  if (errorDescription) throw new Error(errorDescription);
+  const oauthError = valueFromRedirect(url, "error");
+  if (errorDescription || oauthError) {
+    throw new Error(errorDescription ?? oauthError ?? "Sign in could not be completed.");
+  }
 
   const code = valueFromRedirect(url, "code");
   if (code) {
@@ -46,8 +82,20 @@ export async function finishAuthRedirect(url: string): Promise<Session | null> {
   return data.session;
 }
 
+export function finishAuthRedirect(url: string): Promise<Session | null> {
+  if (!hasAuthRedirectData(url)) return Promise.resolve(null);
+
+  const key = redirectAttemptKey(url);
+  if (redirectAttempt?.key === key) return redirectAttempt.promise;
+
+  const promise = exchangeAuthRedirect(url);
+  redirectAttempt = { key, promise };
+  return promise;
+}
+
 export async function signInWithSocialProvider(provider: SocialProvider) {
   const db = requireBackend();
+  redirectAttempt = null;
   const redirectTo = Linking.createURL("auth/callback");
   const { data, error } = await db.auth.signInWithOAuth({
     provider,
@@ -137,22 +185,55 @@ export async function updatePassword(password: string) {
 }
 
 export async function signOutCurrentDevice() {
+  captureAnalytics(ANALYTICS_EVENTS.accountSignedOut, { scope: "local" });
+  await analyticsClient.flush().catch(() => undefined);
   const { error } = await requireBackend().auth.signOut({ scope: "local" });
   if (error) throw error;
 }
 
-export async function deleteCurrentAccount() {
+export type AccountDeletionRestoreStatus = "none" | "cancelled" | "expired";
+
+export async function cancelPendingAccountDeletion(): Promise<AccountDeletionRestoreStatus> {
+  const db = requireBackend();
+  const { data, error } = await db.functions.invoke("delete-account", {
+    body: { action: "cancel_deletion" },
+  });
+  if (error) throw error;
+  const status = (data as { status?: AccountDeletionRestoreStatus } | null)?.status;
+  if (status !== "none" && status !== "cancelled" && status !== "expired") {
+    throw new Error("Finn couldn’t verify your account status.");
+  }
+  if (status === "expired") {
+    await db.auth.signOut({ scope: "local" }).catch(() => undefined);
+  }
+  return status;
+}
+
+export async function scheduleCurrentAccountDeletion() {
   const db = requireBackend();
   const { data, error: sessionError } = await db.auth.getSession();
   if (sessionError) throw sessionError;
   if (!data.session) throw new Error("Sign in again before deleting your account.");
 
   const userId = data.session.user.id;
-  const { error } = await db.functions.invoke("delete-account", {
-    body: { action: "delete_account", confirmation: "DELETE" },
+  const { data: result, error } = await db.functions.invoke("delete-account", {
+    body: { action: "request_deletion", confirmation: "DELETE" },
   });
   if (error) throw error;
 
-  await deleteJournalCache(userId);
-  await db.auth.signOut({ scope: "local" }).catch(() => undefined);
+  captureAnalytics(ANALYTICS_EVENTS.accountDeletionScheduled, {
+    recovery_days: 30,
+  });
+  await analyticsClient.flush().catch(() => undefined);
+
+  await Promise.allSettled([
+    deleteJournalCache(userId),
+    deleteJournalDrafts(userId),
+    clearSeenGuidance(userId),
+  ]);
+  const { error: signOutError } = await db.auth.signOut({ scope: "global" });
+  if (signOutError) {
+    await db.auth.signOut({ scope: "local" }).catch(() => undefined);
+  }
+  return result as { status: "scheduled"; scheduled_for: string };
 }

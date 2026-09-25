@@ -6,6 +6,7 @@ import {
   env,
   metric,
   positiveEnv,
+  requirePremium,
   requireQuota,
   reserve,
   rpc,
@@ -175,6 +176,7 @@ Deno.serve(async (request) => {
       throw new ApiError(415, "multipart_required");
     }
     const ctx = await authenticate(request);
+    await requirePremium(ctx);
     const form = await request.formData();
     const rawRequest = form.get("request");
     if (typeof rawRequest !== "string") throw new ApiError(400, "receipt_request_required");

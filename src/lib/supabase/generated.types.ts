@@ -1098,6 +1098,7 @@ export type Database = {
       }
       user_settings: {
         Row: {
+          analytics_enabled: boolean
           back_tap_quick_add: boolean
           created_at: string
           currency: string
@@ -1109,6 +1110,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          analytics_enabled?: boolean
           back_tap_quick_add?: boolean
           created_at?: string
           currency: string
@@ -1120,6 +1122,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          analytics_enabled?: boolean
           back_tap_quick_add?: boolean
           created_at?: string
           currency?: string

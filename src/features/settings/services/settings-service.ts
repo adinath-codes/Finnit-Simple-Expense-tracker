@@ -7,6 +7,7 @@ import { currentPreferences } from "@/lib/offline/cache-schema";
 
 type SettingsRow = {
   currency: string;
+  analytics_enabled: boolean;
   location_enabled: boolean;
   reminders_enabled: boolean;
   reminder_frequency: string;
@@ -17,6 +18,7 @@ type SettingsRow = {
 function fromRow(row: SettingsRow): Preferences {
   return currentPreferences({
     currency: row.currency,
+    analyticsEnabled: row.analytics_enabled,
     location: row.location_enabled,
     reminders: row.reminders_enabled,
     reminderFrequency: row.reminder_frequency,
@@ -30,6 +32,7 @@ function toRow(userId: string, settings: Preferences) {
   return {
     user_id: userId,
     currency: current.currency,
+    analytics_enabled: current.analyticsEnabled,
     location_enabled: current.location,
     reminders_enabled: current.reminders,
     reminder_frequency: current.reminderFrequency,
@@ -96,7 +99,7 @@ export async function saveSettingsForAccount(
 export async function refreshSettingsForAccount(userId: string) {
   const { data, error } = await getSupabase()
     .from("user_settings")
-    .select("currency,location_enabled,reminders_enabled,reminder_frequency,reminder_time,back_tap_quick_add")
+    .select("currency,analytics_enabled,location_enabled,reminders_enabled,reminder_frequency,reminder_time,back_tap_quick_add")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;

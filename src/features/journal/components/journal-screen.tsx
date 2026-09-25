@@ -12,6 +12,7 @@ import {
 import { useFocusEffect, useIsFocused } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Screen } from "@/components/common/screen";
+import { LoadingState } from "@/components/common/loading-state";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
@@ -36,6 +37,7 @@ export default function JournalScreen() {
     mutationError,
     clearMutationError,
     retrySync,
+    journalLoading,
     recentPresetEntryId,
     clearRecentPresetEntry,
   } = useJournal();
@@ -282,23 +284,31 @@ export default function JournalScreen() {
               </Button>
             </View>
           )}
-          {dayEntries.map((entry) => (
-            <JournalEntryCard
-              key={entry.id}
-              entry={entry}
-              currency={settings.currency}
-              editing={editingEntryId === entry.id}
-              draft={editingEntryId === entry.id ? entryDraft : entry.note}
-              onStartEditing={() => startEditingEntry(entry)}
-              onChangeDraft={changeEntryDraft}
-              onCommit={(note) => finishEditingEntry(entry, note)}
-              onReturn={advanceEditingEntry}
-              inputRef={(node) => setEntryInput(entry.id, node)}
-              onRetrySync={() => { void retrySync(entry.id).catch(() => undefined); }}
+          {journalLoading ? (
+            <LoadingState
+              variant="journal"
+              label="Restoring your journal entries…"
+              active={screenActive}
             />
-          ))}
+          ) : (
+            dayEntries.map((entry) => (
+              <JournalEntryCard
+                key={entry.id}
+                entry={entry}
+                currency={settings.currency}
+                editing={editingEntryId === entry.id}
+                draft={editingEntryId === entry.id ? entryDraft : entry.note}
+                onStartEditing={() => startEditingEntry(entry)}
+                onChangeDraft={changeEntryDraft}
+                onCommit={(note) => finishEditingEntry(entry, note)}
+                onReturn={advanceEditingEntry}
+                inputRef={(node) => setEntryInput(entry.id, node)}
+                onRetrySync={() => { void retrySync(entry.id).catch(() => undefined); }}
+              />
+            ))
+          )}
           <View style={styles.editor}>
-            {dayEntries.length === 0 && draft.length === 0 && !focused && (
+            {!journalLoading && dayEntries.length === 0 && draft.length === 0 && !focused && (
               <JournalEmptyPrompt
                 key={selectedDate}
                 onPress={() => input.current?.focus()}

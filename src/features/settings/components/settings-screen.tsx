@@ -10,7 +10,7 @@ import { Finn, JournalType } from "@/constants/theme";
 import { useJournal } from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
 import {
-  deleteCurrentAccount,
+  scheduleCurrentAccountDeletion,
   signOutCurrentDevice,
 } from "@/features/auth/services/auth-service";
 import {
@@ -20,6 +20,12 @@ import {
   CurrencyPicker,
   currencyDisplay,
 } from "@/components/forms/currency-picker";
+import {
+  ANALYTICS_EVENTS,
+  analyticsClient,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
+import { useSubscription } from "@/features/paywall/providers/subscription-provider";
 
 type Picker = "currency" | null;
 
@@ -32,6 +38,13 @@ export default function SettingsScreen() {
     clearMutationError,
   } = useJournal();
   const { setOnboardingComplete } = useSession();
+  const {
+    entitlement,
+    isActive: hasPremiumAccess,
+    isBusy: subscriptionBusy,
+    manage: manageSubscription,
+    restore: restoreSubscription,
+  } = useSubscription();
   const [picker, setPicker] = useState<Picker>(null);
   const [accountBusy, setAccountBusy] = useState<"sign-out" | "delete" | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -41,6 +54,30 @@ export default function SettingsScreen() {
   };
   const applySettings = (patch: Parameters<typeof updateSettings>[0]) =>
     updateSettings(patch);
+
+  const toggleAnalytics = async () => {
+    const enabled = !settings.analyticsEnabled;
+    if (enabled) await analyticsClient.optIn();
+    await applySettings({ analyticsEnabled: enabled });
+    if (enabled) {
+      captureAnalytics(ANALYTICS_EVENTS.analyticsPreferenceChanged, { enabled });
+    } else {
+      await analyticsClient.optOut();
+    }
+  };
+
+  const openSubscriptionManagement = async () => {
+    setAccountError(null);
+    try {
+      await manageSubscription();
+    } catch (error) {
+      setAccountError(
+        error instanceof Error
+          ? error.message
+          : "Couldn’t open your subscription settings.",
+      );
+    }
+  };
 
   const signOut = async () => {
     if (accountBusy) return;
@@ -60,7 +97,7 @@ export default function SettingsScreen() {
       setAccountBusy("delete");
       setAccountError(null);
       try {
-        await deleteCurrentAccount();
+        await scheduleCurrentAccountDeletion();
         await clearOnboardingSnapshot();
         setOnboardingComplete(false);
       } catch (error) {
@@ -70,17 +107,17 @@ export default function SettingsScreen() {
     };
 
     if (Platform.OS === "web") {
-      if (window.confirm("Permanently delete your Finn account and synced journal? This cannot be undone.")) {
+      if (window.confirm("Schedule your Finn account and synced journal for permanent deletion in 30 days? You’ll be signed out everywhere. Sign back in during the recovery period to cancel.")) {
         void perform();
       }
       return;
     }
     Alert.alert(
-      "Delete your account?",
-      "Your synced journal and account will be permanently deleted. This cannot be undone.",
+      "Schedule account deletion?",
+      "Finn will sign you out everywhere and permanently delete your account and synced journal after 30 days. Sign back in during that recovery period to cancel.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Delete account", style: "destructive", onPress: () => void perform() },
+        { text: "Schedule deletion", style: "destructive", onPress: () => void perform() },
       ],
     );
   };
@@ -103,6 +140,27 @@ export default function SettingsScreen() {
           title="Manage saved entries"
           subtitle={`${presets.length} saved ${presets.length === 1 ? "entry" : "entries"}`}
           href="/settings/presets"
+        />
+      </View>
+
+      <SectionLabel style={styles.sectionLabel}>Finn Premium</SectionLabel>
+      <View style={styles.group}>
+        <SettingsRow
+          icon="star"
+          color={Finn.primary}
+          title={hasPremiumAccess ? "Finn Premium is active" : "Premium access required"}
+          subtitle={subscriptionStatus(entitlement)}
+          disclosure={hasPremiumAccess ? "chevron" : "none"}
+          onPress={hasPremiumAccess ? () => void openSubscriptionManagement() : undefined}
+        />
+        <Divider />
+        <SettingsRow
+          icon="refresh"
+          color="#5865D8"
+          title={subscriptionBusy ? "Checking purchases…" : "Restore purchases"}
+          subtitle="Use the App Store account that originally subscribed"
+          disclosure="none"
+          onPress={() => void restoreSubscription()}
         />
       </View>
 
@@ -129,6 +187,16 @@ export default function SettingsScreen() {
 
       <SectionLabel style={styles.sectionLabel}>Privacy & legal</SectionLabel>
       <View style={styles.group}>
+        <SettingsRow
+          icon="analytics"
+          color="#5865D8"
+          title="Share usage analytics"
+          subtitle="Feature use only — never notes, amounts, receipts, or searches"
+          value={settings.analyticsEnabled ? "On" : "Off"}
+          disclosure="none"
+          onPress={() => void toggleAnalytics()}
+        />
+        <Divider />
         <SettingsRow
           icon="globe"
           color="#5865D8"
@@ -157,9 +225,9 @@ export default function SettingsScreen() {
         <SettingsRow
           icon="trash"
           color={Finn.danger}
-          title={accountBusy === "delete" ? "Deleting account…" : "Delete my account"}
+          title={accountBusy === "delete" ? "Scheduling deletion…" : "Delete my account"}
           titleColor={Finn.danger}
-          subtitle="Permanently removes your account and synced journal"
+          subtitle="Deletes your account after a 30-day recovery period"
           disclosure="none"
           onPress={confirmDelete}
         />
@@ -228,6 +296,21 @@ function SettingsRow({
 
 function Divider() {
   return <View style={styles.separator} />;
+}
+
+function subscriptionStatus(
+  entitlement: ReturnType<typeof useSubscription>["entitlement"],
+) {
+  if (!entitlement) return "Subscribe or restore from the premium screen";
+  if (!entitlement.expirationDate) return "Active access";
+  const date = new Date(entitlement.expirationDate);
+  if (!Number.isFinite(date.getTime())) return "Active access";
+  const label = date.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return entitlement.willRenew ? `Renews ${label}` : `Available until ${label}`;
 }
 
 const styles = StyleSheet.create({

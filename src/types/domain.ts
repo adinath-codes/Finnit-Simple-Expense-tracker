@@ -106,6 +106,7 @@ export type Preset = {
 };
 export type Preferences = {
   currency: string;
+  analyticsEnabled: boolean;
   location: boolean;
   reminders: boolean;
   reminderFrequency: string;

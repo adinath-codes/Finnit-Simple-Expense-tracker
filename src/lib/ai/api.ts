@@ -1,5 +1,9 @@
 import { getSupabase } from "@/lib/supabase/client";
 import { notifyAiQuotaReached } from "@/features/support/services/quota-events";
+import {
+  captureOperationalError,
+  recordOperation,
+} from "@/lib/observability/sentry";
 
 export class BackendError extends Error {
   constructor(
@@ -10,14 +14,16 @@ export class BackendError extends Error {
     super(code);
   }
 }
-export async function callBackend<T>(
-  endpoint:
-    | "parse-entry"
-    | "correct-entry"
-    | "apply-preset"
-    | "ask-money"
-    | "ask-sql"
-    | "request-quota-review",
+type BackendEndpoint =
+  | "parse-entry"
+  | "correct-entry"
+  | "apply-preset"
+  | "ask-money"
+  | "ask-sql"
+  | "request-quota-review";
+
+async function callBackendRequest<T>(
+  endpoint: BackendEndpoint,
   payload: unknown,
   expectedUserId?: string,
   signal?: AbortSignal,
@@ -74,5 +80,54 @@ export async function callBackend<T>(
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", cancel);
+  }
+}
+
+export async function callBackend<T>(
+  endpoint: BackendEndpoint,
+  payload: unknown,
+  expectedUserId?: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  const operation = `backend.${endpoint}`;
+  recordOperation(operation, "started");
+  try {
+    const result = await callBackendRequest<T>(
+      endpoint,
+      payload,
+      expectedUserId,
+      signal,
+    );
+    recordOperation(operation, "succeeded");
+    return result;
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    const retryable = error instanceof BackendError && error.retryable;
+    recordOperation(operation, retryable || isAbort ? "deferred" : "failed", {
+      status: error instanceof BackendError ? error.status : undefined,
+      code: error instanceof BackendError ? error.code : undefined,
+    });
+
+    const reportableBackendError =
+      error instanceof BackendError &&
+      (error.status >= 500 ||
+        error.code === "invalid_backend_response" ||
+        error.code === "session_refresh_failed");
+    const reportableUnexpectedError =
+      error instanceof Error && error.name !== "AbortError" && error.name !== "TypeError";
+    if (reportableBackendError || reportableUnexpectedError) {
+      captureOperationalError(error, {
+        operation,
+        level: retryable ? "warning" : "error",
+        tags: {
+          surface: "backend",
+          endpoint,
+          status: error instanceof BackendError ? error.status : undefined,
+          code: error instanceof BackendError ? error.code : undefined,
+          retryable,
+        },
+      });
+    }
+    throw error;
   }
 }

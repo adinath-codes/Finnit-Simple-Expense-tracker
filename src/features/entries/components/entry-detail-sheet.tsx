@@ -1,6 +1,17 @@
 import { ContentFade } from "@/components/ui/motion";
-import { Fragment, useState } from "react";
-import { Alert, Keyboard, Platform, StyleSheet, Text, TextInput, View } from "react-native";
+import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Keyboard,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Image } from "expo-image";
 import {
@@ -23,8 +34,21 @@ import { retryReceipt } from "@/features/camera/services/receipt-service";
 import { FinnCorrectionComposer } from "./finn-correction-composer";
 import { useSession } from "@/features/auth/providers/session-provider";
 import { amountBreakdownText } from "@/features/entries/services/breakdown-service";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 const BANKNOTE_GREEN = "#20C878";
+const ACTION_MENU_WIDTH = 252;
+const ACTION_MENU_MARGIN = 12;
+
+type ActionAnchor = {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+};
 
 export default function EntryDetailSheet() {
   const { entryId } = useLocalSearchParams<{ entryId: string }>();
@@ -42,7 +66,10 @@ export default function EntryDetailSheet() {
     askFinnToCorrectEntry,
   } = useJournal();
   const { session } = useSession();
+  const { width: windowWidth } = useWindowDimensions();
   const entry = entries.find((item) => item.id === entryId);
+  const trackedEntryId = useRef<string | null>(null);
+  const actionsButton = useRef<View>(null);
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState(
     entry?.receipt ? entry.merchant : entry?.note ?? "",
@@ -54,7 +81,7 @@ export default function EntryDetailSheet() {
   } | null>(null);
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [actionAnchor, setActionAnchor] = useState<ActionAnchor | null>(null);
   const [printedTotal, setPrintedTotal] = useState(
     entry?.receipt?.printedTotalMinor == null
       ? ""
@@ -62,6 +89,16 @@ export default function EntryDetailSheet() {
   );
   const [receiptActionError, setReceiptActionError] = useState<string | null>(null);
   const [syncAction, setSyncAction] = useState<"retry" | "keep" | "remote" | null>(null);
+
+  useEffect(() => {
+    if (!entry || trackedEntryId.current === entry.id) return;
+    trackedEntryId.current = entry.id;
+    captureAnalytics(ANALYTICS_EVENTS.entryDetailViewed, {
+      entry_source: entry.receipt ? "receipt" : "text",
+      review_required: entry.status === "review",
+      sync_state: entry.syncState ?? "unknown",
+    });
+  }, [entry]);
 
   if (!entry) {
     return (
@@ -118,6 +155,46 @@ export default function EntryDetailSheet() {
       ],
     );
   };
+  const openActions = () => {
+    actionsButton.current?.measureInWindow((x, y, width, height) => {
+      setActionAnchor({ x, y, width, height });
+      setActionsOpen(true);
+    });
+  };
+  const removeEntry = async () => {
+    try {
+      await deleteEntry(entry.id);
+    } catch {
+      return;
+    }
+    closeSheet();
+  };
+  const confirmDelete = () => {
+    setActionsOpen(false);
+    if (Platform.OS === "web") {
+      if (window.confirm("Delete this entry from its journal day?")) {
+        void removeEntry();
+      }
+      return;
+    }
+    Alert.alert(
+      "Delete this entry?",
+      "This removes it from the journal for that day.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: () => { void removeEntry(); } },
+      ],
+    );
+  };
+  const menuLeft = actionAnchor
+    ? Math.min(
+        windowWidth - ACTION_MENU_WIDTH - ACTION_MENU_MARGIN,
+        Math.max(
+          ACTION_MENU_MARGIN,
+          actionAnchor.x + actionAnchor.width - ACTION_MENU_WIDTH,
+        ),
+      )
+    : ACTION_MENU_MARGIN;
 
   return (
     <AppSheet
@@ -139,13 +216,16 @@ export default function EntryDetailSheet() {
       right={
         <View style={styles.headerActions}>
           <IconButton
+            ref={actionsButton}
             name={editing ? "check" : "more"}
             label={editing
               ? entry.receipt ? "Save receipt merchant" : "Save entry text"
               : "Entry actions"}
+            accessibilityState={{ expanded: actionsOpen }}
             onPress={async () => {
               if (editing) void saveEditedNote();
-              else setActionsOpen((open) => !open);
+              else if (actionsOpen) setActionsOpen(false);
+              else openActions();
             }}
           />
           <IconButton
@@ -243,10 +323,44 @@ export default function EntryDetailSheet() {
           </View>
         </View>
       )}
-      {actionsOpen && !editing && (
-        <View style={[shared.card, styles.actionsMenu]}>
+      {actionsOpen && actionAnchor && !editing && (
+        <Modal
+          animationType="fade"
+          onRequestClose={() => setActionsOpen(false)}
+          transparent
+          visible
+        >
+          <View pointerEvents="box-none" style={styles.actionsOverlay}>
+            <Pressable
+              accessibilityLabel="Close entry actions"
+              accessibilityRole="button"
+              onPress={() => setActionsOpen(false)}
+              style={StyleSheet.absoluteFill}
+            />
+            <View
+              accessibilityLabel="Entry actions"
+              accessibilityViewIsModal
+              style={[
+                styles.actionsMenu,
+                {
+                  left: menuLeft,
+                  top: actionAnchor.y + actionAnchor.height + 8,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.actionPointer,
+                  {
+                    left: Math.min(
+                      ACTION_MENU_WIDTH - 28,
+                      Math.max(18, actionAnchor.x + actionAnchor.width / 2 - menuLeft - 6),
+                    ),
+                  },
+                ]}
+              />
           <Button
-            label={entry.receipt ? "Edit receipt merchant" : "Edit original note"}
+            label={entry.receipt ? "Edit receipt merchant" : "Edit the original note"}
             onPress={() => {
               setActionsOpen(false);
               setNote(entry.receipt
@@ -258,12 +372,12 @@ export default function EntryDetailSheet() {
           >
             <Icon name="edit" size={15} color={Finn.primary} />
             <Text style={styles.actionText}>
-              {entry.receipt ? "Edit receipt merchant" : "Edit original note"}
+              {entry.receipt ? "Edit receipt merchant" : "Edit the original note"}
             </Text>
           </Button>
           <View style={styles.actionDivider} />
           <Button
-            label={saved ? "Entry saved as a shortcut" : "Save as a shortcut"}
+            label={saved ? "Saved as a preset" : "Save as a preset"}
             disabled={mixedCurrencies}
             onPress={async () => {
               try {
@@ -287,24 +401,23 @@ export default function EntryDetailSheet() {
               color={Finn.primary}
             />
             <Text style={styles.actionText}>
-              {saved ? "Saved" : "Save entry"}
+              {saved ? "Saved as a preset" : "Save as a preset"}
             </Text>
           </Button>
           <View style={styles.actionDivider} />
           <Button
-            label="Remove entry"
-            onPress={async () => {
-              setActionsOpen(false);
-              setDeleting(true);
-            }}
+            label="Delete this entry"
+            onPress={confirmDelete}
             style={styles.actionRow}
           >
             <Icon name="trash" size={15} color={Finn.danger} />
             <Text style={[styles.actionText, { color: Finn.danger }]}>
-              Remove entry
+              Delete this entry
             </Text>
           </Button>
-        </View>
+            </View>
+          </View>
+        </Modal>
       )}
 
       {editing ? (
@@ -423,27 +536,6 @@ export default function EntryDetailSheet() {
         )}
       </View>
 
-      {deleting && (
-        <View style={styles.deleteConfirm}>
-          <Text style={styles.deleteQuestion}>
-            Remove this entry from your journal?
-          </Text>
-          <View style={styles.deleteActions}>
-            <Button label="Cancel removal" onPress={() => setDeleting(false)}>
-              <Text style={styles.cancelText}>Keep it</Text>
-            </Button>
-            <Button
-              label="Confirm removal"
-              onPress={async () => {
-                try { await deleteEntry(entry.id); } catch { return; }
-                closeSheet();
-              }}
-            >
-              <Text style={styles.removeText}>Remove</Text>
-            </Button>
-          </View>
-        </View>
-      )}
     </AppSheet>
   );
 }
@@ -632,10 +724,31 @@ const styles = StyleSheet.create({
   participantName: { color: Finn.ink, fontFamily: JournalType.medium, fontSize: 14 },
   participantAmount: { color: Finn.ink, fontFamily: JournalType.bold, fontSize: 15 },
   actionsMenu: {
-    marginBottom: 18,
-    marginTop: -7,
+    position: "absolute",
+    width: ACTION_MENU_WIDTH,
+    backgroundColor: Finn.surface,
+    borderColor: Finn.line,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14,
     paddingVertical: 4,
+    boxShadow: "0px 12px 34px rgba(73, 56, 44, 0.18)",
+    elevation: 12,
+  },
+  actionsOverlay: {
+    flex: 1,
+  },
+  actionPointer: {
+    position: "absolute",
+    top: -6,
+    width: 12,
+    height: 12,
+    backgroundColor: Finn.surface,
+    borderLeftColor: Finn.line,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Finn.line,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    transform: [{ rotate: "45deg" }],
   },
   actionRow: {
     flexDirection: "row",
@@ -651,22 +764,5 @@ const styles = StyleSheet.create({
   actionDivider: {
     backgroundColor: Finn.line,
     height: StyleSheet.hairlineWidth,
-  },
-  deleteConfirm: { alignItems: "center", gap: 7, marginTop: 22 },
-  deleteQuestion: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 12,
-  },
-  deleteActions: { flexDirection: "row", gap: 22 },
-  cancelText: {
-    color: Finn.ink,
-    fontFamily: JournalType.medium,
-    fontSize: 13,
-  },
-  removeText: {
-    color: Finn.danger,
-    fontFamily: JournalType.medium,
-    fontSize: 13,
   },
 });

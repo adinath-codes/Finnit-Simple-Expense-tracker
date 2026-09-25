@@ -13,6 +13,10 @@ import {
 import { currentJournalRevision } from "../services/journal-revision-service";
 import { recordCacheMetric } from "@/lib/offline/cache-metrics";
 import { canReuseAskResult, canStoreAskResult } from "../services/ask-cache-policy";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 function referenceDay(timezone: string) {
   const parts = new Intl.DateTimeFormat("en", {
@@ -190,6 +194,11 @@ export function useSearch() {
   }, []);
   const run = useCallback(
     async (input: SearchInput) => {
+      const analyticsStartedAt = Date.now();
+      const inputMode = "filters" in input ? "explicit_filters" : "natural_language";
+      captureAnalytics(ANALYTICS_EVENTS.askQuerySubmitted, {
+        input_mode: inputMode,
+      });
       // Keep an existing answer visible only when refreshing the same request.
       // A different question must never display the previous question's totals.
       const sameRequest = JSON.stringify(lastInput.current) === JSON.stringify(input);
@@ -204,12 +213,22 @@ export function useSearch() {
       }
       lastInput.current = input;
       if (!isBackendConfigured()) {
+        captureAnalytics(ANALYTICS_EVENTS.askQueryFailed, {
+          input_mode: inputMode,
+          failure_type: "backend_not_configured",
+          duration_ms: Date.now() - analyticsStartedAt,
+        });
         setError(
           "Your synced journal will be available once Finn is connected.",
         );
         return;
       }
       if (!userId) {
+        captureAnalytics(ANALYTICS_EVENTS.askQueryFailed, {
+          input_mode: inputMode,
+          failure_type: "not_authenticated",
+          duration_ms: Date.now() - analyticsStartedAt,
+        });
         setError("Sign in to search your synced journal.");
         return;
       }
@@ -249,6 +268,15 @@ export function useSearch() {
           if (version === generation.current && !controller.signal.aborted) {
             setResult(cached);
             resultRef.current = cached;
+            captureAnalytics(ANALYTICS_EVENTS.askQueryCompleted, {
+              input_mode: inputMode,
+              cache_hit: true,
+              interpretation: cached.interpretation ?? "unknown",
+              advanced: !!cached.sql_session_id,
+              matching_count: cached.matching_count ?? 0,
+              result_count: cached.transactions?.length ?? 0,
+              duration_ms: Date.now() - analyticsStartedAt,
+            });
           }
           return;
         }
@@ -283,6 +311,16 @@ export function useSearch() {
           });
           setResult(data);
           resultRef.current = data;
+          captureAnalytics(ANALYTICS_EVENTS.askQueryCompleted, {
+            input_mode: inputMode,
+            cache_hit: false,
+            interpretation: data.interpretation ?? "unknown",
+            advanced: !!data.sql_session_id,
+            matching_count: data.matching_count ?? 0,
+            result_count: data.transactions?.length ?? 0,
+            needs_filters: !!data.needs_filters,
+            duration_ms: Date.now() - analyticsStartedAt,
+          });
           if (canStoreAskResult(data)) {
             void writeAskResultCache(
               userId,
@@ -327,8 +365,15 @@ export function useSearch() {
           }
         }
       } catch (err) {
-        if (version === generation.current && !controller.signal.aborted)
+        if (version === generation.current && !controller.signal.aborted) {
+          captureAnalytics(ANALYTICS_EVENTS.askQueryFailed, {
+            input_mode: inputMode,
+            failure_type:
+              err instanceof BackendError ? `http_${err.status}` : "unexpected",
+            duration_ms: Date.now() - analyticsStartedAt,
+          });
           setError(searchError(err));
+        }
       } finally {
         if (version === generation.current && !controller.signal.aborted)
           setLoading(false);

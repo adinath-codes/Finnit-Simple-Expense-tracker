@@ -23,6 +23,14 @@ import type { SyncJob } from "@/types/sync";
 import type { Preferences, Preset } from "@/types/domain";
 import { changeJournalCache, readJournalCache } from "./database";
 import { invalidateRefresh } from "./refresh-coordinator";
+import {
+  captureOperationalError,
+  recordOperation,
+} from "@/lib/observability/sentry";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 const running = new Map<string, Promise<void>>();
 
@@ -193,6 +201,21 @@ export function syncJournal(userId: string): Promise<void> {
         const queued = state.jobs.find((candidate) => candidate.id === job.id);
         if (queued) queued.state = "running";
       });
+      recordOperation("sync.job", "started", {
+        endpoint: job.endpoint,
+        attempt: job.attempts + 1,
+      });
+      const syncStartedAt = Date.now();
+      const recordSyncSuccess = () => {
+        recordOperation("sync.job", "succeeded", {
+          endpoint: job.endpoint,
+        });
+        captureAnalytics(ANALYTICS_EVENTS.syncJobCompleted, {
+          endpoint: job.endpoint,
+          attempt: job.attempts + 1,
+          duration_ms: Date.now() - syncStartedAt,
+        });
+      };
       try {
         if (job.endpoint === "scan-receipt") {
           await scanReceipt(job, userId);
@@ -200,6 +223,7 @@ export function syncJournal(userId: string): Promise<void> {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "journal");
+          recordSyncSuccess();
           continue;
         }
         if (job.endpoint === "sync-settings") {
@@ -211,6 +235,7 @@ export function syncJournal(userId: string): Promise<void> {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "settings");
+          recordSyncSuccess();
           continue;
         }
         if (job.endpoint === "sync-preset") {
@@ -222,6 +247,7 @@ export function syncJournal(userId: string): Promise<void> {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "presets");
+          recordSyncSuccess();
           continue;
         }
         if (job.endpoint === "delete-preset") {
@@ -233,6 +259,7 @@ export function syncJournal(userId: string): Promise<void> {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "presets");
+          recordSyncSuccess();
           continue;
         }
         const { entry } = await callBackend<{ entry: SavedEntry }>(
@@ -281,8 +308,41 @@ export function syncJournal(userId: string): Promise<void> {
           if (local.exists) local.delete();
         }
         await invalidateRefresh(userId, "journal");
+        recordSyncSuccess();
       } catch (error) {
         const permanent = error instanceof BackendError && !error.retryable;
+        recordOperation("sync.job", permanent ? "failed" : "deferred", {
+          endpoint: job.endpoint,
+          attempt: job.attempts + 1,
+          code: error instanceof BackendError ? error.code : "connection_unavailable",
+        });
+        captureAnalytics(
+          permanent
+            ? ANALYTICS_EVENTS.syncJobFailed
+            : ANALYTICS_EVENTS.syncJobDeferred,
+          {
+            endpoint: job.endpoint,
+            attempt: job.attempts + 1,
+            failure_type:
+              error instanceof BackendError ? error.code : "connection_unavailable",
+            duration_ms: Date.now() - syncStartedAt,
+          },
+        );
+        if (
+          permanent &&
+          (!(error instanceof BackendError) ||
+            error.code !== "revision_or_idempotency_conflict")
+        ) {
+          captureOperationalError(error, {
+            operation: "sync.job",
+            tags: {
+              surface: "background_sync",
+              endpoint: job.endpoint,
+              code: error instanceof BackendError ? error.code : "unknown",
+              permanent,
+            },
+          });
+        }
         await changeJournalCache(userId, (state) => {
           const queued = state.jobs.find((j) => j.id === job.id);
           if (!queued) return;

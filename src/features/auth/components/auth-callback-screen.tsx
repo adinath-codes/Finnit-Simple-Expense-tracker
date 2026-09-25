@@ -3,10 +3,17 @@ import { type Href, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { Finn, JournalType } from "@/constants/theme";
-import { finishAuthRedirect } from "@/features/auth/services/auth-service";
+import { useSession } from "@/features/auth/providers/session-provider";
+import { useSubscription } from "@/features/paywall/providers/subscription-provider";
+import {
+  finishAuthRedirect,
+  hasAuthRedirectData,
+} from "@/features/auth/services/auth-service";
 
 export default function AuthCallbackScreen() {
   const url = Linking.useURL();
+  const { session, loading } = useSession();
+  const subscription = useSubscription();
   const params = useLocalSearchParams<{
     code?: string | string[];
     error?: string | string[];
@@ -24,8 +31,21 @@ export default function AuthCallbackScreen() {
     if (code) query.set("code", code);
     if (oauthError) query.set("error", oauthError);
     if (description) query.set("error_description", description);
-    return query.size ? Linking.createURL(`auth/callback?${query}`) : url;
+    if (query.size) return Linking.createURL(`auth/callback?${query}`);
+    return url && hasAuthRedirectData(url) ? url : null;
   }, [params.code, params.error, params.error_description, url]);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !session ||
+      subscription.state === "signed-out" ||
+      subscription.state === "loading"
+    ) {
+      return;
+    }
+    router.replace((subscription.isActive ? "/" : "/paywall") as Href);
+  }, [loading, session, subscription.isActive, subscription.state]);
 
   useEffect(() => {
     if (!callbackUrl || handledUrl.current === callbackUrl) return;
@@ -36,13 +56,20 @@ export default function AuthCallbackScreen() {
     void finishAuthRedirect(callbackUrl)
       .then((session) => {
         if (!session) throw new Error("The sign-in link is incomplete or expired.");
-        router.replace("/" as Href);
       })
       .catch((caught) => {
         setError(caught instanceof Error ? caught.message : "Sign in could not be completed.");
       })
       .finally(() => clearTimeout(timeout));
   }, [callbackUrl]);
+
+  useEffect(() => {
+    if (loading || session || callbackUrl) return;
+    const timeout = setTimeout(() => {
+      setError("The sign-in link is incomplete or expired.");
+    }, 1500);
+    return () => clearTimeout(timeout);
+  }, [callbackUrl, loading, session]);
 
   return (
     <View style={styles.root}>

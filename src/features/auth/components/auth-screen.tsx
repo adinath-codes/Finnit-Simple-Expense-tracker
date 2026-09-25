@@ -27,6 +27,10 @@ import {
   signInWithNativeApple,
   signInWithSocialProvider,
 } from "@/features/auth/services/auth-service";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 const LEFT_PEEK = require("@/assets/images/auth/finn-peek-left.png");
 const RIGHT_PEEK = require("@/assets/images/auth/finn-peek-right.png");
@@ -69,17 +73,41 @@ export default function AuthScreen() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
-  const warnForConsent = () =>
+  const warnForConsent = () => {
+    captureAnalytics(ANALYTICS_EVENTS.signInBlocked, {
+      reason: "legal_consent_required",
+    });
     showToast("To continue with Finn,", "warning", "Agree to the Privacy Policy and Terms.");
+  };
 
   const run = async (key: string, action: () => Promise<unknown>) => {
     if (busy) return;
+    const signInMethod = ["email", "apple", "google"].includes(key) ? key : null;
     setBusy(key);
     setToast(null);
+    if (signInMethod) {
+      captureAnalytics(ANALYTICS_EVENTS.signInStarted, { method: signInMethod });
+    }
     try {
-      await action();
+      const result = await action();
+      if (signInMethod) {
+        captureAnalytics(
+          result
+            ? ANALYTICS_EVENTS.signInCompleted
+            : ANALYTICS_EVENTS.signInCancelled,
+          { method: signInMethod },
+        );
+      }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
+      if (signInMethod) {
+        captureAnalytics(ANALYTICS_EVENTS.signInFailed, {
+          method: signInMethod,
+          failure_type: /valid|characters/i.test(messageFor(caught))
+            ? "validation"
+            : "provider",
+        });
+      }
       showToast(messageFor(caught), "error");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -109,6 +137,9 @@ export default function AuthScreen() {
         throw new Error("Enter your email address first.");
       }
       await sendPasswordReset(email);
+      captureAnalytics(ANALYTICS_EVENTS.passwordResetRequested, {
+        method: "email",
+      });
       showToast("Password reset instructions are on their way.", "info", "Check your inbox.");
     });
 

@@ -16,6 +16,7 @@ import * as Network from "expo-network";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReducedMotion } from "react-native-reanimated";
 import { Button, type ButtonProps } from "@/components/ui/button";
+import { SkeletonBlock } from "@/components/common/loading-state";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { Finn, JournalType } from "@/constants/theme";
@@ -49,7 +50,7 @@ export function JournalComposer({
      tool: "add" | "receipt" | null;
      setTool: (tool: "add" | "receipt" | null) => void;
 }) {
-     const { entries, selectedDate, goals, settings, syncStatus } = useJournal();
+     const { entries, selectedDate, goals, settings, syncStatus, journalLoading } = useJournal();
      const insets = useSafeAreaInsets();
      const reduced = useReducedMotion();
      const { isOffline, queuedItemCount } = useOfflineQueueStatus();
@@ -130,10 +131,13 @@ export function JournalComposer({
                                    <View style={{ flex: 1 }}>
                                         <Button
                                              label={
-                                                  summaryOpen
+                                                  journalLoading
+                                                       ? "Loading journal total"
+                                                       : summaryOpen
                                                        ? "Hide spending breakdown"
                                                        : "View spending breakdown and goals"
                                              }
+                                             disabled={journalLoading}
                                              onPress={() => {
                                                   const nextOpen = !summaryOpen;
                                                   if (nextOpen) {
@@ -149,81 +153,38 @@ export function JournalComposer({
                                                        styles.summaryOpen,
                                              ]}
                                         >
-                                             <Text style={styles.currencyIcon}>
-                                                  {currencySymbol(
-                                                       settings.currency,
-                                                  )}
-                                             </Text>
-                                             <Text style={styles.total}>
-                                                  {moneyValue(
-                                                       focused
-                                                            ? Math.max(
-                                                                   0,
-                                                                   (goals[0]
-                                                                        ?.limit ??
-                                                                        0) -
-                                                                        total,
-                                                              )
-                                                            : total,
-                                                  )}
-                                             </Text>
-                                             {focused ? (
-                                                  <Text style={styles.remaining}>
-                                                       spent
-                                                  </Text>
+                                             {journalLoading ? (
+                                                  <SkeletonBlock width={116} height={18} radius={9} />
                                              ) : (
-                                                  (
-                                                       [
-                                                            "food",
-                                                            "transport",
-                                                            "shopping",
-                                                       ] as const
-                                                  ).map((category, index) => (
-                                                       <View
-                                                            key={category}
-                                                            style={styles.mini}
-                                                       >
-                                                            <Text
-                                                                 style={
-                                                                      styles.separator
-                                                                 }
-                                                            >
-                                                                 ·
-                                                            </Text>
-                                                            <JournalGlyph
-                                                                 name={
-                                                                      (
-                                                                           [
-                                                                                "food",
-                                                                                "car",
-                                                                                "bag",
-                                                                           ] as const
-                                                                      )[index]
-                                                                 }
-                                                                 size={11}
-                                                                 color={
-                                                                      (
-                                                                           [
-                                                                                "#EF7899",
-                                                                                "#EBC64F",
-                                                                                Finn.primary,
-                                                                           ] as const
-                                                                      )[index]
-                                                                 }
-                                                            />
-                                                            <Text
-                                                                 style={
-                                                                      styles.miniValue
-                                                                 }
-                                                            >
-                                                                 {Math.round(
-                                                                      categoryTotal(
-                                                                           category,
-                                                                      ) / 100,
-                                                                 )}
-                                                            </Text>
-                                                       </View>
-                                                  ))
+                                                  <>
+                                                       <Text style={styles.currencyIcon}>
+                                                            {currencySymbol(settings.currency)}
+                                                       </Text>
+                                                       <Text style={styles.total}>
+                                                            {moneyValue(
+                                                                 focused
+                                                                      ? Math.max(0, (goals[0]?.limit ?? 0) - total)
+                                                                      : total,
+                                                            )}
+                                                       </Text>
+                                                       {focused ? (
+                                                            <Text style={styles.remaining}>spent</Text>
+                                                       ) : (
+                                                            (["food", "transport", "shopping"] as const).map((category, index) => (
+                                                                 <View key={category} style={styles.mini}>
+                                                                      <Text style={styles.separator}>·</Text>
+                                                                      <JournalGlyph
+                                                                           name={(["food", "car", "bag"] as const)[index]}
+                                                                           size={11}
+                                                                           color={(["#EF7899", "#EBC64F", Finn.primary] as const)[index]}
+                                                                      />
+                                                                      <Text style={styles.miniValue}>
+                                                                           {Math.round(categoryTotal(category) / 100)}
+                                                                      </Text>
+                                                                 </View>
+                                                            ))
+                                                       )}
+                                                  </>
                                              )}
                                         </Button>
                                    </View>
@@ -251,7 +212,8 @@ export function JournalComposer({
                                              />
                                              <ToolbarButton
                                                   name="check"
-                                                  color={Finn.primary}
+                                                  color={Finn.surface}
+                                                  filled
                                                   label="Save note"
                                                   disabled={!draft.trim() || submitting}
                                                   onPress={onSave}
@@ -401,9 +363,13 @@ function SyncIssueStatus({
 }
 
 const ToolbarButton = forwardRef<View, Omit<ButtonProps, "children"> & {
-     name: JournalGlyphName; color?: string;
-}>(function ToolbarButton({ name, color = Finn.ink, ...props }, ref) {
-     return <Button {...props} ref={ref} style={styles.toolButton}>
+     name: JournalGlyphName; color?: string; filled?: boolean;
+}>(function ToolbarButton({ name, color = Finn.ink, filled = false, ...props }, ref) {
+     return <Button
+          {...props}
+          ref={ref}
+          style={[styles.toolButton, filled && styles.toolButtonFilled]}
+     >
           <JournalGlyph name={name} color={color} size={20} />
      </Button>;
 });
@@ -471,6 +437,10 @@ const styles = StyleSheet.create({
           borderWidth: 1,
           borderColor: "rgba(255,255,255,0.96)",
           boxShadow: "0px 8px 26px rgba(161, 125, 75, 0.11)",
+     },
+     toolButtonFilled: {
+          backgroundColor: Finn.primary,
+          borderColor: Finn.primary,
      },
      summary: {
           borderRadius: 28,

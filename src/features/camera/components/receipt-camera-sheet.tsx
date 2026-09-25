@@ -28,6 +28,10 @@ import { Finn, JournalType } from "@/constants/theme";
 import type { ReceiptCapture } from "../types/receipt.types";
 import { ReceiptReview } from "./receipt-review";
 import { pickReceiptFromGallery } from "../services/receipt-service";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
 
 export type CameraOrigin = { x: number; y: number; width: number; height: number };
 
@@ -48,8 +52,24 @@ export function ReceiptCameraSheet({
   const autoRequestStarted = useRef(false);
   const captureBusy = useRef(false);
   const captureSession = useRef(0);
-  useEffect(() => { captureSession.current += 1; captureBusy.current = false; }, [visible]);
+  const wasVisible = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
+  useEffect(() => {
+    captureSession.current += 1;
+    captureBusy.current = false;
+  }, [visible]);
+  useEffect(() => {
+    if (visible && !wasVisible.current) {
+      captureAnalytics(ANALYTICS_EVENTS.receiptCaptureStarted, {
+        permission_state: permission?.granted
+          ? "granted"
+          : permission?.canAskAgain === false
+          ? "blocked"
+          : "requestable",
+      });
+    }
+    wasVisible.current = visible;
+  }, [permission?.canAskAgain, permission?.granted, visible]);
   const [facing, setFacing] = useState<CameraType>("back");
   const [torch, setTorch] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -134,7 +154,13 @@ export function ReceiptCameraSheet({
 
   if (!present) return null;
 
-  const close = () => { if (isVisible.current) onClose(); };
+  const close = () => {
+    if (!isVisible.current) return;
+    captureAnalytics(ANALYTICS_EVENTS.receiptCaptureCancelled, {
+      stage: photo ? "review" : "camera",
+    });
+    onClose();
+  };
   const takePhoto = async () => {
     if (!isVisible.current || !camera.current || !cameraReady || captureBusy.current) return;
     const session = captureSession.current;
@@ -152,6 +178,9 @@ export function ReceiptCameraSheet({
         uri: result.uri,
         width: result.width,
         height: result.height,
+      });
+      captureAnalytics(ANALYTICS_EVENTS.receiptImageSelected, {
+        source: "camera",
       });
     } catch {
       if (isVisible.current && session === captureSession.current) setError("The photo did not save. Please try again.");
@@ -174,7 +203,12 @@ export function ReceiptCameraSheet({
     setError(null);
     try {
       const selected = await pickReceiptFromGallery();
-      if (selected && isVisible.current) setPhoto(selected);
+      if (selected && isVisible.current) {
+        setPhoto(selected);
+        captureAnalytics(ANALYTICS_EVENTS.receiptImageSelected, {
+          source: "gallery",
+        });
+      }
     } catch {
       setError("Finn could not open that photo. Please try another image.");
     }
@@ -234,7 +268,12 @@ export function ReceiptCameraSheet({
                 setPhoto(null);
                 setCameraReady(false);
               }}
-              onUsePhoto={() => onUsePhoto(photo)}
+              onUsePhoto={() => {
+                captureAnalytics(ANALYTICS_EVENTS.receiptSubmitted, {
+                  source: "image",
+                });
+                onUsePhoto(photo);
+              }}
             />
           ) : permission?.granted ? (
             <View style={styles.cameraStage}>

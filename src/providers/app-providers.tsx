@@ -63,6 +63,12 @@ import {
 } from "@/features/journal/services/sync-recovery-service";
 import { clearCalendarCache } from "@/features/calendar/services/calendar-service";
 import { clearSummaryCaches } from "@/features/summary/services/summary-service";
+import {
+  captureOperationalError,
+  recordOperation,
+} from "@/lib/observability/sentry";
+import { trackProductOperation } from "@/lib/analytics/analytics";
+import { useSubscription } from "@/features/paywall/providers/subscription-provider";
 
 function errorMessage(error: unknown) {
   if (!(error instanceof Error)) return "Couldn’t save that change on this device.";
@@ -73,11 +79,13 @@ function errorMessage(error: unknown) {
 
 function useJournalState() {
   const { session } = useSession();
+  const { isActive: hasPremiumAccess } = useSubscription();
   const [seed] = useState(createEmptyJournal);
   const [cache, setCache] = useState<JournalCache | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [preAuthSettings, setPreAuthSettings] = useState(seed.settings);
   const [settingsBootstrapReady, setSettingsBootstrapReady] = useState(false);
+  const [initialSyncOwnerId, setInitialSyncOwnerId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(seed.today);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [recentPresetEntryId, setRecentPresetEntryId] = useState<string | null>(null);
@@ -104,12 +112,13 @@ function useJournalState() {
   }, [seed.settings]);
 
   useEffect(() => {
-    const userId = session?.user.id;
+    const userId = hasPremiumAccess ? session?.user.id : undefined;
     clearCalendarCache();
     clearSummaryCaches();
     if (!userId) {
       setCache(null);
       setOwnerId(null);
+      setInitialSyncOwnerId(null);
       setMutationError(null);
       setRecentPresetEntryId(null);
       return;
@@ -128,8 +137,8 @@ function useJournalState() {
         setOwnerId(userId);
       }
     };
-    const refreshAll = (force = false) => {
-      void Promise.allSettled([
+    const refreshAll = (force = false) =>
+      Promise.allSettled([
         refreshWithPolicy(userId, "journal", 15_000, () => refreshJournal(userId), force),
         recoverPreparingReceipts(),
         refreshWithPolicy(
@@ -141,10 +150,10 @@ function useJournalState() {
           () => refreshPresetsForAccount(userId), force,
         ),
       ]);
-    };
 
     setCache(null);
     setOwnerId(null);
+    setInitialSyncOwnerId(null);
     void Promise.all([loadPreferences(), loadOnboardingSnapshot()])
       .then(([legacy, onboarding]) =>
         initializeAccountSettings(
@@ -187,18 +196,20 @@ function useJournalState() {
             },
           )
           .subscribe();
-        refreshAll(true);
+        void refreshAll(true).finally(() => {
+          if (active) setInitialSyncOwnerId(userId);
+        });
       })
       .catch((error) => {
         if (active) setMutationError(errorMessage(error));
       });
 
     const appState = AppState.addEventListener("change", (state) => {
-      if (state === "active") refreshAll(true);
+      if (state === "active") void refreshAll(true);
     });
     const network = Network.addNetworkStateListener((state) => {
       const next = state.isConnected === true && state.isInternetReachable !== false;
-      if (next && connected === false) refreshAll(true);
+      if (next && connected === false) void refreshAll(true);
       connected = next;
     });
     return () => {
@@ -210,7 +221,7 @@ function useJournalState() {
       if (revisionTimer) clearTimeout(revisionTimer);
       if (revisionChannel) void getSupabase().removeChannel(revisionChannel);
     };
-  }, [session?.user.id]);
+  }, [hasPremiumAccess, session?.user.id]);
 
   const ownedCache = ownerId === session?.user.id ? cache : null;
   const entries = useMemo(
@@ -221,22 +232,41 @@ function useJournalState() {
   const presets = ownedCache?.local.presets ?? [];
   const goals = ownedCache?.local.goals ?? [];
   const settingsReady = settingsBootstrapReady && (!session || !!ownedCache);
+  const initialSyncReady = !!session && initialSyncOwnerId === session.user.id;
+  const journalLoading = !!session && (
+    !ownedCache || (!initialSyncReady && entries.length === 0)
+  );
   const cacheAccountId = ownerId ?? "signed-out";
   const contentVersion = ownedCache?.metadata.contentVersion ?? 0;
 
-  const runMutation = useCallback(async <T,>(operation: () => Promise<T>) => {
+  const runMutation = useCallback(async <T,>(
+    operationName: string,
+    operation: () => Promise<T>,
+  ) => {
     setMutationError(null);
+    recordOperation(operationName, "started");
+    const startedAt = Date.now();
     try {
-      return await operation();
+      const result = await operation();
+      recordOperation(operationName, "succeeded");
+      trackProductOperation(operationName, "succeeded", Date.now() - startedAt);
+      return result;
     } catch (error) {
+      recordOperation(operationName, "failed");
+      trackProductOperation(operationName, "failed", Date.now() - startedAt);
+      captureOperationalError(error, {
+        operation: operationName,
+        tags: { surface: "journal" },
+      });
       setMutationError(errorMessage(error));
       throw error;
     }
   }, []);
 
   const captureNote = useCallback((note: string, date: string) =>
-    runMutation(async () => {
+    runMutation("journal.capture_note", async () => {
       if (!session) throw new Error("Sign in before saving this note.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to save notes.");
       const input = createCaptureInput(
         note.trim(),
         settings.currency,
@@ -244,19 +274,21 @@ function useJournalState() {
       );
       await captureJournalNote(input);
       return input.id;
-    }), [runMutation, session, settings.currency]);
+    }), [hasPremiumAccess, runMutation, session, settings.currency]);
 
   const capturePreset = useCallback((preset: Preset, date: string) =>
-    runMutation(async () => {
+    runMutation("journal.capture_preset", async () => {
       if (!session) throw new Error("Sign in before using a saved entry.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to use saved entries.");
       const id = await capturePresetEntry(preset, date, settings.currency);
       setRecentPresetEntryId(id);
       return id;
-    }), [runMutation, session, settings.currency]);
+    }), [hasPremiumAccess, runMutation, session, settings.currency]);
 
   const updateEntry = useCallback((entry: JournalEntry) =>
-    runMutation(async () => {
+    runMutation("journal.update_entry", async () => {
       if (!session) throw new Error("Sign in before changing this entry.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to change entries.");
       if (entry.receipt) return correctReceiptEntry(entry);
       const currentCache = await readJournalCache(session.user.id);
       const current = currentCache.entries[entry.id];
@@ -270,39 +302,43 @@ function useJournalState() {
       } else {
         await correctJournalEntry(input, correctedTextExtraction(current, entry));
       }
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const deleteEntry = useCallback((id: string) =>
-    runMutation(async () => {
+    runMutation("journal.delete_entry", async () => {
       if (!session) throw new Error("Sign in before removing this entry.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to remove entries.");
       const currentCache = await readJournalCache(session.user.id);
       if (currentCache.receipts[id]) return deleteReceipt(id);
       if (!currentCache.entries[id]?.remote) {
         throw new Error("This note is saved. Let its first sync finish before removing it.");
       }
       await deleteJournalEntry(id);
-  }), [runMutation, session]);
+  }), [hasPremiumAccess, runMutation, session]);
 
   const askFinnToCorrectEntry = useCallback((id: string, instruction: string) =>
-    runMutation(async () => {
+    runMutation("journal.ai_correction", async () => {
       if (!session) throw new Error("Sign in before asking Finn to revise this entry.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required for Finn corrections.");
       await correctJournalEntryWithFinn(id, instruction);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const savePreset = useCallback((preset: Preset) =>
-    runMutation(async () => {
+    runMutation("preset.save", async () => {
       if (!session) throw new Error("Sign in before saving this shortcut.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to save shortcuts.");
       await savePresetForAccount(session.user.id, preset);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const deletePreset = useCallback((id: string) =>
-    runMutation(async () => {
+    runMutation("preset.delete", async () => {
       if (!session) throw new Error("Sign in before removing this shortcut.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to remove shortcuts.");
       await deletePresetForAccount(session.user.id, id);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const updateSettings = useCallback((patch: Partial<Preferences>) =>
-    runMutation(async () => {
+    runMutation("settings.update", async () => {
       const next = currentPreferences({ ...settings, ...patch });
       if (session) await saveSettingsForAccount(session.user.id, next);
       else {
@@ -312,28 +348,32 @@ function useJournalState() {
     }), [runMutation, session, settings]);
 
   const updateGoal = useCallback((id: string, limit: number) =>
-    runMutation(async () => {
+    runMutation("goal.update", async () => {
       if (!session) throw new Error("Sign in before changing a goal.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to change goals.");
       await updateGoalForAccount(session.user.id, id, limit);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const retrySync = useCallback((entryId: string) =>
-    runMutation(async () => {
+    runMutation("sync.retry", async () => {
       if (!session) throw new Error("Sign in before retrying this sync.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to sync entries.");
       await retryEntrySync(entryId);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const keepLocalVersion = useCallback((entryId: string) =>
-    runMutation(async () => {
+    runMutation("sync.keep_local", async () => {
       if (!session) throw new Error("Sign in before resolving this conflict.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to resolve sync conflicts.");
       await keepLocalEntryVersion(entryId);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const acceptRemoteVersion = useCallback((entryId: string) =>
-    runMutation(async () => {
+    runMutation("sync.accept_remote", async () => {
       if (!session) throw new Error("Sign in before resolving this conflict.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to resolve sync conflicts.");
       await acceptRemoteEntryVersion(entryId);
-    }), [runMutation, session]);
+    }), [hasPremiumAccess, runMutation, session]);
 
   const syncStatus = useMemo(() => {
     const journalJobs = ownedCache?.jobs.filter((job) =>
@@ -373,6 +413,8 @@ function useJournalState() {
     presets,
     settings,
     settingsReady,
+    initialSyncReady,
+    journalLoading,
     goals,
     cacheAccountId,
     contentVersion,

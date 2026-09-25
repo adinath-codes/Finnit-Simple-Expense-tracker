@@ -44,6 +44,32 @@ left screen edge; the other leans around the right edge with a blank receipt.
 Both retain the swept quiff, black sunglasses, imperfect ink contour, white
 interiors, and sparse `#20C878` pencil hatching. They contain no text or logos.
 
+## Journal header characters
+
+`header/` contains three transparent, monochrome Finn cutouts for the journal
+header: sitting cross-legged with a laptop, lying on the floor doing paperwork,
+and using a calculator. The header chooses one once when the app's JavaScript
+bundle starts, so the character stays stable during the session and changes on
+a later app launch.
+
+`finn-laptop-finn-it.png` is the first approval prototype with the handwritten
+phrase “Finn it!” curved over Finn's upper body. The journal header temporarily
+uses only this prototype while the other two poses remain unchanged pending user
+approval.
+
+`finn-laptop-wordmark-v2.png` is the revised approval prototype. Its flat
+`#20C878` handwritten glyphs use the full seated Finn as a shared visual
+replacement for both lowercase `i` letters: `F` and `nn` occupy the upper
+reading line, while `t!` sits at the lower right. The character remains strictly
+black and white on genuine transparency. The journal header currently uses this
+revision; the paperwork and calculator treatments still await approval.
+
+The built-in image generation tool created the cutouts from the established Finn
+identity references. The final prompts required only black and white, genuine
+transparency, a minimal prop set, no green, and silhouettes that remain clear at
+48 px. The saved app assets are trimmed and downscaled copies of the generated
+masters.
+
 Generation prompts requested isolated, genuinely transparent mobile cutouts in
 the established black/white/Finn-green editorial-cartoon style, cropped by an
 implied screen edge and readable around 150–160 px tall. The left prompt asked
@@ -59,6 +85,17 @@ September 21, 2026. The existing sign-in peek illustration was used as the
 strict identity and ink-style reference. Error is concerned with a hand near his
 chin, warning raises a finger, and info offers an open-handed explanation. The
 toast component supplies state color in text rather than in the character art.
+
+## Recovery screen
+
+`error/recovery.png` is the transparent recovery-screen cutout generated with
+the built-in image tool on September 22, 2026. Finn sits calmly and repairs a
+cracked piggy bank with a dollar-green bandage, turning a failure state into a
+small, manageable detour. The established thinking, toast-error, and onboarding
+blind-spot artwork were used as identity, line-work, and financial-prop
+references. The final prompt required flat monochrome ink, white fills, sparse
+`#20C878` hatching, one green dollar mark, and no backdrop, glow, warning symbol,
+red accent, panic, text, logo, or watermark.
 
 ## Playback and adding another animation
 

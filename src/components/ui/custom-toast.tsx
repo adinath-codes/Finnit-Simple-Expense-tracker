@@ -1,6 +1,7 @@
 import { Image } from "expo-image";
 import { StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, FadeOut, Keyframe } from "react-native-reanimated";
+import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
 import { useMotionPreference } from "@/hooks/use-motion-preference";
 
@@ -10,6 +11,9 @@ export type CustomToastProps = {
   mess: string;
   highlighted?: string;
   state: CustomToastState;
+  actionLabel?: string;
+  onAction?: () => void;
+  onDismiss?: () => void;
 };
 
 const presentation = {
@@ -36,13 +40,20 @@ const exit = new Keyframe({
   100: { opacity: 0, transform: [{ translateY: -7 }, { scale: 0.98 }] },
 }).duration(180);
 
-export function CustomToast({ mess, highlighted, state }: CustomToastProps) {
+export function CustomToast({
+  mess,
+  highlighted,
+  state,
+  actionLabel,
+  onAction,
+  onDismiss,
+}: CustomToastProps) {
   const reduced = useMotionPreference();
   const { image, color } = presentation[state];
 
   return (
     <Animated.View
-      accessible
+      accessible={!onAction && !onDismiss}
       accessibilityRole="alert"
       accessibilityLabel={[mess, highlighted].filter(Boolean).join(" ")}
       accessibilityLiveRegion={state === "info" ? "polite" : "assertive"}
@@ -62,7 +73,21 @@ export function CustomToast({ mess, highlighted, state }: CustomToastProps) {
         {highlighted ? (
           <Text style={[styles.highlighted, { color }]}>{highlighted}</Text>
         ) : null}
+        {actionLabel && onAction ? (
+          <Button
+            label={actionLabel}
+            onPress={onAction}
+            style={styles.actionButton}
+          >
+            <Text style={[styles.actionLabel, { color }]}>{actionLabel}</Text>
+          </Button>
+        ) : null}
       </View>
+      {onDismiss ? (
+        <Button label="Dismiss message" onPress={onDismiss} style={styles.dismissButton}>
+          <Text style={styles.dismissLabel}>×</Text>
+        </Button>
+      ) : null}
     </Animated.View>
   );
 }
@@ -96,5 +121,29 @@ const styles = StyleSheet.create({
     fontFamily: JournalType.medium,
     fontSize: 13,
     lineHeight: 17,
+  },
+  actionButton: {
+    alignSelf: "flex-start",
+    minHeight: 30,
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  actionLabel: {
+    fontFamily: JournalType.medium,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  dismissButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    justifyContent: "center",
+    minHeight: 32,
+    minWidth: 32,
+  },
+  dismissLabel: {
+    color: Finn.muted,
+    fontFamily: JournalType.regular,
+    fontSize: 22,
+    lineHeight: 24,
   },
 });

@@ -4,7 +4,7 @@ export default function TermsRoute() {
   return (
     <LegalDocumentScreen
       title="Terms of Service"
-      effectiveDate="September 19, 2026"
+      effectiveDate="September 23, 2026"
       intro="These terms govern your use of Finn. By creating an account or using the service, you agree to them."
       sections={[
         {
@@ -25,6 +25,14 @@ export default function TermsRoute() {
           heading: "Not financial advice",
           paragraphs: [
             "Finn is a journaling and information tool. It does not provide financial, tax, accounting, investment, or legal advice. Review entries and calculations before relying on them for important decisions.",
+          ],
+        },
+        {
+          heading: "Finn Premium subscription",
+          paragraphs: [
+            "Finn requires an active Premium subscription. The purchase screen shows the subscription name, billing period, localized full renewal price, included service, and any introductory trial for which your store account is eligible before you confirm a purchase.",
+            "Subscriptions purchased through Apple are charged to your Apple Account and renew automatically unless you cancel before the current period ends. You can manage or cancel the subscription in your App Store subscription settings. Deleting your Finn account does not automatically cancel a store subscription.",
+            "If an eligible three-day free trial is shown, billing begins at the displayed renewal price when the trial ends unless you cancel first. Offer-code eligibility, duration, redemption, billing, refunds, and renewals are administered by the App Store under its terms.",
           ],
         },
         {
