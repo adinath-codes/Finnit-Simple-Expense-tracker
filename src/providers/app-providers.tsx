@@ -23,11 +23,16 @@ import {
   captureJournalNote,
   createCaptureInput,
   refreshJournal,
+  refreshJournalRange,
 } from "@/features/journal/services/journal-service";
 import {
   correctedTextExtraction,
   journalEntriesFromCache,
 } from "@/features/journal/services/journal-adapter";
+import {
+  planEntryTextSave,
+  type EntryTextSaveMode,
+} from "@/features/journal/services/journal-edit-flow";
 import {
   deleteJournalEntry,
   correctJournalEntry,
@@ -90,6 +95,7 @@ function useJournalState() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [recentPresetEntryId, setRecentPresetEntryId] = useState<string | null>(null);
   const clearRecentPresetEntry = useCallback(() => setRecentPresetEntryId(null), []);
+  const clearMutationError = useCallback(() => setMutationError(null), []);
 
   useEffect(() => {
     let active = true;
@@ -239,6 +245,11 @@ function useJournalState() {
   const cacheAccountId = ownerId ?? "signed-out";
   const contentVersion = ownedCache?.metadata.contentVersion ?? 0;
 
+  const loadJournalRange = useCallback(async (startDate: string, endDate: string) => {
+    if (!session || !hasPremiumAccess) return;
+    await refreshJournalRange(startDate, endDate, session.user.id);
+  }, [hasPremiumAccess, session]);
+
   const runMutation = useCallback(async <T,>(
     operationName: string,
     operation: () => Promise<T>,
@@ -301,6 +312,30 @@ function useJournalState() {
         await reparseJournalEntry(input);
       } else {
         await correctJournalEntry(input, correctedTextExtraction(current, entry));
+      }
+    }), [hasPremiumAccess, runMutation, session]);
+
+  const saveEntryText = useCallback((
+    id: string,
+    note: string,
+    mode: EntryTextSaveMode,
+  ) =>
+    runMutation("journal.save_entry_text", async () => {
+      if (!session) throw new Error("Sign in before changing this entry.");
+      if (!hasPremiumAccess) throw new Error("Finn Premium is required to change entries.");
+      const currentCache = await readJournalCache(session.user.id);
+      const current = currentCache.entries[id];
+      if (!current) throw new Error("This journal entry is no longer available.");
+      if (!current.remote) {
+        throw new Error("This note is saved. Let its first sync finish before editing it.");
+      }
+      const plan = planEntryTextSave(current, note, mode);
+      if (!plan.input.raw_text) throw new Error("A journal note can’t be empty.");
+      if (plan.input.raw_text === current.input.raw_text) return;
+      if (mode === "recalculate") {
+        await reparseJournalEntry(plan.input);
+      } else {
+        await correctJournalEntry(plan.input, plan.extraction!);
       }
     }), [hasPremiumAccess, runMutation, session]);
 
@@ -418,10 +453,11 @@ function useJournalState() {
     goals,
     cacheAccountId,
     contentVersion,
+    loadJournalRange,
     selectedDate,
     syncStatus,
     mutationError,
-    clearMutationError: () => setMutationError(null),
+    clearMutationError,
     setSelectedDate,
     updateGoal,
     captureNote,
@@ -429,6 +465,7 @@ function useJournalState() {
     recentPresetEntryId,
     clearRecentPresetEntry,
     updateEntry,
+    saveEntryText,
     askFinnToCorrectEntry,
     deleteEntry,
     savePreset,
@@ -440,18 +477,137 @@ function useJournalState() {
   };
 }
 
-const JournalContext = createContext<ReturnType<typeof useJournalState> | null>(null);
+type JournalState = ReturnType<typeof useJournalState>;
+type JournalData = Pick<JournalState,
+  | "today" | "profile" | "entries" | "presets" | "settings" | "goals"
+  | "cacheAccountId" | "contentVersion" | "selectedDate" | "recentPresetEntryId"
+>;
+type JournalStatus = Pick<JournalState,
+  | "settingsReady" | "initialSyncReady" | "journalLoading" | "syncStatus"
+  | "mutationError"
+>;
+type JournalActions = Pick<JournalState,
+  | "loadJournalRange" | "setSelectedDate" | "updateGoal" | "captureNote"
+  | "capturePreset" | "clearRecentPresetEntry" | "updateEntry"
+  | "saveEntryText"
+  | "askFinnToCorrectEntry" | "deleteEntry" | "savePreset" | "deletePreset"
+  | "updateSettings" | "retrySync" | "keepLocalVersion" | "acceptRemoteVersion"
+  | "clearMutationError"
+>;
+
+const JournalDataContext = createContext<JournalData | null>(null);
+const JournalStatusContext = createContext<JournalStatus | null>(null);
+const JournalActionsContext = createContext<JournalActions | null>(null);
 
 export function AppProviders({ children }: PropsWithChildren) {
+  const state = useJournalState();
+  const data = useMemo<JournalData>(() => ({
+    today: state.today,
+    profile: state.profile,
+    entries: state.entries,
+    presets: state.presets,
+    settings: state.settings,
+    goals: state.goals,
+    cacheAccountId: state.cacheAccountId,
+    contentVersion: state.contentVersion,
+    selectedDate: state.selectedDate,
+    recentPresetEntryId: state.recentPresetEntryId,
+  }), [
+    state.cacheAccountId,
+    state.contentVersion,
+    state.entries,
+    state.goals,
+    state.presets,
+    state.profile,
+    state.recentPresetEntryId,
+    state.selectedDate,
+    state.settings,
+    state.today,
+  ]);
+  const status = useMemo<JournalStatus>(() => ({
+    settingsReady: state.settingsReady,
+    initialSyncReady: state.initialSyncReady,
+    journalLoading: state.journalLoading,
+    syncStatus: state.syncStatus,
+    mutationError: state.mutationError,
+  }), [
+    state.initialSyncReady,
+    state.journalLoading,
+    state.mutationError,
+    state.settingsReady,
+    state.syncStatus,
+  ]);
+  const actions = useMemo<JournalActions>(() => ({
+    loadJournalRange: state.loadJournalRange,
+    setSelectedDate: state.setSelectedDate,
+    updateGoal: state.updateGoal,
+    captureNote: state.captureNote,
+    capturePreset: state.capturePreset,
+    clearRecentPresetEntry: state.clearRecentPresetEntry,
+    updateEntry: state.updateEntry,
+    saveEntryText: state.saveEntryText,
+    askFinnToCorrectEntry: state.askFinnToCorrectEntry,
+    deleteEntry: state.deleteEntry,
+    savePreset: state.savePreset,
+    deletePreset: state.deletePreset,
+    updateSettings: state.updateSettings,
+    retrySync: state.retrySync,
+    keepLocalVersion: state.keepLocalVersion,
+    acceptRemoteVersion: state.acceptRemoteVersion,
+    clearMutationError: state.clearMutationError,
+  }), [
+    state.acceptRemoteVersion,
+    state.askFinnToCorrectEntry,
+    state.captureNote,
+    state.capturePreset,
+    state.clearMutationError,
+    state.clearRecentPresetEntry,
+    state.deleteEntry,
+    state.deletePreset,
+    state.keepLocalVersion,
+    state.loadJournalRange,
+    state.retrySync,
+    state.savePreset,
+    state.setSelectedDate,
+    state.updateEntry,
+    state.saveEntryText,
+    state.updateGoal,
+    state.updateSettings,
+  ]);
   return (
-    <JournalContext.Provider value={useJournalState()}>
-      {children}
-    </JournalContext.Provider>
+    <JournalActionsContext.Provider value={actions}>
+      <JournalStatusContext.Provider value={status}>
+        <JournalDataContext.Provider value={data}>
+          {children}
+        </JournalDataContext.Provider>
+      </JournalStatusContext.Provider>
+    </JournalActionsContext.Provider>
   );
 }
 
-export function useJournal() {
-  const context = useContext(JournalContext);
-  if (!context) throw new Error("useJournal must be used within AppProviders");
+export function useJournalData() {
+  const context = useContext(JournalDataContext);
+  if (!context) throw new Error("useJournalData must be used within AppProviders");
   return context;
+}
+
+export function useJournalStatus() {
+  const context = useContext(JournalStatusContext);
+  if (!context) throw new Error("useJournalStatus must be used within AppProviders");
+  return context;
+}
+
+export function useJournalActions() {
+  const context = useContext(JournalActionsContext);
+  if (!context) throw new Error("useJournalActions must be used within AppProviders");
+  return context;
+}
+
+/** Compatibility hook for low-frequency surfaces; prefer the focused hooks. */
+export function useJournal() {
+  return {
+    ...useJournalData(),
+    ...useJournalStatus(),
+    ...useJournalActions(),
+  };
 }

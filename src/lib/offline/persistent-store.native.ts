@@ -9,7 +9,11 @@ import {
   previousJournalCacheKey,
 } from "./cache-schema";
 import { getOfflineDatabase, OFFLINE_SQLITE_VERSION } from "./sqlite.native";
-import type { PersistentCacheStore } from "./persistent-store.types";
+import type {
+  CacheMutationTargets,
+  PersistentCacheStore,
+} from "./persistent-store.types";
+import { retainOfflineJournalWindow } from "./journal-retention";
 
 type PayloadRow = { id: string; payload: string };
 type ReceiptLineRow = { entry_id: string; payload: string };
@@ -183,6 +187,129 @@ async function writeCache(
   });
 }
 
+function selectedRecord<T>(record: Record<string, T>, ids: readonly string[] = []) {
+  return new Map(ids.flatMap((id) => record[id] ? [[id, record[id]] as const] : []));
+}
+
+async function writeTargetedCache(
+  db: SQLiteDatabase,
+  userId: string,
+  previous: JournalCache,
+  next: JournalCache,
+  targets: CacheMutationTargets,
+) {
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    if (targets.entryIds) {
+      await syncPayloadRows(
+        transaction,
+        "journal_entries",
+        userId,
+        selectedRecord(previous.entries, targets.entryIds),
+        selectedRecord(next.entries, targets.entryIds),
+        (value) => (value as JournalCache["entries"][string]).input.captured_at,
+      );
+    }
+
+    if (targets.receiptIds) {
+      for (const id of targets.receiptIds) {
+        const receipt = next.receipts[id];
+        if (!receipt) {
+          await transaction.runAsync(
+            "DELETE FROM receipts WHERE user_id=? AND entry_id=?",
+            userId,
+            id,
+          );
+          continue;
+        }
+        await transaction.runAsync(
+          `INSERT INTO receipts(user_id,entry_id,captured_at,payload) VALUES(?,?,?,?)
+           ON CONFLICT(user_id,entry_id) DO UPDATE SET
+             captured_at=excluded.captured_at,payload=excluded.payload`,
+          userId,
+          id,
+          receipt.request.captured_at,
+          encoded(receiptWithoutLines(receipt)),
+        );
+        await transaction.runAsync(
+          "DELETE FROM receipt_lines WHERE user_id=? AND entry_id=?",
+          userId,
+          id,
+        );
+        for (const line of receipt.lines) {
+          await transaction.runAsync(
+            "INSERT INTO receipt_lines(user_id,entry_id,ordinal,payload) VALUES(?,?,?,?)",
+            userId,
+            id,
+            line.ordinal,
+            encoded(line),
+          );
+        }
+      }
+    }
+
+    if (targets.jobs) {
+      const before = new Map(previous.jobs.map((job) => [job.id, job]));
+      const after = new Map(next.jobs.map((job) => [job.id, job]));
+      for (const id of before.keys()) {
+        if (!after.has(id)) {
+          await transaction.runAsync(
+            "DELETE FROM outbox_jobs WHERE user_id=? AND id=?",
+            userId,
+            id,
+          );
+        }
+      }
+      for (const [id, job] of after) {
+        if (before.has(id) && encoded(before.get(id)) === encoded(job)) continue;
+        await transaction.runAsync(
+          `INSERT INTO outbox_jobs(user_id,id,entry_id,next_attempt_at,payload)
+           VALUES(?,?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET
+             entry_id=excluded.entry_id,next_attempt_at=excluded.next_attempt_at,
+             payload=excluded.payload`,
+          userId,
+          id,
+          job.entryId,
+          job.nextAttemptAt,
+          encoded(job),
+        );
+      }
+    }
+
+    if (targets.presets) {
+      await syncPayloadRows(
+        transaction,
+        "presets",
+        userId,
+        rowMap(previous.local.presets),
+        rowMap(next.local.presets),
+      );
+    }
+    if (targets.goals) {
+      await syncPayloadRows(
+        transaction,
+        "goals",
+        userId,
+        rowMap(previous.local.goals),
+        rowMap(next.local.goals),
+      );
+    }
+    if (targets.settings) {
+      await transaction.runAsync(
+        `INSERT INTO settings(user_id,payload) VALUES(?,?)
+         ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload`,
+        userId,
+        encoded(next.local.settings),
+      );
+    }
+    await transaction.runAsync(
+      `INSERT INTO account_state(user_id,payload) VALUES(?,?)
+       ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload`,
+      userId,
+      encoded(statePayload(next)),
+    );
+  });
+}
+
 async function rowCount(db: SQLiteDatabase, table: string, userId: string) {
   const row = await db.getFirstAsync<{ count: number }>(
     `SELECT count(*) count FROM ${table} WHERE user_id=?`, userId,
@@ -301,7 +428,7 @@ async function readSqlite(userId: string): Promise<JournalCache | null> {
     if (receipt.attachment) receipt.attachment.lines = storedLines;
     return [row.id, receipt];
   }));
-  return normalizeJournalCache({
+  const loaded = normalizeJournalCache({
     version: metadata.version,
     entries: Object.fromEntries(entries.map((row) => [row.id, JSON.parse(row.payload)])),
     receipts: receiptRecords,
@@ -316,6 +443,13 @@ async function readSqlite(userId: string): Promise<JournalCache | null> {
       legacyPreferencesImported: metadata.legacyPreferencesImported,
     },
   });
+  const retained = retainOfflineJournalWindow(loaded);
+  if (retained !== loaded) {
+    // Clean up rows written by older app versions. The same exclusive
+    // transaction also cascades removed receipt lines.
+    await writeCache(db, userId, loaded, retained);
+  }
+  return retained;
 }
 
 async function readLegacy(userId: string) {
@@ -335,13 +469,13 @@ export const persistentCacheStore: PersistentCacheStore = {
     const legacy = await readLegacy(userId);
     if (!legacy) return emptyJournalCache();
     const db = await getOfflineDatabase();
-    const migrated = {
+    const migrated = retainOfflineJournalWindow({
       ...legacy,
       metadata: {
         ...legacy.metadata,
         sqliteMigrationVersion: OFFLINE_SQLITE_VERSION,
       },
-    };
+    });
     // Counts, job payloads and representative decoding are verified before
     // account_state marks this transaction as a completed migration.
     await writeCache(db, userId, null, migrated, true);
@@ -351,8 +485,23 @@ export const persistentCacheStore: PersistentCacheStore = {
     ]);
     return migrated;
   },
-  async write(userId, previous, next) {
-    await writeCache(await getOfflineDatabase(), userId, previous, next);
+  async write(userId, previous, next, targets) {
+    const db = await getOfflineDatabase();
+    const before = previous ? retainOfflineJournalWindow(previous) : null;
+    const after = retainOfflineJournalWindow(next);
+    if (before && targets) {
+      const prunedEntryIds = Object.keys(before.entries)
+        .filter((id) => !after.entries[id]);
+      const prunedReceiptIds = Object.keys(before.receipts)
+        .filter((id) => !after.receipts[id]);
+      await writeTargetedCache(db, userId, before, after, {
+        ...targets,
+        entryIds: [...new Set([...(targets.entryIds ?? []), ...prunedEntryIds])],
+        receiptIds: [...new Set([...(targets.receiptIds ?? []), ...prunedReceiptIds])],
+      });
+      return;
+    }
+    await writeCache(db, userId, before, after);
   },
   async delete(userId) {
     const db = await getOfflineDatabase();

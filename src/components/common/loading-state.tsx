@@ -44,8 +44,13 @@ export function SkeletonBlock({ width = "100%", height = 16, radius = 8 }: {
 }
 
 /** Only mount while work is pending. `active` tracks route visibility. */
-export function LoadingState({ variant = "startup", label = "Loading…", active = true }: {
-  variant?: LoadingVariant; label?: string; active?: boolean;
+export function LoadingState({
+  variant = "startup",
+  label = "Loading…",
+  active = true,
+  announce = true,
+}: {
+  variant?: LoadingVariant; label?: string; active?: boolean; announce?: boolean;
 }) {
   const [visible, setVisible] = useState(false);
   const [foreground, setForeground] = useState(AppState.currentState === "active");
@@ -64,9 +69,18 @@ export function LoadingState({ variant = "startup", label = "Loading…", active
     return () => cancelAnimation(phase);
   }, [animate, phase]);
   const fullPage = variant === "startup" || variant === "onboarding" || variant === "capture";
-  return <View style={[styles.container, fullPage && styles.fullPage]} accessibilityState={{ busy: true }}>
+  return <View
+    style={[styles.container, fullPage && styles.fullPage]}
+    accessibilityState={announce ? { busy: true } : undefined}
+  >
     {visible && <ContentFade>
-      <View accessible accessibilityLabel={label} accessibilityLiveRegion="polite">
+      <View
+        accessible={announce}
+        accessibilityElementsHidden={!announce}
+        accessibilityLabel={announce ? label : undefined}
+        accessibilityLiveRegion={announce ? "polite" : "none"}
+        importantForAccessibility={announce ? "auto" : "no-hide-descendants"}
+      >
         <Text style={styles.label}>{label}</Text>
       </View>
       <ShimmerContext.Provider value={animate ? phase : null}>

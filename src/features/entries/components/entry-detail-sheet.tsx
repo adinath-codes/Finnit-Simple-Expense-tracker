@@ -1,4 +1,36 @@
+import { LoadingState } from "@/components/common/loading-state";
+import {
+  AppSheet,
+  closeSheet,
+  SectionLabel,
+  sheetStyles as shared,
+} from "@/components/sheets/app-sheet";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { IconButton } from "@/components/ui/icon-button";
 import { ContentFade } from "@/components/ui/motion";
+import { Finn, JournalType } from "@/constants/theme";
+import { useSession } from "@/features/auth/providers/session-provider";
+import { retryReceipt } from "@/features/camera/services/receipt-service";
+import { amountBreakdownText } from "@/features/entries/services/breakdown-service";
+import {
+  ANALYTICS_EVENTS,
+  captureAnalytics,
+} from "@/lib/analytics/analytics";
+import {
+  useJournalActions,
+  useJournalData,
+  useJournalStatus,
+} from "@/providers/app-providers";
+import type {
+  EntryAllocationRow,
+  EntryAmountTerm,
+  JournalAmountPreview,
+} from "@/types/domain";
+import { entryTotal } from "@/utils/amounts";
+import { currencySymbol, money, moneyValue } from "@/utils/currency";
+import { Image } from "expo-image";
+import { useLocalSearchParams } from "expo-router";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -12,32 +44,12 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
-import { Image } from "expo-image";
-import {
-  AppSheet,
-  SectionLabel,
-  sheetStyles as shared,
-  closeSheet,
-} from "@/components/sheets/app-sheet";
-import { IconButton } from "@/components/ui/icon-button";
-import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
-import { Finn, JournalType } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
-import type { EntryAllocationRow, EntryAmountTerm } from "@/types/domain";
-import { entryTotal } from "@/utils/amounts";
-import { currencySymbol, moneyValue } from "@/utils/currency";
-import { TransactionBreakdown } from "./transaction-breakdown";
-import { ReceiptPreview } from "./receipt-preview";
-import { retryReceipt } from "@/features/camera/services/receipt-service";
+import Animated, { FadeIn, ZoomIn } from "react-native-reanimated";
+import { Motion } from "@/constants/motion";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { FinnCorrectionComposer } from "./finn-correction-composer";
-import { useSession } from "@/features/auth/providers/session-provider";
-import { amountBreakdownText } from "@/features/entries/services/breakdown-service";
-import {
-  ANALYTICS_EVENTS,
-  captureAnalytics,
-} from "@/lib/analytics/analytics";
+import { ReceiptPreview } from "./receipt-preview";
+import { TransactionBreakdown } from "./transaction-breakdown";
 
 const BANKNOTE_GREEN = "#20C878";
 const ACTION_MENU_WIDTH = 252;
@@ -51,20 +63,20 @@ type ActionAnchor = {
 };
 
 export default function EntryDetailSheet() {
+  const reducedMotion = useMotionPreference();
   const { entryId } = useLocalSearchParams<{ entryId: string }>();
+  const { entries, settings } = useJournalData();
   const {
-    entries,
     updateEntry,
     savePreset,
     deleteEntry,
-    settings,
-    mutationError,
     clearMutationError,
     retrySync,
     keepLocalVersion,
     acceptRemoteVersion,
     askFinnToCorrectEntry,
-  } = useJournal();
+  } = useJournalActions();
+  const { mutationError } = useJournalStatus();
   const { session } = useSession();
   const { width: windowWidth } = useWindowDimensions();
   const entry = entries.find((item) => item.id === entryId);
@@ -110,6 +122,11 @@ export default function EntryDetailSheet() {
 
   const total = entryTotal(entry);
   const mixedCurrencies = new Set(entry.items.map((item) => item.currency ?? settings.currency)).size > 1;
+  const amountPreview = !entry.receipt && entry.syncState === "pending"
+    ? entry.amountPreview
+    : undefined;
+  const isFinnCorrectionPending = entry.syncState === "pending" &&
+    entry.pendingAction === "ai_correct";
   const saveEditedNote = async () => {
     const value = note.trim();
     if (entry.receipt || value) {
@@ -188,17 +205,23 @@ export default function EntryDetailSheet() {
   };
   const menuLeft = actionAnchor
     ? Math.min(
-        windowWidth - ACTION_MENU_WIDTH - ACTION_MENU_MARGIN,
-        Math.max(
-          ACTION_MENU_MARGIN,
-          actionAnchor.x + actionAnchor.width - ACTION_MENU_WIDTH,
-        ),
-      )
+      windowWidth - ACTION_MENU_WIDTH - ACTION_MENU_MARGIN,
+      Math.max(
+        ACTION_MENU_MARGIN,
+        actionAnchor.x + actionAnchor.width - ACTION_MENU_WIDTH,
+      ),
+    )
     : ACTION_MENU_MARGIN;
+  const actionOriginX = actionAnchor
+    ? Math.min(
+      ACTION_MENU_WIDTH,
+      Math.max(0, actionAnchor.x + actionAnchor.width / 2 - menuLeft),
+    )
+    : ACTION_MENU_WIDTH;
 
   return (
     <AppSheet
-      title="Entry Details"
+      title="Expense Details"
       headerLayout="leading"
       headerScrollable
       bodyStyle={styles.body}
@@ -215,19 +238,21 @@ export default function EntryDetailSheet() {
       ) : undefined}
       right={
         <View style={styles.headerActions}>
-          <IconButton
-            ref={actionsButton}
-            name={editing ? "check" : "more"}
-            label={editing
-              ? entry.receipt ? "Save receipt merchant" : "Save entry text"
-              : "Entry actions"}
-            accessibilityState={{ expanded: actionsOpen }}
-            onPress={async () => {
-              if (editing) void saveEditedNote();
-              else if (actionsOpen) setActionsOpen(false);
-              else openActions();
-            }}
-          />
+          {entry.syncState !== "pending" && (
+            <IconButton
+              ref={actionsButton}
+              name={editing ? "check" : "more"}
+              label={editing
+                ? entry.receipt ? "Save receipt merchant" : "Save entry text"
+                : "Entry actions"}
+              accessibilityState={{ expanded: actionsOpen }}
+              onPress={async () => {
+                if (editing) void saveEditedNote();
+                else if (actionsOpen) setActionsOpen(false);
+                else openActions();
+              }}
+            />
+          )}
           <IconButton
             name="close"
             label="Close entry details"
@@ -265,12 +290,20 @@ export default function EntryDetailSheet() {
           <Icon name="refresh" color={Finn.muted} size={16} />
           <View style={styles.syncCopy}>
             <Text style={styles.syncTitle}>
-              {entry.pendingAction === "ai_correct" ? "Finn is revising the breakdown" : "Saved on this device"}
+              {entry.pendingAction === "ai_correct"
+                ? "Finn is revising the breakdown"
+                : amountPreview
+                  ? "Amount found"
+                  : "Saved on this device"}
             </Text>
             <Text style={shared.subtle}>
               {entry.pendingAction === "ai_correct"
-                ? "The current breakdown stays here while this revision syncs."
-                : "Waiting to sync. Finn will keep retrying automatically."}
+                ? "The entry details will update when Finn finishes."
+                : amountPreview
+                  ? entry.syncError
+                    ? "Finn will finish this automatically when connected."
+                    : "Finn is finishing the breakdown."
+                  : "Waiting to sync. Finn will keep retrying automatically."}
             </Text>
           </View>
         </View>
@@ -325,7 +358,7 @@ export default function EntryDetailSheet() {
       )}
       {actionsOpen && actionAnchor && !editing && (
         <Modal
-          animationType="fade"
+          animationType="none"
           onRequestClose={() => setActionsOpen(false)}
           transparent
           visible
@@ -337,85 +370,81 @@ export default function EntryDetailSheet() {
               onPress={() => setActionsOpen(false)}
               style={StyleSheet.absoluteFill}
             />
-            <View
+            <Animated.View
               accessibilityLabel="Entry actions"
               accessibilityViewIsModal
+              entering={reducedMotion
+                ? FadeIn.duration(Motion.fade)
+                : ZoomIn
+                  .duration(Motion.content)
+                  .easing(Motion.easeOut)
+                  .withInitialValues({ transform: [{ scale: 0.94 }] })}
               style={[
                 styles.actionsMenu,
                 {
                   left: menuLeft,
                   top: actionAnchor.y + actionAnchor.height + 8,
+                  transformOrigin: [actionOriginX, 0, 0],
                 },
               ]}
             >
-              <View
-                style={[
-                  styles.actionPointer,
-                  {
-                    left: Math.min(
-                      ACTION_MENU_WIDTH - 28,
-                      Math.max(18, actionAnchor.x + actionAnchor.width / 2 - menuLeft - 6),
-                    ),
-                  },
-                ]}
-              />
-          <Button
-            label={entry.receipt ? "Edit receipt merchant" : "Edit the original note"}
-            onPress={() => {
-              setActionsOpen(false);
-              setNote(entry.receipt
-                ? entry.merchant
-                : entry.note);
-              setEditing(true);
-            }}
-            style={styles.actionRow}
-          >
-            <Icon name="edit" size={15} color={Finn.primary} />
-            <Text style={styles.actionText}>
-              {entry.receipt ? "Edit receipt merchant" : "Edit the original note"}
-            </Text>
-          </Button>
-          <View style={styles.actionDivider} />
-          <Button
-            label={saved ? "Saved as a preset" : "Save as a preset"}
-            disabled={mixedCurrencies}
-            onPress={async () => {
-              try {
-                await savePreset({
-                  id: `saved-${entry.id}`,
-                  name: entry.note.split("\n")[0],
-                  note: entry.note,
-                  amountMinor: total,
-                  category: entry.category,
-                });
-              } catch { return; }
-              setSaved(true);
-              setConfirmation((current) => ({ kind: "shortcut", trigger: (current?.trigger ?? 0) + 1 }));
-              setActionsOpen(false);
-            }}
-            style={styles.actionRow}
-          >
-            <Icon
-              name={saved ? "check" : "bookmark"}
-              size={15}
-              color={Finn.primary}
-            />
-            <Text style={styles.actionText}>
-              {saved ? "Saved as a preset" : "Save as a preset"}
-            </Text>
-          </Button>
-          <View style={styles.actionDivider} />
-          <Button
-            label="Delete this entry"
-            onPress={confirmDelete}
-            style={styles.actionRow}
-          >
-            <Icon name="trash" size={15} color={Finn.danger} />
-            <Text style={[styles.actionText, { color: Finn.danger }]}>
-              Delete this entry
-            </Text>
-          </Button>
-            </View>
+              <Button
+                label={entry.receipt ? "Edit receipt merchant" : "Edit the original note"}
+                onPress={() => {
+                  setActionsOpen(false);
+                  setNote(entry.receipt
+                    ? entry.merchant
+                    : entry.note);
+                  setEditing(true);
+                }}
+                style={styles.actionRow}
+              >
+                <Icon name="edit" size={15} color={Finn.primary} />
+                <Text style={styles.actionText}>
+                  {entry.receipt ? "Edit receipt merchant" : "Edit the original note"}
+                </Text>
+              </Button>
+              <View style={styles.actionDivider} />
+              <Button
+                label={saved ? "Saved as a preset" : "Save as a preset"}
+                disabled={mixedCurrencies}
+                onPress={async () => {
+                  try {
+                    await savePreset({
+                      id: `saved-${entry.id}`,
+                      name: entry.note.split("\n")[0],
+                      note: entry.note,
+                      amountMinor: total,
+                      category: entry.category,
+                    });
+                  } catch { return; }
+                  setSaved(true);
+                  setConfirmation((current) => ({ kind: "shortcut", trigger: (current?.trigger ?? 0) + 1 }));
+                  setActionsOpen(false);
+                }}
+                style={styles.actionRow}
+              >
+                <Icon
+                  name={saved ? "check" : "bookmark"}
+                  size={15}
+                  color={Finn.primary}
+                />
+                <Text style={styles.actionText}>
+                  {saved ? "Saved as a preset" : "Save as a preset"}
+                </Text>
+              </Button>
+              <View style={styles.actionDivider} />
+              <Button
+                label="Delete this entry"
+                onPress={confirmDelete}
+                style={styles.actionRow}
+              >
+                <Icon name="trash" size={15} color={Finn.danger} />
+                <Text style={[styles.actionText, { color: Finn.danger }]}>
+                  Delete this entry
+                </Text>
+              </Button>
+            </Animated.View>
           </View>
         </Modal>
       )}
@@ -500,54 +529,124 @@ export default function EntryDetailSheet() {
       )}
 
       <SectionLabel style={styles.sectionLabel}>Amount breakdown</SectionLabel>
-      <View style={[shared.card, styles.amountCard]}>
-        <AmountExpression terms={entry.amountBreakdown ?? []} />
-      </View>
+      {isFinnCorrectionPending
+        ? <LoadingState
+          label="Finn is revising the entry details."
+          variant="explanation"
+        />
+        : <View style={[shared.card, styles.amountCard]}>
+          {amountPreview
+            ? <PreliminaryAmount preview={amountPreview} displayCurrency={settings.currency} />
+            : <AmountExpression terms={entry.amountBreakdown ?? []} displayCurrency={settings.currency} />}
+        </View>}
 
       <SectionLabel style={styles.sectionLabel}>Items breakdown</SectionLabel>
-      {!entry.receipt && entry.allocationRows?.length
-        ? <ParticipantBreakdown
-            rows={entry.allocationRows}
-            selfName={session?.user.user_metadata.full_name ?? session?.user.user_metadata.name}
-          />
-        : <TransactionBreakdown entry={entry} onChange={updateEntry} />}
+      {isFinnCorrectionPending
+        ? <LoadingState
+          announce={false}
+          label="Finn is revising the items breakdown."
+          variant="transactions"
+        />
+        : amountPreview
+        ? <LoadingState
+          active={!entry.syncError}
+          label={entry.syncError
+            ? "Breakdown paused. Finn will finish automatically when connected."
+            : "Amount found. Finn is finishing the breakdown."}
+          variant="transactions"
+        />
+        : <ContentFade>
+          {!entry.receipt && entry.allocationRows?.length
+            ? <ParticipantBreakdown
+              displayCurrency={settings.currency}
+              rows={entry.allocationRows}
+              selfName={session?.user.user_metadata.full_name ?? session?.user.user_metadata.name}
+            />
+            : <TransactionBreakdown entry={entry} currency={settings.currency} onChange={updateEntry} />}
+        </ContentFade>}
 
       <SectionLabel style={styles.sectionLabel}>
         Finn’s thought process
       </SectionLabel>
-      <View style={[shared.card, styles.thoughtCard]}>
-        <Image
-          accessibilityLabel="Finn working on a laptop"
-          contentFit="contain"
-          source={require("../../../../assets/images/character/onboarding/future-question-base.png")}
-          style={styles.thoughtIllustration}
+      {isFinnCorrectionPending
+        ? <LoadingState
+          announce={false}
+          label="Finn is updating the explanation."
+          variant="explanation"
         />
-        <Text style={styles.thoughtText}>{entry.thought}</Text>
-        {!entry.receipt && (
-          <Button
-            disabled={entry.syncState === "pending"}
-            label="Tell Finn what to change in the breakdown"
-            onPress={() => setCorrectionOpen(true)}
-            style={styles.correct}
-          >
-            <Icon name="edit" size={12} color={Finn.primary} />
-            <Text style={styles.correctText}>Something’s off? Click here to edit.</Text>
-          </Button>
-        )}
-      </View>
+        : amountPreview
+        ? <LoadingState
+          active={!entry.syncError}
+          announce={false}
+          label="Finn explanation is still processing."
+          variant="explanation"
+        />
+        : <ContentFade>
+          <View style={[shared.card, styles.thoughtCard]}>
+            <Image
+              accessibilityLabel="Finn working on a laptop"
+              contentFit="contain"
+              source={require("../../../../assets/images/character/onboarding/future-question-base.png")}
+              style={styles.thoughtIllustration}
+            />
+            <Text style={styles.thoughtText}>{entry.thought}</Text>
+            {!entry.receipt && (
+              <Button
+                disabled={entry.syncState === "pending"}
+                label="Tell Finn what to change in the breakdown"
+                onPress={() => setCorrectionOpen(true)}
+                style={styles.correct}
+              >
+                <Icon name="edit" size={12} color={Finn.primary} />
+                <Text style={styles.correctText}>Something’s off? Click here to edit.</Text>
+              </Button>
+            )}
+          </View>
+        </ContentFade>}
 
     </AppSheet>
   );
 }
 
+function PreliminaryAmount({
+  displayCurrency,
+  preview,
+}: {
+  displayCurrency: string;
+  preview: JournalAmountPreview;
+}) {
+  const scope = preview.scope === "user_share"
+    ? "Your share"
+    : preview.scope === "group_total"
+      ? "Group total"
+      : "Total";
+  return (
+    <View
+      accessible
+      accessibilityLabel={`Estimated ${scope.toLowerCase()} ${money(preview.amountMinor, preview.currency, displayCurrency)}. Breakdown still processing.`}
+      accessibilityLiveRegion="polite"
+      style={styles.preliminaryAmount}
+    >
+      <Text style={styles.preliminaryScope}>{scope}</Text>
+      <Text style={styles.preliminaryValue}>
+        ≈<Text style={styles.currencySymbol}>{currencySymbol(displayCurrency)}</Text>
+        {moneyValue(preview.amountMinor, preview.currency)}
+      </Text>
+      <Text style={styles.preliminaryBadge}>Preliminary</Text>
+    </View>
+  );
+}
+
 function AmountExpression({
+  displayCurrency,
   terms,
 }: {
+  displayCurrency: string;
   terms: EntryAmountTerm[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const approximate = terms.some((term) => term.approximate);
-  const label = amountBreakdownText(terms);
+  const label = amountBreakdownText(terms, displayCurrency);
   if (!terms.length) {
     return <Text style={styles.amountPlaceholder}>No amount breakdown yet</Text>;
   }
@@ -570,7 +669,7 @@ function AmountExpression({
             <Fragment key={term.id}>
               {index > 0 && <Text style={styles.amountOperator}> + </Text>}
               <Text>{term.factors.join(" * ")} * </Text>
-              <Text style={styles.currencySymbol}>{currencySymbol(term.currency)}</Text>
+              <Text style={styles.currencySymbol}>{currencySymbol(displayCurrency)}</Text>
               <Text>{moneyValue(term.unitAmountMinor, term.currency)}</Text>
             </Fragment>
           ))}
@@ -582,9 +681,11 @@ function AmountExpression({
 }
 
 function ParticipantBreakdown({
+  displayCurrency,
   rows,
   selfName,
 }: {
+  displayCurrency: string;
   rows: EntryAllocationRow[];
   selfName?: string;
 }) {
@@ -595,7 +696,7 @@ function ParticipantBreakdown({
           {row.partyKind === "self" ? selfName?.trim() || "You" : row.label}
         </Text>
         <Text style={styles.participantAmount}>
-          <Text style={styles.currencySymbol}>{currencySymbol(row.currency)}</Text>
+          <Text style={styles.currencySymbol}>{currencySymbol(displayCurrency)}</Text>
           {moneyValue(row.amountMinor, row.currency)}
         </Text>
       </View>
@@ -670,6 +771,24 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   amountExpressionWrap: { alignItems: "center", gap: 5 },
+  preliminaryAmount: { alignItems: "center", gap: 5 },
+  preliminaryScope: {
+    color: Finn.secondary,
+    fontFamily: JournalType.medium,
+    fontSize: 12,
+  },
+  preliminaryValue: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 29,
+    fontVariant: ["tabular-nums"],
+    lineHeight: 36,
+  },
+  preliminaryBadge: {
+    color: "#9A681D",
+    fontFamily: JournalType.medium,
+    fontSize: 11,
+  },
   amountPlaceholder: {
     color: Finn.muted,
     fontFamily: JournalType.regular,
@@ -737,18 +856,6 @@ const styles = StyleSheet.create({
   },
   actionsOverlay: {
     flex: 1,
-  },
-  actionPointer: {
-    position: "absolute",
-    top: -6,
-    width: 12,
-    height: 12,
-    backgroundColor: Finn.surface,
-    borderLeftColor: Finn.line,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Finn.line,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    transform: [{ rotate: "45deg" }],
   },
   actionRow: {
     flexDirection: "row",

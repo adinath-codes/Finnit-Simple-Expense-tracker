@@ -7,7 +7,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
 import { JournalGlyph } from "./journal-glyph";
-import { useJournal } from "@/providers/app-providers";
+import { useJournalData } from "@/providers/app-providers";
 import { dayLabel } from "@/utils/dates";
 
 const ASK_GRADIENT_ID = "ask-finn-blue";
@@ -68,7 +68,7 @@ function AskFinnLabel() {
 }
 
 export function JournalHeader() {
-     const { selectedDate, today } = useJournal();
+     const { selectedDate, today } = useJournalData();
      return (
           <View style={styles.header}>
                <View style={styles.side}>

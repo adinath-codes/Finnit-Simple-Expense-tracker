@@ -9,7 +9,7 @@ import { router } from "expo-router";
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
+import { useJournalActions } from "@/providers/app-providers";
 import type { SearchItem } from "../types/ask.types";
 import {
   exactMoney,
@@ -20,15 +20,17 @@ import {
 export function AskMoneyAmount({
   accessible = true,
   currency,
+  displayCurrency = currency,
   minor,
   style,
 }: {
   accessible?: boolean;
   currency: string;
+  displayCurrency?: string;
   minor: string;
   style?: StyleProp<TextStyle>;
 }) {
-  const amount = exactMoneyParts(minor, currency);
+  const amount = exactMoneyParts(minor, currency, displayCurrency);
   return (
     <Text
       accessibilityLabel={amount.label}
@@ -45,16 +47,18 @@ export function AskMoneyAmount({
 
 /** One chronological evidence node. Content opens details; its date returns to that journal day. */
 export function SourceTransactionRow({
+  displayCurrency,
   item,
 }: {
+  displayCurrency: string;
   item: SearchItem;
 }) {
-  const { setSelectedDate } = useJournal();
+  const { setSelectedDate } = useJournalActions();
   const date = timelineDateParts(item.occurred_on);
   const amountNeedsReview = item.metric_confirmed === false || item.metric_minor == null;
   const amountLabel = amountNeedsReview
     ? "Needs review"
-    : exactMoney(item.metric_minor!, item.currency);
+    : exactMoney(item.metric_minor!, item.currency, displayCurrency);
 
   const openJournalDay = () => {
     setSelectedDate(item.occurred_on);
@@ -91,6 +95,7 @@ export function SourceTransactionRow({
               <AskMoneyAmount
                 accessible={false}
                 currency={item.currency}
+                displayCurrency={displayCurrency}
                 minor={item.metric_minor!}
                 style={styles.amount}
               />

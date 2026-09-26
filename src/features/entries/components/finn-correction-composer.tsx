@@ -1,13 +1,13 @@
-import { useMemo, useState } from "react";
-import { StyleSheet, TextInput, View } from "react-native";
 import { IconButton } from "@/components/ui/icon-button";
 import { useRotatingPlaceholder } from "@/components/ui/use-rotating-placeholder";
 import { Finn, JournalType } from "@/constants/theme";
+import { useMemo, useState } from "react";
+import { StyleSheet, TextInput, View } from "react-native";
 
 const PHRASES = [
-  "Tell Finn what to change in the breakdown.",
-  "The amount was equally split",
-  "Can you add another item in the list and do the breakdown",
+  "Tell Finn what to edit",
+  "\"The amount was equally split\"",
+  "\"Can you add another item in the list\"",
 ] as const;
 
 export function FinnCorrectionComposer({

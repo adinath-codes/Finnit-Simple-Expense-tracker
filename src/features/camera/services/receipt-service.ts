@@ -16,6 +16,7 @@ import type {
   ReceiptScanRequest,
   SavedEntry,
 } from "@/lib/supabase/database.types";
+import { notifyFirstJournalEntryLogged } from "@/features/notifications/services/entry-events";
 
 const MAX_EDGE = 2560;
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -112,7 +113,11 @@ export async function captureReceipt(
   const original = new File(directory, `${entryId}.source`);
   await new File(photo.uri).copy(original, { overwrite: true });
 
+  let firstJournalItem = false;
   await changeJournalCache(userId, (cache) => {
+    firstJournalItem =
+      Object.values(cache.entries).every((entry) => entry.deleted) &&
+      Object.values(cache.receipts).every((receipt) => receipt.deleted);
     cache.receipts[entryId] = {
       request: emptyRequest(entryId, attachmentId, selectedDate, currency),
       localUri: original.uri,
@@ -123,6 +128,7 @@ export async function captureReceipt(
       lines: [],
     };
   });
+  if (firstJournalItem) notifyFirstJournalEntryLogged(userId);
 
   try {
     return await finishPreparing(userId, entryId);
@@ -390,19 +396,38 @@ export async function listLocalReceipts() {
 }
 
 /** Rehydrate extracted receipt text. Source images are never stored remotely. */
-export async function refreshRemoteReceipts(expectedUserId?: string) {
+export async function refreshRemoteReceipts(
+  expectedUserId?: string,
+  range?: { startDate: string; endDate: string },
+) {
   const userId = expectedUserId ?? await currentUserId();
   if (await currentUserId() !== userId) throw new Error("Account changed during sync.");
   const db = getSupabase();
-  const [entriesResult, attachmentsResult, linesResult] = await Promise.all([
-    db.from("journal_entries")
+  let entriesQuery = db.from("journal_entries")
       .select("id,source_type,raw_text,original_text,captured_at,occurred_on,timezone,currency,revision,extraction,deleted_at,capture_request")
-      .eq("user_id", userId).eq("source_type", "receipt").limit(1000),
-    db.from("receipt_attachments").select("*").eq("user_id", userId).limit(1000),
-    db.from("receipt_line_items").select("*").eq("user_id", userId)
-      .order("entry_id").order("ordinal").limit(100000),
+      .eq("user_id", userId).eq("source_type", "receipt");
+  if (range) {
+    entriesQuery = entriesQuery
+      .gte("occurred_on", range.startDate)
+      .lte("occurred_on", range.endDate);
+  }
+  const entriesResult = await entriesQuery.limit(1000);
+  if (entriesResult.error) throw new Error("Could not refresh receipts.");
+  const entryIds = entriesResult.data.map((entry) => entry.id);
+  if (!entryIds.length) return listLocalReceipts();
+  let attachmentsQuery = db.from("receipt_attachments").select("*")
+    .eq("user_id", userId);
+  let linesQuery = db.from("receipt_line_items").select("*")
+    .eq("user_id", userId);
+  if (range) {
+    attachmentsQuery = attachmentsQuery.in("entry_id", entryIds);
+    linesQuery = linesQuery.in("entry_id", entryIds);
+  }
+  const [attachmentsResult, linesResult] = await Promise.all([
+    attachmentsQuery.limit(1000),
+    linesQuery.order("entry_id").order("ordinal").limit(100000),
   ]);
-  if (entriesResult.error || attachmentsResult.error || linesResult.error)
+  if (attachmentsResult.error || linesResult.error)
     throw new Error("Could not refresh receipts.");
   if (await currentUserId() !== userId) throw new Error("Account changed during sync.");
   const attachments = new Map(

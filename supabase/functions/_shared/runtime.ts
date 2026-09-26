@@ -11,15 +11,6 @@ export type Context = {
   admin: SupabaseClient;
 };
 
-type PremiumCacheEntry = {
-  active: boolean;
-  checkedAt: number;
-  expiresAt: number | null;
-};
-
-const premiumCache = new Map<string, PremiumCacheEntry>();
-const PREMIUM_CACHE_MS = 60_000;
-const INACTIVE_CACHE_MS = 10_000;
 export const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -73,73 +64,8 @@ export async function authenticate(request: Request): Promise<Context> {
 }
 
 export async function requirePremium(ctx: Context) {
-  const now = Date.now();
-  const cached = premiumCache.get(ctx.userId);
-  if (
-    cached &&
-    now - cached.checkedAt < (cached.active ? PREMIUM_CACHE_MS : INACTIVE_CACHE_MS) &&
-    (!cached.active || cached.expiresAt === null || cached.expiresAt > now)
-  ) {
-    if (!cached.active) throw new ApiError(402, "premium_required");
-    return;
-  }
-
-  const secret = env("REVENUECAT_SECRET_API_KEY");
-  const entitlementId = env("REVENUECAT_ENTITLEMENT_ID", "finn_it_pro");
-  let response: Response;
-  try {
-    response = await fetch(
-      `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(ctx.userId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${secret}`,
-          Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-  } catch {
-    throw new ApiError(503, "subscription_verification_unavailable");
-  }
-
-  if (response.status === 404) {
-    premiumCache.set(ctx.userId, { active: false, checkedAt: now, expiresAt: now });
-    throw new ApiError(402, "premium_required");
-  }
-  if (!response.ok) {
-    throw new ApiError(503, "subscription_verification_unavailable");
-  }
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = object(await response.json());
-  } catch {
-    throw new ApiError(503, "subscription_verification_unavailable");
-  }
-  const subscriber = object(payload.subscriber);
-  const entitlements = object(subscriber.entitlements);
-  const rawEntitlement = entitlements[entitlementId];
-  if (!rawEntitlement || typeof rawEntitlement !== "object") {
-    premiumCache.set(ctx.userId, { active: false, checkedAt: now, expiresAt: now });
-    throw new ApiError(402, "premium_required");
-  }
-
-  const entitlement = object(rawEntitlement);
-  const expiration = entitlement.expires_date;
-  const graceExpiration = entitlement.grace_period_expires_date;
-  const expirationMs = typeof expiration === "string" ? Date.parse(expiration) : 0;
-  const graceExpirationMs =
-    typeof graceExpiration === "string" ? Date.parse(graceExpiration) : 0;
-  const effectiveExpiration = Math.max(
-    Number.isFinite(expirationMs) ? expirationMs : 0,
-    Number.isFinite(graceExpirationMs) ? graceExpirationMs : 0,
-  );
-  const lifetime = expiration === null;
-  const active = lifetime || effectiveExpiration > now;
-  premiumCache.set(ctx.userId, {
-    active,
-    checkedAt: now,
-    expiresAt: lifetime ? null : effectiveExpiration,
+  const active = await rpc<boolean>(ctx.admin, "finn_has_premium_entitlement", {
+    p_user: ctx.userId,
   });
   if (!active) throw new ApiError(402, "premium_required");
 }
@@ -169,7 +95,11 @@ async function readBody(request: Request) {
   }
 }
 export function serve(
-  handler: (input: Record<string, unknown>, ctx: Context) => Promise<unknown>,
+  handler: (
+    input: Record<string, unknown>,
+    ctx: Context,
+    request: Request,
+  ) => Promise<unknown | Response>,
   options: { requiresPremium?: boolean } = {},
 ) {
   Deno.serve(async (request) => {
@@ -179,7 +109,8 @@ export function serve(
       if (request.method !== "POST") throw new ApiError(405, "post_required");
       const ctx = await authenticate(request);
       if (options.requiresPremium !== false) await requirePremium(ctx);
-      const result = await handler(await readBody(request), ctx);
+      const result = await handler(await readBody(request), ctx, request);
+      if (result instanceof Response) return result;
       return Response.json(result, {
         headers: { ...cors, "Cache-Control": "no-store" },
       });
@@ -272,13 +203,28 @@ export async function catalog(ctx: Context): Promise<Catalog> {
     contexts: document.contexts,
   } as Catalog;
 }
-export async function metric(
+type EdgeRuntimeApi = { waitUntil(promise: Promise<unknown>): void };
+
+/** Keep best-effort operational writes out of latency-sensitive responses. */
+export function background(task: Promise<unknown>) {
+  const guarded = task.catch(() => {
+    console.error(JSON.stringify({ event: "background_task_failed" }));
+  });
+  const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: EdgeRuntimeApi })
+    .EdgeRuntime;
+  if (runtime) runtime.waitUntil(guarded);
+  else void guarded;
+}
+
+export function metric(
   ctx: Context,
   event: string,
   extra: Record<string, unknown> = {},
 ) {
-  const { error } = await ctx.admin
+  background(Promise.resolve(ctx.admin
     .from("backend_events")
-    .insert({ user_id: ctx.userId, event, ...extra });
-  if (error) console.error(JSON.stringify({ event: "metrics_unavailable" }));
+    .insert({ user_id: ctx.userId, event, ...extra })
+    .then(({ error }) => {
+      if (error) console.error(JSON.stringify({ event: "metrics_unavailable" }));
+    })));
 }

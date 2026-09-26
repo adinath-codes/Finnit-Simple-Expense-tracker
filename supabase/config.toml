@@ -450,3 +450,15 @@ verify_jwt = false
 [functions.apply-preset]
 verify_jwt = false
 entrypoint = "./functions/apply-preset/index.ts"
+
+[functions.refresh-entitlement]
+verify_jwt = false
+entrypoint = "./functions/refresh-entitlement/index.ts"
+
+[functions.redeem-testing-code]
+verify_jwt = false
+entrypoint = "./functions/redeem-testing-code/index.ts"
+
+[functions.revenuecat-webhook]
+verify_jwt = false
+entrypoint = "./functions/revenuecat-webhook/index.ts"

@@ -30,7 +30,7 @@ import {
      GoalRingPalette,
      JournalType,
 } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
+import { useJournalData } from "@/providers/app-providers";
 import type { Category } from "@/types/domain";
 import { currencySymbol, moneyValue } from "@/utils/currency";
 import { cachedDayBreakdown } from "../services/summary-service";
@@ -75,7 +75,7 @@ type CoinGroup = SpendingCoinAllocation & {
 
 export function SpendingBreakdownCard({ visible }: { visible: boolean }) {
      const { entries, selectedDate, settings, cacheAccountId, contentVersion } =
-          useJournal();
+          useJournalData();
      const reducedMotion = useReducedMotion();
      const reveal = useSharedValue(0);
      const selectionReveal = useSharedValue(0);
@@ -678,7 +678,6 @@ function RollingAmount({
                     /\d/.test(character) ? (
                          <RollingDigit
                               animate={animate}
-                              animateEntry={animate && hasMounted}
                               digit={Number(character)}
                               key={`digit-${digitPlaces[index]}`}
                          />
@@ -720,11 +719,9 @@ function RollingAmount({
 function RollingDigit({
      digit,
      animate,
-     animateEntry,
 }: {
      digit: number;
      animate: boolean;
-     animateEntry: boolean;
 }) {
      const initialPosition = 20 + digit;
      const position = useSharedValue(initialPosition);
@@ -772,21 +769,6 @@ function RollingDigit({
           <Animated.View
                accessible={false}
                collapsable={false}
-               entering={
-                    animateEntry
-                         ? FadeInDown.duration(180).easing(EASE_OUT)
-                         : undefined
-               }
-               exiting={
-                    animate
-                         ? FadeOutUp.duration(160).easing(EASE_OUT)
-                         : undefined
-               }
-               layout={
-                    animate
-                         ? LinearTransition.duration(240).easing(EASE_IN_OUT)
-                         : undefined
-               }
                style={styles.digitWindow}
           >
                <Animated.View style={[styles.digitReel, reelStyle]}>

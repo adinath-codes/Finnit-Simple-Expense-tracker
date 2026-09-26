@@ -1,19 +1,22 @@
 import type {
   CaptureInput,
   Catalog,
+  EntryAmountPreview,
   Extraction,
   Transaction,
 } from "./contracts.ts";
+import { CURRENCIES } from "./contracts.ts";
 import { componentLineTotal, moneyTokens } from "./money-evidence.ts";
-import { inferEqualSplits } from "./breakdown.ts";
+import { equalShares, inferEqualSplits } from "./breakdown.ts";
+import { completeJsonArrayProperty, splitSseFrames } from "./json-stream.ts";
 import { contains } from "./text.ts";
 import { localDay, parseDate } from "./dates.ts";
 import { ApiError, extraction, names, object, text } from "./validation.ts";
 import { env, metric, positiveEnv, reserve, type Context } from "./runtime.ts";
 
 const nullableString = { type: ["string", "null"] };
-export const EXTRACTION_SCHEMA_VERSION = 3;
-export const EXTRACTION_PROMPT_VERSION = "transaction-semantics-v3-equal-groups";
+export const EXTRACTION_SCHEMA_VERSION = 4;
+export const EXTRACTION_PROMPT_VERSION = "amount-plans-first-v5-current-context";
 export type GeminiModelRole = "extraction" | "reasoning" | "fast";
 
 type ReadEnvironment = (name: string) => string | undefined;
@@ -91,6 +94,166 @@ export async function correctionInputHash(value: {
 }) {
   return jsonHash(value);
 }
+
+/** Gemini occasionally describes the same anonymous group using the literal
+ * number from the note while also adding the user as a separate participant.
+ * The amount plan is the authoritative headcount, so narrow that anonymous
+ * row to the remaining seats. Named people and all other participant shapes
+ * stay untouched so ambiguous output still fails closed. */
+export function reconcileAnonymousParticipantCount(
+  participants: Record<string, unknown>[],
+  transactionOrdinal: number,
+  expectedCount: number,
+) {
+  const rows = participants.filter((participant) =>
+    Number(participant.transaction_ordinal) === transactionOrdinal
+  );
+  const counts = rows.map((participant) => Number(participant.participant_count));
+  if (
+    !Number.isInteger(expectedCount) || expectedCount < 2 ||
+    counts.some((count) => !Number.isInteger(count) || count < 1) ||
+    counts.reduce((sum, count) => sum + count, 0) === expectedCount
+  ) return participants;
+
+  const selfRows = rows.filter((participant) =>
+    participant.party_kind === "self" && Number(participant.participant_count) === 1
+  );
+  const anonymousRows = rows.filter((participant) =>
+    participant.party_kind === "anonymous_group"
+  );
+  if (selfRows.length !== 1 || anonymousRows.length !== 1) return participants;
+
+  const anonymous = anonymousRows[0];
+  const fixedCount = rows.reduce(
+    (sum, participant) => participant === anonymous
+      ? sum
+      : sum + Number(participant.participant_count),
+    0,
+  );
+  const anonymousCount = expectedCount - fixedCount;
+  if (anonymousCount < 1) return participants;
+
+  return participants.map((participant) => participant === anonymous
+    ? { ...participant, participant_count: anonymousCount, uncertain: true }
+    : participant);
+}
+
+/** A single transaction with one grounded money token has no token-selection
+ * ambiguity. Recover a malformed model index by attaching that token only to
+ * the field selected by the model's amount role. */
+export function reconcileSingleAmountToken(
+  plan: Record<string, unknown>,
+  transactionCount: number,
+  tokenCount: number,
+) {
+  if (transactionCount !== 1 || tokenCount !== 1) return plan;
+  const tokenFields = [
+    "amount_token",
+    "group_total_token",
+    "user_share_token",
+    "paid_by_user_token",
+  ] as const;
+  const hasInvalidReference = tokenFields.some((field) =>
+    plan[field] !== null && Number(plan[field]) !== 0
+  );
+  if (!hasInvalidReference) return plan;
+
+  const primaryField = plan.amount_role === "group_total"
+    ? "group_total_token"
+    : plan.amount_role === "user_share"
+      ? "user_share_token"
+      : plan.amount_role === "paid_by_user"
+        ? "paid_by_user_token"
+        : "amount_token";
+  return {
+    ...plan,
+    ...Object.fromEntries(tokenFields.map((field) => [field, null])),
+    [primaryField]: 0,
+  };
+}
+
+/** A compact, page-shaped snapshot of the authoritative saved interpretation.
+ * Gemini corrections use this as their baseline instead of reinterpreting only
+ * the original note and accidentally preserving stale structured values. */
+export function correctionEntryContext(current: Extraction) {
+  return {
+    transactions: current.transactions.map((transaction, transactionOrdinal) => ({
+      transaction_ordinal: transactionOrdinal,
+      description: transaction.description,
+      amount_minor: transaction.amount_minor,
+      currency: transaction.currency,
+      category_id: transaction.category_id,
+      merchant_text: transaction.merchant_text ?? null,
+      direction: transaction.direction,
+      cash_flow: transaction.cash_flow,
+      quantity: transaction.quantity,
+      unit_price_minor: transaction.unit_price_minor,
+      primary_amount_role: transaction.primary_amount_role ?? null,
+      group_total_minor: transaction.group_total_minor ?? null,
+      user_share_minor: transaction.user_share_minor ?? null,
+      paid_by_user_minor: transaction.paid_by_user_minor ?? null,
+      split_method: transaction.split_method ?? null,
+      participant_count: transaction.participant_count ?? null,
+      quantity_unit: transaction.quantity_unit ?? null,
+      breakdown_approximate: transaction.breakdown_approximate ?? false,
+    })),
+    amount_components: current.amount_components ?? [],
+    participants: current.participants ?? [],
+    allocations: current.allocations ?? [],
+    transaction_contexts: current.transaction_contexts ?? [],
+    interpretation_summary: current.interpretation_summary ?? null,
+  };
+}
+
+function roundedRatio(value: bigint, numerator: bigint, denominator: bigint) {
+  return (value * numerator + denominator / 2n) / denominator;
+}
+
+/** Resolve a single-entry relative percentage correction with exact integer
+ * arithmetic. Gemini still decides the revised semantics, but it receives a
+ * literal target money token that the evidence validator can safely ground. */
+export function resolveRelativeAmountCorrection(
+  instruction: string,
+  current: Extraction,
+) {
+  if (current.transactions.length !== 1) return null;
+  const transaction = current.transactions[0];
+  if (transaction.amount_minor === null || !(transaction.currency in CURRENCIES)) {
+    return null;
+  }
+  const match = instruction.match(
+    /\b(increase|raise|decrease|reduce)\b[\s\S]{0,80}?\bby\s+(\d+(?:\.\d{1,4})?)\s*%/i,
+  );
+  if (!match) return null;
+  const [, direction, rawPercent] = match;
+  const [whole, fraction = ""] = rawPercent.split(".");
+  const decimalScale = 10n ** BigInt(fraction.length);
+  const percentUnits = BigInt(whole) * decimalScale +
+    BigInt(fraction.padEnd(fraction.length, "0") || "0");
+  const hundredPercent = 100n * decimalScale;
+  const increasing = /^(?:increase|raise)$/i.test(direction);
+  if (!increasing && percentUnits > hundredPercent) return null;
+  const factor = increasing
+    ? hundredPercent + percentUnits
+    : hundredPercent - percentUnits;
+  const targetMinor = roundedRatio(
+    BigInt(transaction.amount_minor),
+    factor,
+    hundredPercent,
+  );
+  if (targetMinor > 9007199254740991n) return null;
+  const digits = CURRENCIES[transaction.currency];
+  const scale = 10n ** BigInt(digits);
+  const formatted = digits === 0
+    ? targetMinor.toString()
+    : `${targetMinor / scale}.${(targetMinor % scale).toString().padStart(digits, "0")}`;
+  return {
+    currency: transaction.currency,
+    targetMinor: targetMinor.toString(),
+    evidence: `Server-resolved target amount: ${transaction.currency} ${formatted}`,
+  };
+}
+
 export async function generate(
   ctx: Context,
   task: string,
@@ -99,6 +262,7 @@ export async function generate(
   options?: {
     systemInstruction?: string;
     modelRole?: GeminiModelRole;
+    onTextChunk?: (chunk: string) => void | Promise<void>;
   },
 ): Promise<unknown> {
   if (!Deno.env.get("GEMINI_API_KEY"))
@@ -110,8 +274,10 @@ export async function generate(
   if (prompt.length > 20000) throw new ApiError(400, "ai_context_too_large");
   if (!(await reserve(ctx, "ai")))
     throw new ApiError(429, "ai_quota_exhausted");
+  const streaming = !!options?.onTextChunk;
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:` +
+      (streaming ? "streamGenerateContent?alt=sse" : "generateContent"),
     {
       method: "POST",
       headers: {
@@ -132,6 +298,9 @@ export async function generate(
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
           maxOutputTokens: positiveEnv("GEMINI_MAX_OUTPUT_TOKENS", 4096, 8192),
+          ...(modelRole === "extraction"
+            ? { thinkingConfig: { thinkingLevel: "minimal" } }
+            : {}),
           // The REST v1beta wire enum is APPLICATION_JSON. Client SDKs accept
           // the human MIME string and translate it, but raw fetch does not.
           responseFormat: { text: { mimeType: "APPLICATION_JSON", schema } },
@@ -155,8 +324,58 @@ export async function generate(
     });
     throw new ApiError(503, "ai_unavailable");
   }
-  const body = await response.json();
-  const usage = body.usageMetadata ?? {};
+  let output = "";
+  let finishReason: string | undefined;
+  let usage: Record<string, number> = {};
+  if (streaming) {
+    if (!response.body) throw new ApiError(503, "ai_unavailable");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let remainder = "";
+    const processFrame = async (frame: string) => {
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(frame) as Record<string, unknown>;
+      } catch {
+        throw new ApiError(503, "ai_invalid_stream");
+      }
+      if (body.usageMetadata && typeof body.usageMetadata === "object") {
+        usage = body.usageMetadata as Record<string, number>;
+      }
+      const candidate = Array.isArray(body.candidates)
+        ? body.candidates[0] as {
+          finishReason?: string;
+          content?: { parts?: Array<{ thought?: boolean; text?: string }> };
+        } | undefined
+        : undefined;
+      finishReason = candidate?.finishReason ?? finishReason;
+      const textChunk = candidate?.content?.parts
+        ?.filter((part) => !part.thought)
+        .map((part) => part.text ?? "")
+        .join("") ?? "";
+      if (!textChunk) return;
+      output += textChunk;
+      if (output.length > 50000) throw new ApiError(503, "ai_invalid_output");
+      await options?.onTextChunk?.(textChunk);
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      const decoded = decoder.decode(value, { stream: !done });
+      const split = splitSseFrames(remainder, decoded, done);
+      remainder = split.remainder;
+      for (const frame of split.frames) await processFrame(frame);
+      if (done) break;
+    }
+  } else {
+    const body = await response.json();
+    usage = body.usageMetadata ?? {};
+    const candidate = body.candidates?.[0];
+    finishReason = candidate?.finishReason;
+    output = candidate?.content?.parts
+      ?.filter((p: { thought?: boolean }) => !p.thought)
+      .map((p: { text?: string }) => p.text ?? "")
+      .join("") ?? "";
+  }
   const inputTokens = usage.promptTokenCount ?? 0;
   const outputTokens =
     (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
@@ -171,13 +390,8 @@ export async function generate(
     ),
     metadata: { model_role: modelRole },
   });
-  const candidate = body.candidates?.[0];
-  if (candidate?.finishReason !== "STOP")
+  if (finishReason !== "STOP")
     throw new ApiError(503, "ai_incomplete");
-  const output = candidate.content?.parts
-    ?.filter((p: { thought?: boolean }) => !p.thought)
-    .map((p: { text?: string }) => p.text ?? "")
-    .join("");
   if (!output || output.length > 50000)
     throw new ApiError(503, "ai_invalid_output");
   try {
@@ -186,11 +400,234 @@ export async function generate(
     throw new ApiError(503, "ai_invalid_json");
   }
 }
+
+const PREVIEW_AMOUNT_ROLES = new Set([
+  "personal_total", "group_total", "user_share", "paid_by_user",
+  "reimbursement", "amount_owed", "tax", "tip", "discount", "unknown",
+]);
+const PREVIEW_SPLIT_METHODS = new Set([
+  "not_applicable", "exact", "equal", "percentage", "weighted", "unknown",
+]);
+
+/**
+ * Gemini occasionally numbers a structured list from one even when the prompt
+ * asks for zero-based ordinals. Accept either complete convention, then reduce
+ * it to the server's zero-based representation. This only normalizes Gemini's
+ * explicit references; it never derives transaction meaning from note text.
+ */
+function transactionOrdinalOffset(rawPlans: unknown[]): 0 | 1 | null {
+  const ordinals = rawPlans
+    .map((raw) => Number(object(raw).transaction_ordinal))
+    .sort((left, right) => left - right);
+  if (ordinals.every((ordinal, index) => ordinal === index)) return 0;
+  if (ordinals.every((ordinal, index) => ordinal === index + 1)) return 1;
+  return null;
+}
+
+/** Validate Gemini's early semantic plan against literal money evidence only. */
+export function deriveAmountPreview(
+  rawPlans: unknown,
+  input: CaptureInput,
+): EntryAmountPreview | null {
+  try {
+    if (!Array.isArray(rawPlans) || !rawPlans.length || rawPlans.length > 30) return null;
+    const ordinalOffset = transactionOrdinalOffset(rawPlans);
+    if (ordinalOffset === null) return null;
+    const tokens = moneyTokens(input.raw_text, input.currency);
+    const tokenOwners = new Map<number, number>();
+    const ordinals = new Set<number>();
+    const candidates: Array<{
+      amount: bigint;
+      currency: string;
+      scope: EntryAmountPreview["scope"];
+      needsReview: boolean;
+    }> = [];
+    const claimToken = (value: unknown, ordinal: number) => {
+      if (value === null) return null;
+      const index = Number(value);
+      if (!Number.isInteger(index) || !tokens[index]) throw new Error("ungrounded_amount");
+      const owner = tokenOwners.get(index);
+      if (owner !== undefined && owner !== ordinal) throw new Error("duplicate_amount");
+      tokenOwners.set(index, ordinal);
+      return tokens[index];
+    };
+
+    for (const raw of rawPlans) {
+      const plan = object(raw);
+      const ordinal = Number(plan.transaction_ordinal) - ordinalOffset;
+      if (
+        !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= rawPlans.length ||
+        ordinals.has(ordinal)
+      ) throw new Error("invalid_transaction_ordinal");
+      ordinals.add(ordinal);
+      const description = text(plan.description);
+      if (!input.raw_text.includes(description)) throw new Error("ungrounded_description");
+      const amountToken = claimToken(plan.amount_token, ordinal);
+      const groupToken = claimToken(plan.group_total_token, ordinal);
+      const shareToken = claimToken(plan.user_share_token, ordinal);
+      const paidToken = claimToken(plan.paid_by_user_token, ordinal);
+      for (const token of [amountToken, groupToken, shareToken, paidToken]) {
+        if (token && !description.includes(token.evidence)) throw new Error("ungrounded_amount");
+      }
+      const role = String(plan.amount_role);
+      const splitMethod = String(plan.split_method);
+      if (!PREVIEW_AMOUNT_ROLES.has(role) || !PREVIEW_SPLIT_METHODS.has(splitMethod)) {
+        throw new Error("invalid_amount_semantics");
+      }
+      const participantCount = plan.participant_count === null
+        ? null
+        : Number(plan.participant_count);
+      if (
+        participantCount !== null &&
+        (!Number.isInteger(participantCount) || participantCount < 1 || participantCount > 100000)
+      ) throw new Error("invalid_participant_count");
+      if (splitMethod === "equal" && participantCount === null) {
+        throw new Error("invalid_equal_split");
+      }
+      if (plan.split_evidence !== null) {
+        const splitEvidence = text(plan.split_evidence, 200);
+        if (!input.raw_text.includes(splitEvidence)) throw new Error("ungrounded_split");
+        if (
+          splitMethod === "equal" &&
+          !/\b(?:equal(?:ly)?|same\s+share|split\s+evenly|each)\b/i.test(splitEvidence)
+        ) throw new Error("ungrounded_equal_split");
+      } else if (!["unknown", "not_applicable"].includes(splitMethod) && splitMethod !== "exact") {
+        throw new Error("missing_split_evidence");
+      }
+      const quantity = plan.quantity === null ? null : Number(plan.quantity);
+      if (quantity !== null) {
+        const quantityEvidence = text(plan.quantity_evidence, 100);
+        if (
+          !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 ||
+          !description.includes(quantityEvidence) ||
+          !new RegExp(`\\b${quantity}\\b`).test(quantityEvidence)
+        ) throw new Error("ungrounded_quantity");
+      }
+      if (!Array.isArray(plan.components) || plan.components.length > 100) {
+        throw new Error("invalid_components");
+      }
+      let currency = amountToken?.currency ?? groupToken?.currency ??
+        shareToken?.currency ?? paidToken?.currency ?? null;
+      let componentTotal = 0n;
+      const componentTokens = new Set<(typeof tokens)[number]>();
+      for (const rawComponent of plan.components) {
+        const component = object(rawComponent);
+        const evidence = text(component.evidence, 500);
+        if (!description.includes(evidence)) throw new Error("ungrounded_component");
+        const componentQuantity = Number(component.quantity);
+        const quantityEvidence = text(component.quantity_evidence, 100);
+        if (
+          !Number.isInteger(componentQuantity) || componentQuantity < 1 ||
+          componentQuantity > 100000 || !evidence.includes(quantityEvidence) ||
+          !new RegExp(`\\b${componentQuantity}\\b`).test(quantityEvidence)
+        ) throw new Error("ungrounded_component_quantity");
+        const unitToken = claimToken(component.unit_amount_token, ordinal);
+        if (!unitToken || !evidence.includes(unitToken.evidence)) {
+          throw new Error("ungrounded_component_amount");
+        }
+        componentTokens.add(unitToken);
+        if (currency && currency !== unitToken.currency) throw new Error("mixed_currency");
+        currency ??= unitToken.currency;
+        const componentRole = String(component.semantic_role) as
+          "item" | "tax" | "tip" | "fee" | "discount";
+        if (!["item", "tax", "tip", "fee", "discount"].includes(componentRole)) {
+          throw new Error("invalid_component_role");
+        }
+        componentTotal += BigInt(
+          componentLineTotal(unitToken.minor, componentQuantity, componentRole),
+        );
+      }
+      if ([amountToken, groupToken, shareToken, paidToken].some((token) =>
+        token && componentTokens.has(token)
+      )) throw new Error("component_token_reused_as_total");
+
+      let amount = amountToken?.minor ??
+        (role === "group_total" ? groupToken?.minor : null) ??
+        (role === "user_share" ? shareToken?.minor : null) ??
+        (role === "paid_by_user" ? paidToken?.minor : null) ??
+        (plan.components.length ? componentTotal.toString() : null);
+      if (plan.per_unit === true) {
+        if (
+          !quantity || !amount ||
+          !/\beach\b|\bper\s+(?:item|coffee|ticket|notebook)\b|\b\d{1,5}\s*(?:[\p{L}\s]{0,60}?)\s*[*×x]\s*/iu.test(description)
+        ) throw new Error("ungrounded_unit_price");
+        amount = (BigInt(amount) * BigInt(quantity)).toString();
+      }
+      let groupTotal = groupToken?.minor ?? (role === "group_total" ? amount : null);
+      let userShare = shareToken?.minor ?? (role === "user_share" ? amount : null);
+      const shared = participantCount !== null && participantCount > 1;
+      if (!shared && role === "personal_total") {
+        groupTotal ??= amount;
+        userShare ??= amount;
+      }
+      let scope: EntryAmountPreview["scope"];
+      let selected: string | null;
+      if (userShare !== null) {
+        selected = userShare;
+        scope = shared ? "user_share" : "personal_total";
+      } else if (
+        groupTotal !== null && participantCount !== null && participantCount > 1 &&
+        ["equal", "unknown", "not_applicable"].includes(splitMethod)
+      ) {
+        selected = equalShares(groupTotal, currency ?? input.currency, participantCount)
+          .selfShareMinor;
+        scope = "user_share";
+      } else if (groupTotal !== null) {
+        selected = groupTotal;
+        scope = "group_total";
+      } else if (amount !== null && role === "personal_total") {
+        selected = amount;
+        scope = "personal_total";
+      } else {
+        return null;
+      }
+      const parsedAmount = BigInt(selected);
+      if (parsedAmount < 0n || parsedAmount > 9007199254740991n || !currency) return null;
+      const confidence = Number(plan.confidence);
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
+      candidates.push({
+        amount: parsedAmount,
+        currency,
+        scope,
+        needsReview:
+          plan.estimated === true || plan.ambiguous === true || confidence < 0.85 ||
+          scope === "group_total",
+      });
+    }
+    if (!candidates.length) return null;
+    const currencies = new Set(candidates.map((candidate) => candidate.currency));
+    if (currencies.size !== 1) return null;
+    const scopes = new Set(candidates.map((candidate) => candidate.scope));
+    if (scopes.has("group_total") && scopes.size > 1) return null;
+    const amount = candidates.reduce((sum, candidate) => sum + candidate.amount, 0n);
+    if (amount > 9007199254740991n) return null;
+    const scope = scopes.has("group_total")
+      ? "group_total"
+      : scopes.has("user_share")
+        ? "user_share"
+        : "personal_total";
+    return {
+      amount_minor: amount.toString(),
+      currency: candidates[0].currency,
+      scope,
+      estimated: true,
+      needs_review: candidates.some((candidate) => candidate.needsReview),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function enrich(
   ctx: Context,
   input: CaptureInput,
   candidates: Catalog,
-  options?: { correctionInstruction?: string },
+  options?: {
+    correctionInstruction?: string;
+    currentExtraction?: Extraction;
+    onAmountPreview?: (preview: EntryAmountPreview) => void | Promise<void>;
+    onFirstOutput?: () => void | Promise<void>;
+  },
 ): Promise<{ result: Extraction; modelResult: unknown }> {
   const tokens = moneyTokens(input.raw_text, input.currency);
   const amountToken = { type: ["integer", "null"] };
@@ -198,25 +635,143 @@ export async function enrich(
     type: "object",
     additionalProperties: false,
     required: [
-      "interpretation_summary",
+      "amount_plans",
       "transactions",
       "participants",
       "transaction_contexts",
       "ignored_amount_tokens",
+      "interpretation_summary",
     ],
     properties: {
-      interpretation_summary: { type: "string" },
-      ignored_amount_tokens: {
+      amount_plans: {
         type: "array",
+        minItems: 1,
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["amount_token", "reason"],
+          required: [
+            "transaction_ordinal",
+            "description",
+            "amount_token",
+            "quantity",
+            "quantity_evidence",
+            "per_unit",
+            "estimated",
+            "confidence",
+            "ambiguous",
+            "amount_role",
+            "group_total_token",
+            "user_share_token",
+            "paid_by_user_token",
+            "split_method",
+            "split_evidence",
+            "participant_count",
+            "quantity_unit",
+            "components",
+          ],
           properties: {
-            amount_token: { type: "integer" },
-            reason: {
+            transaction_ordinal: {
+              type: "integer",
+              minimum: 0,
+              description: "Zero-based position in amount_plans; the first transaction is 0.",
+            },
+            description: { type: "string" },
+            amount_token: amountToken,
+            amount_role: {
               type: "string",
-              enum: ["context_total", "other_party_amount", "duplicate", "non_transaction"],
+              enum: [
+                "personal_total", "group_total", "user_share", "paid_by_user",
+                "reimbursement", "amount_owed", "tax", "tip", "discount", "unknown",
+              ],
+            },
+            group_total_token: amountToken,
+            user_share_token: amountToken,
+            paid_by_user_token: amountToken,
+            quantity: { type: ["integer", "null"] },
+            quantity_evidence: nullableString,
+            quantity_unit: nullableString,
+            per_unit: { type: "boolean" },
+            estimated: { type: "boolean" },
+            confidence: { type: "number", minimum: 0, maximum: 1 },
+            ambiguous: { type: "boolean" },
+            split_method: {
+              type: "string",
+              enum: ["not_applicable", "exact", "equal", "percentage", "weighted", "unknown"],
+            },
+            split_evidence: nullableString,
+            participant_count: { type: ["integer", "null"], minimum: 1, maximum: 100000 },
+            components: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "label", "quantity", "quantity_evidence", "unit_amount_token",
+                  "semantic_role", "evidence", "confidence", "uncertain",
+                ],
+                properties: {
+                  label: nullableString,
+                  quantity: { type: "integer", minimum: 1, maximum: 100000 },
+                  quantity_evidence: { type: "string" },
+                  unit_amount_token: { type: "integer" },
+                  semantic_role: {
+                    type: "string",
+                    enum: ["item", "tax", "tip", "fee", "discount"],
+                  },
+                  evidence: { type: "string" },
+                  confidence: { type: "number", minimum: 0, maximum: 1 },
+                  uncertain: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
+      },
+      transactions: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "transaction_ordinal", "category_id", "merchant_id", "direction",
+            "cash_flow", "person", "date_evidence", "merchant_evidence",
+            "category_evidence", "field_confidence",
+          ],
+          properties: {
+            transaction_ordinal: {
+              type: "integer",
+              minimum: 0,
+              description: "Zero-based amount_plans position; the first transaction is 0.",
+            },
+            category_id: {
+              type: "string",
+              enum: candidates.categories.map((category) => category.id),
+            },
+            merchant_id: nullableString,
+            merchant_evidence: nullableString,
+            category_evidence: nullableString,
+            direction: {
+              type: "string",
+              enum: ["expense", "income", "transfer", "lent", "borrowed", "repayment"],
+            },
+            cash_flow: {
+              type: "string",
+              enum: ["in", "out", "internal", "unknown"],
+            },
+            person: nullableString,
+            date_evidence: nullableString,
+            field_confidence: {
+              type: "object",
+              additionalProperties: false,
+              required: ["amount", "category", "merchant", "participants", "split"],
+              properties: {
+                amount: { type: "number", minimum: 0, maximum: 1 },
+                category: { type: "number", minimum: 0, maximum: 1 },
+                merchant: { type: "number", minimum: 0, maximum: 1 },
+                participants: { type: "number", minimum: 0, maximum: 1 },
+                split: { type: "number", minimum: 0, maximum: 1 },
+              },
             },
           },
         },
@@ -240,7 +795,11 @@ export async function enrich(
             "uncertain",
           ],
           properties: {
-            transaction_ordinal: { type: "integer" },
+            transaction_ordinal: {
+              type: "integer",
+              minimum: 0,
+              description: "Zero-based amount_plans position; the first transaction is 0.",
+            },
             party_kind: {
               type: "string",
               enum: ["self", "known_person", "anonymous_group", "unknown"],
@@ -270,7 +829,11 @@ export async function enrich(
           additionalProperties: false,
           required: ["transaction_ordinal", "name", "evidence", "confidence", "uncertain"],
           properties: {
-            transaction_ordinal: { type: "integer" },
+            transaction_ordinal: {
+              type: "integer",
+              minimum: 0,
+              description: "Zero-based amount_plans position; the first transaction is 0.",
+            },
             name: { type: "string" },
             evidence: { type: "string" },
             confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -278,145 +841,22 @@ export async function enrich(
           },
         },
       },
-      transactions: {
+      ignored_amount_tokens: {
         type: "array",
-        minItems: 1,
-        // Gemini 3.8 rejects maxItems on this large object schema as
-        // INVALID_ARGUMENT. The validated response is still capped below.
         items: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "description",
-            "amount_token",
-            "category_id",
-            "merchant_id",
-            "quantity",
-            "quantity_evidence",
-            "per_unit",
-            "direction",
-            "cash_flow",
-            "person",
-            "date_evidence",
-            "estimated",
-            "confidence",
-            "ambiguous",
-            "amount_role",
-            "group_total_token",
-            "user_share_token",
-            "paid_by_user_token",
-            "split_method",
-            "split_evidence",
-            "participant_count",
-            "quantity_unit",
-            "merchant_evidence",
-            "category_evidence",
-            "components",
-            "field_confidence",
-          ],
+          required: ["amount_token", "reason"],
           properties: {
-            description: { type: "string" },
-            amount_token: { type: ["integer", "null"] },
-            amount_role: {
+            amount_token: { type: "integer" },
+            reason: {
               type: "string",
-              enum: [
-                "personal_total",
-                "group_total",
-                "user_share",
-                "paid_by_user",
-                "reimbursement",
-                "amount_owed",
-                "tax",
-                "tip",
-                "discount",
-                "unknown",
-              ],
-            },
-            group_total_token: amountToken,
-            user_share_token: amountToken,
-            paid_by_user_token: amountToken,
-            category_id: {
-              type: "string",
-              enum: candidates.categories.map((c) => c.id),
-            },
-            merchant_id: nullableString,
-            merchant_evidence: nullableString,
-            category_evidence: nullableString,
-            quantity: { type: ["integer", "null"] },
-            quantity_evidence: nullableString,
-            quantity_unit: nullableString,
-            per_unit: { type: "boolean" },
-            direction: {
-              type: "string",
-              enum: [
-                "expense",
-                "income",
-                "transfer",
-                "lent",
-                "borrowed",
-                "repayment",
-              ],
-            },
-            cash_flow: {
-              type: "string",
-              enum: ["in", "out", "internal", "unknown"],
-            },
-            person: nullableString,
-            date_evidence: nullableString,
-            estimated: { type: "boolean" },
-            confidence: { type: "number", minimum: 0, maximum: 1 },
-            ambiguous: { type: "boolean" },
-            split_method: {
-              type: "string",
-              enum: ["not_applicable", "exact", "equal", "percentage", "weighted", "unknown"],
-            },
-            split_evidence: nullableString,
-            participant_count: { type: ["integer", "null"], minimum: 1, maximum: 100000 },
-            field_confidence: {
-              type: "object",
-              additionalProperties: false,
-              required: ["amount", "category", "merchant", "participants", "split"],
-              properties: {
-                amount: { type: "number", minimum: 0, maximum: 1 },
-                category: { type: "number", minimum: 0, maximum: 1 },
-                merchant: { type: "number", minimum: 0, maximum: 1 },
-                participants: { type: "number", minimum: 0, maximum: 1 },
-                split: { type: "number", minimum: 0, maximum: 1 },
-              },
-            },
-            components: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: [
-                  "label",
-                  "quantity",
-                  "quantity_evidence",
-                  "unit_amount_token",
-                  "semantic_role",
-                  "evidence",
-                  "confidence",
-                  "uncertain",
-                ],
-                properties: {
-                  label: nullableString,
-                  quantity: { type: "integer", minimum: 1, maximum: 100000 },
-                  quantity_evidence: { type: "string" },
-                  unit_amount_token: { type: "integer" },
-                  semantic_role: {
-                    type: "string",
-                    enum: ["item", "tax", "tip", "fee", "discount"],
-                  },
-                  evidence: { type: "string" },
-                  confidence: { type: "number", minimum: 0, maximum: 1 },
-                  uncertain: { type: "boolean" },
-                },
-              },
+              enum: ["context_total", "other_party_amount", "duplicate", "non_transaction"],
             },
           },
         },
       },
+      interpretation_summary: { type: "string" },
     },
   };
   const relevantMerchants = candidates.merchants.filter(
@@ -426,12 +866,38 @@ export async function enrich(
         (a) => a.merchant_id === m.id && contains(input.raw_text, a.alias),
       ),
   );
+  if (options?.correctionInstruction && !options.currentExtraction) {
+    throw new ApiError(500, "missing_correction_context");
+  }
   const correctionTask = options?.correctionInstruction
-    ? "The final 'User correction:' line is an authoritative request to revise the structured interpretation of the preceding immutable source note. Apply it to any requested transaction, amount, item, participant, split, merchant, category, or date while returning a complete replacement. Never describe the correction itself as a purchase. "
+    ? "correction_instruction is an authoritative request to revise current_entry, the saved structured state currently visible to the user. Use current_entry as the baseline, apply every requested change, and preserve fields the correction does not mention. raw_note contains the immutable source note followed by the same correction only so new literal amounts and evidence can be grounded. When raw_note includes a 'Server-resolved target amount' line, that exact grounded value is the authoritative result of deterministic arithmetic and must replace the corrected amount. Apply the correction to any requested transaction, amount, item, participant, split, merchant, category, or date while returning a complete replacement. Never describe the correction or server-resolved line as a purchase. "
     : "";
+  let partialOutput = "";
+  let firstOutputSeen = false;
+  let amountPlansComplete = false;
+  const onTextChunk = options?.onAmountPreview
+    ? async (chunk: string) => {
+        if (!firstOutputSeen) {
+          firstOutputSeen = true;
+          await options.onFirstOutput?.();
+        }
+        partialOutput += chunk;
+        if (amountPlansComplete) return;
+        const array = completeJsonArrayProperty(partialOutput, "amount_plans");
+        if (array === null) return;
+        amountPlansComplete = true;
+        try {
+          const preview = deriveAmountPreview(JSON.parse(array), input);
+          if (preview) await options.onAmountPreview?.(preview);
+        } catch {
+          // A malformed partial object simply has no preview. The completed
+          // response still goes through the authoritative validation below.
+        }
+      }
+    : undefined;
   const modelResult = await generate(
     ctx,
-    `${correctionTask}Return one grounded financial interpretation. Select supplied amount-token indices; never output or calculate money. Account for every amount token by using it in exactly one transaction (multiple fields in that same transaction may reference it), one component, one participant share, or ignored_amount_tokens. For expressions such as '2*100 + 1*100 + 3*200', create one component per term: quantity is the multiplier, unit_amount_token selects the price, and evidence is the exact full term. Leave transaction amount_token null unless a separate total is explicitly written. Description and every evidence field must be exact substrings of the note. A quantity is not an item count label: return quantity_unit such as rides, coffees, or tickets. amount_role says what the primary stated amount means. 'in total' with companions is group_total. A phrase such as 'with 3 friends' means 3 total shares including self: return one self participant and only 2 anonymous participants. Set split_method unknown and split_evidence null when an equal split was not explicit; the server safely infers equal shares from grounded totals. user_share_token and paid_by_user_token are null unless explicitly stated. The transaction participant_count must equal the total sharing headcount. Attach people and contexts to the specific transaction ordinal. Merchant/category evidence must be literal even when the category itself is semantic. Return independent confidence for amount, category, merchant, participants, and split. person remains the debt counterparty for lending directions. Preserve approximations and uncertainty. Choose only supplied IDs. interpretation_summary is a short factual explanation, not reasoning or hidden thought process.`,
+    `${correctionTask}Return one grounded financial interpretation in the schema's exact property order. amount_plans is first and is the sole source of amount semantics; later transaction detail objects reference transaction_ordinal and must not restate or override any amount field. transaction_ordinal is always zero-based: use 0 for the first transaction, 1 for the second, and so on, consistently in every array. Select supplied amount-token indices; never output or calculate money. Account for every amount token by using it in exactly one amount plan (multiple fields in that same plan may reference it), one component, one participant share, or ignored_amount_tokens. For expressions such as '2*100 + 1*100 + 3*200', create one component per term: quantity is the multiplier, unit_amount_token selects the price, and evidence is the exact full term. Leave amount_token null unless a separate total is explicitly written. Description and every evidence field must be exact substrings of the note. A quantity is not an item count label: return quantity_unit such as rides, coffees, or tickets. amount_role says what the primary stated amount means. 'in total' with companions is group_total. A phrase such as 'with 3 friends' means 3 total shares including self: return one self participant and only 2 anonymous participants. Set split_method unknown and split_evidence null when an equal split was not explicit; the server safely infers equal shares from grounded totals. user_share_token and paid_by_user_token are null unless explicitly stated. The amount plan participant_count must equal the total sharing headcount. Attach people, contexts, and transaction details to the same transaction ordinal. Merchant/category evidence must be literal even when the category itself is semantic. Return independent confidence for amount, category, merchant, participants, and split. person remains the debt counterparty for lending directions. Preserve approximations and uncertainty. Choose only supplied IDs. interpretation_summary is last and is a short factual explanation, not reasoning or hidden thought process.`,
     {
       raw_note: input.raw_text,
       captured_at: input.captured_at,
@@ -454,17 +920,66 @@ export async function enrich(
       contexts: candidates.contexts
         .filter((c) => contains(input.raw_text, c.name))
         .slice(0, 20),
+      ...(options?.correctionInstruction && options.currentExtraction
+        ? {
+            correction_instruction: options.correctionInstruction,
+            current_entry: correctionEntryContext(options.currentExtraction),
+          }
+        : {}),
     },
     schema,
-    { modelRole: "extraction" },
+    { modelRole: "extraction", ...(onTextChunk ? { onTextChunk } : {}) },
   );
   const model = object(modelResult);
   if (
+    !Array.isArray(model.amount_plans) ||
+    !model.amount_plans.length ||
+    model.amount_plans.length > 30 ||
     !Array.isArray(model.transactions) ||
-    !model.transactions.length ||
-    model.transactions.length > 30
+    model.transactions.length !== model.amount_plans.length
   )
     throw new ApiError(503, "invalid_model_transactions");
+  const rawAmountPlans = model.amount_plans;
+  const ordinalOffset = transactionOrdinalOffset(rawAmountPlans);
+  if (ordinalOffset === null) throw new ApiError(503, "invalid_transaction_ordinal");
+  const normalizedOrdinal = (value: unknown) => Number(value) - ordinalOffset;
+  const detailsByOrdinal = new Map<number, Record<string, unknown>>();
+  for (const raw of model.transactions) {
+    const details = object(raw);
+    const ordinal = normalizedOrdinal(details.transaction_ordinal);
+    if (
+      !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= model.amount_plans.length ||
+      detailsByOrdinal.has(ordinal)
+    ) throw new ApiError(503, "invalid_transaction_ordinal");
+    detailsByOrdinal.set(ordinal, details);
+  }
+  const amountPlans = rawAmountPlans
+    .map((raw) => reconcileSingleAmountToken(
+      object(raw),
+      rawAmountPlans.length,
+      tokens.length,
+    ))
+    .sort((left, right) =>
+      normalizedOrdinal(left.transaction_ordinal) - normalizedOrdinal(right.transaction_ordinal)
+    );
+  if (amountPlans.some((plan, ordinal) =>
+    normalizedOrdinal(plan.transaction_ordinal) !== ordinal || !detailsByOrdinal.has(ordinal)
+  )) throw new ApiError(503, "invalid_transaction_ordinal");
+  if (!Array.isArray(model.participants) || model.participants.length > 100)
+    throw new ApiError(503, "invalid_participants");
+  let participantRows = model.participants.map((participant) => object(participant));
+  for (const plan of amountPlans) {
+    const participantCount = plan.participant_count === null
+      ? null
+      : Number(plan.participant_count);
+    if (participantCount !== null) {
+      participantRows = reconcileAnonymousParticipantCount(
+        participantRows,
+        Number(plan.transaction_ordinal),
+        participantCount,
+      );
+    }
+  }
   const tokenOwner = new Map<number, number>();
   const claimToken = (value: unknown, transactionOrdinal: number) => {
     if (value === null) return null;
@@ -486,13 +1001,21 @@ export async function enrich(
   const reference =
     input.selected_date ?? localDay(input.captured_at, input.timezone);
   const amountComponents: NonNullable<Extraction["amount_components"]> = [];
-  const transactions: Transaction[] = model.transactions.map((raw, transactionOrdinal) => {
-    const t = object(raw);
+  const transactions: Transaction[] = amountPlans.map((plan, transactionOrdinal) => {
+    const details = detailsByOrdinal.get(transactionOrdinal)!;
+    const t: Record<string, unknown> = {
+      ...details,
+      ...plan,
+      field_confidence: details.field_confidence,
+    };
     const description = text(t.description);
     if (!input.raw_text.includes(description))
       throw new ApiError(503, "ungrounded_description");
     const token = claimToken(t.amount_token, transactionOrdinal);
-    if (token && !description.includes(token.evidence))
+    if (
+      token && !description.includes(token.evidence) &&
+      !(amountPlans.length === 1 && tokens.length === 1)
+    )
       throw new ApiError(503, "ungrounded_amount");
     if (
       t.merchant_id !== null &&
@@ -638,11 +1161,9 @@ export async function enrich(
     ) throw new ApiError(503, "invalid_participant_count");
     if (splitMethod === "equal" && participantCount === null)
       throw new ApiError(503, "invalid_equal_split");
-    const transactionParticipants = Array.isArray(model.participants)
-      ? model.participants.filter((candidate) =>
-        object(candidate).transaction_ordinal === transactionOrdinal
-      )
-      : [];
+    const transactionParticipants = participantRows.filter((candidate) =>
+      normalizedOrdinal(candidate.transaction_ordinal) === transactionOrdinal
+    );
     if (
       participantCount !== null &&
       transactionParticipants.reduce(
@@ -727,14 +1248,11 @@ export async function enrich(
             : "unknown",
     };
   });
-  if (!Array.isArray(model.participants) || model.participants.length > 100)
-    throw new ApiError(503, "invalid_participants");
   const people: string[] = [];
   const participants: NonNullable<Extraction["participants"]> = [];
   const allocations: NonNullable<Extraction["allocations"]> = [];
-  for (const raw of model.participants) {
-    const p = object(raw);
-    const transactionOrdinal = Number(p.transaction_ordinal);
+  for (const p of participantRows) {
+    const transactionOrdinal = normalizedOrdinal(p.transaction_ordinal);
     if (!Number.isInteger(transactionOrdinal) || !transactions[transactionOrdinal])
       throw new ApiError(503, "invalid_transaction_ordinal");
     const displayName = p.display_name === null ? null : text(p.display_name, 100).trim();
@@ -782,7 +1300,7 @@ export async function enrich(
   const transactionContexts: NonNullable<Extraction["transaction_contexts"]> = [];
   for (const raw of model.transaction_contexts) {
     const c = object(raw);
-    const transactionOrdinal = Number(c.transaction_ordinal);
+    const transactionOrdinal = normalizedOrdinal(c.transaction_ordinal);
     if (!Number.isInteger(transactionOrdinal) || !transactions[transactionOrdinal])
       throw new ApiError(503, "invalid_transaction_ordinal");
     const name = text(c.name, 100).trim();

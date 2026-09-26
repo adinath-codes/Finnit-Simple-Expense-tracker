@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase/client";
 import {
   changeJournalCache,
+  changeJournalCacheTargeted,
   readJournalCache,
   subscribeJournalCache,
 } from "@/lib/offline/database";
@@ -22,6 +23,7 @@ import { presetExtraction } from "../../../../supabase/functions/_shared/preset"
 import { refreshRemoteReceipts } from "@/features/camera/services/receipt-service";
 import { recordCacheMetric } from "@/lib/offline/cache-metrics";
 import { mergeRemoteEntry } from "./journal-sync-merge";
+import { notifyFirstJournalEntryLogged } from "@/features/notifications/services/entry-events";
 
 export function createCaptureInput(
   rawText: string,
@@ -43,13 +45,21 @@ export function createCaptureInput(
 export async function captureJournalNote(value: CaptureInput) {
   const input = capture(value);
   const userId = await currentUserId();
-  const saved = await changeJournalCache(userId, (cache) => {
+  let firstJournalItem = false;
+  const saved = await changeJournalCacheTargeted(userId, {
+    entryIds: [input.id],
+    jobs: true,
+    affectsContent: true,
+  }, (cache) => {
     const existing = cache.entries[input.id];
     if (existing) {
       if (JSON.stringify(existing.input) !== JSON.stringify(input))
         throw new Error("Capture ID already belongs to a different note.");
       return existing;
     }
+    firstJournalItem =
+      Object.values(cache.entries).every((entry) => entry.deleted) &&
+      Object.values(cache.receipts).every((receipt) => receipt.deleted);
     const local = {
       input,
       extraction: pendingExtraction(input),
@@ -68,6 +78,7 @@ export async function captureJournalNote(value: CaptureInput) {
     });
     return local;
   });
+  if (firstJournalItem) notifyFirstJournalEntryLogged(userId);
   void syncJournal(userId).catch(() => undefined);
   return saved;
 }
@@ -76,9 +87,17 @@ export async function captureJournalNote(value: CaptureInput) {
 export async function capturePresetJournalNote(value: PresetCaptureInput) {
   const input = capture(value.input);
   const userId = await currentUserId();
-  const saved = await changeJournalCache(userId, (cache) => {
+  let firstJournalItem = false;
+  const saved = await changeJournalCacheTargeted(userId, {
+    entryIds: [input.id],
+    jobs: true,
+    affectsContent: true,
+  }, (cache) => {
     const existing = cache.entries[input.id];
     if (existing) return existing;
+    firstJournalItem =
+      Object.values(cache.entries).every((entry) => entry.deleted) &&
+      Object.values(cache.receipts).every((receipt) => receipt.deleted);
     const local = {
       input,
       extraction: presetExtraction(value.preset, input),
@@ -97,6 +116,7 @@ export async function capturePresetJournalNote(value: PresetCaptureInput) {
     });
     return local;
   });
+  if (firstJournalItem) notifyFirstJournalEntryLogged(userId);
   void syncJournal(userId).catch(() => undefined);
   return saved;
 }
@@ -248,5 +268,41 @@ export async function refreshJournal(userId?: string) {
       refreshRemoteReceipts(ownerId),
     ]);
   }
+  return listLocalJournal(ownerId);
+}
+
+/**
+ * Hydrate an older server-backed range into process memory on demand. Native
+ * persistence still applies the two-day offline window, so archive browsing
+ * never expands the durable device cache.
+ */
+export async function refreshJournalRange(
+  startDate: string,
+  endDate: string,
+  userId?: string,
+) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+    throw new Error("Invalid journal date range.");
+  }
+  const ownerId = userId ?? await currentUserId();
+  if (await currentUserId() !== ownerId) throw new Error("Account changed during sync.");
+  const { data, error } = await getSupabase()
+    .from("journal_entries")
+    .select(
+      "id,source_type,raw_text,original_text,captured_at,occurred_on,timezone,currency,revision,extraction,deleted_at,capture_request",
+    )
+    .eq("user_id", ownerId)
+    .eq("source_type", "text")
+    .gte("occurred_on", startDate)
+    .lte("occurred_on", endDate)
+    .order("id")
+    .limit(1000);
+  if (error) throw error;
+  if (await currentUserId() !== ownerId) throw new Error("Account changed during sync.");
+  await changeJournalCache(ownerId, (cache) => {
+    for (const row of data) mergeRemoteEntry(cache, row as unknown as SavedEntry);
+  });
+  await refreshRemoteReceipts(ownerId, { startDate, endDate });
   return listLocalJournal(ownerId);
 }

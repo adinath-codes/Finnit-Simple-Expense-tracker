@@ -940,6 +940,14 @@ Deterministic code may tokenize literal money evidence, validate model claims,
 apply explicit user correction rules, convert to integer minor units, and perform
 arithmetic; it must not independently infer transactions or categories.
 
+Typed capture streams one structured Gemini response in schema order. Gemini's
+canonical `amount_plans` array comes first; after server evidence validation, a
+provisional amount may be shown while the same call continues with categories,
+merchant, participants, components, and explanation. The device never parses or
+guesses an amount. Provisional values are persisted separately from extraction,
+marked with `≈`, and excluded from every financial total and action until the
+authoritative database commit replaces them.
+
 AI must never invent a missing amount. Web search, search grounding, menu-price
 lookup, or location-based price guessing must not be used to manufacture a
 transaction value.
@@ -1516,6 +1524,11 @@ For ordinary text capture, call one server-side Gemini structured-output request
 only after the user explicitly submits. Cache the validated structured result
 permanently with the entry, with server-side token caps, per-user rate limits,
 idempotency, and cost monitoring.
+
+That single request may stream a validated provisional amount before its full
+breakdown. It must not be split into an amount call plus a detail call. A second
+model request is allowed only when the durable outbox retries an actually failed
+attempt. Cached idempotent retries return the committed entry without Gemini.
 
 For example:
 

@@ -1,4 +1,5 @@
 import type { JournalSeed, Preferences } from "@/types/domain";
+import { localDayKey } from "@/utils/dates";
 
 export function createDefaultPreferences(): Preferences {
   return {
@@ -18,7 +19,7 @@ export function createDefaultPreferences(): Preferences {
  */
 export function createEmptyJournal(): JournalSeed {
   return {
-    today: new Date().toISOString().slice(0, 10),
+    today: localDayKey(),
     profile: { name: "", streak: 0 },
     settings: createDefaultPreferences(),
     goals: [],

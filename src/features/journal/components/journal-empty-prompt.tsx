@@ -1,20 +1,28 @@
+import { useMemo } from "react";
 import { Pressable, StyleSheet, Text } from "react-native";
 import { Finn, JournalType } from "@/constants/theme";
 import { useRotatingPlaceholder } from "@/components/ui/use-rotating-placeholder";
+import { currencySymbol } from "@/utils/currency";
 
-const PHRASES = [
-  "Write what you spent…",
-  "2 coffees from Starbucks, ₹360",
-  "Uber back home, split ₹432 with Aswin",
-];
-
-export function JournalEmptyPrompt({ onPress }: { onPress: () => void }) {
-  const visibleText = useRotatingPlaceholder(PHRASES);
+export function JournalEmptyPrompt({
+  currency,
+  onPress,
+}: {
+  currency: string;
+  onPress: () => void;
+}) {
+  const symbol = currencySymbol(currency);
+  const phrases = useMemo(() => [
+    "Write what you spent…",
+    `2 coffees from Starbucks, ${symbol}360`,
+    `Uber back home, split ${symbol}432 with Aswin`,
+  ], [symbol]);
+  const visibleText = useRotatingPlaceholder(phrases);
 
   return (
     <Pressable
       accessibilityHint="Opens the keyboard so you can add a journal entry."
-      accessibilityLabel={PHRASES[0]}
+      accessibilityLabel={phrases[0]}
       accessibilityRole="button"
       hitSlop={8}
       onPress={onPress}

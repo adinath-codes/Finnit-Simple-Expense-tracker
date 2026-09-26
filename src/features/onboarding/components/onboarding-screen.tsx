@@ -70,7 +70,7 @@ import {
   ANALYTICS_EVENTS,
   captureAnalytics,
 } from "@/lib/analytics/analytics";
-import { useJournal } from "@/providers/app-providers";
+import { useJournalActions } from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
 import { currencySymbol } from "@/utils/currency";
 import {
@@ -81,9 +81,10 @@ import {
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const QUICK_CURRENCY_CODES = new Set(["USD", "EUR", "CAD", "INR"]);
+const INITIAL_STORY_COUNT = onboardingSteps.filter((step) => step.kind === "story").length;
 
 export default function OnboardingScreen() {
-  const { updateSettings } = useJournal();
+  const { updateSettings } = useJournalActions();
   const { session, setOnboardingComplete } = useSession();
   const reduceMotion = useReducedMotion();
   const [ready, setReady] = useState(false);
@@ -289,6 +290,8 @@ export default function OnboardingScreen() {
             <InitialStoryScreen
               step={currentStep}
               onBack={stepIndex > 0 ? goBack : undefined}
+              storyIndex={stepIndex}
+              storyCount={INITIAL_STORY_COUNT}
             />
           ) : currentStep.kind === "welcome" ? (
             <WelcomeStep />

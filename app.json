@@ -4,27 +4,25 @@
     "slug": "Finn",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/logo/app-icon.png",
     "scheme": "finn",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/logo/app-icon.png",
       "bundleIdentifier": "com.finnit.app",
       "usesAppleSignIn": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#F6F6F4",
+        "foregroundImage": "./assets/logo/android-adaptive-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.finnit.app"
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/logo/app-icon.png"
     },
     "plugins": [
       "expo-router",
@@ -33,7 +31,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow Finn to choose a receipt photo for your journal",
-          "cameraPermission": false,
+          "cameraPermission": "Allow Finn to photograph receipts for your journal",
           "microphonePermission": false
         }
       ],
@@ -49,21 +47,41 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FCF8F5",
-          "android": {
-            "drawable": {
-              "icon": "./assets/images/splash-screen.xml"
-            }
-          }
+          "backgroundColor": "#F6F6F4",
+          "image": "./assets/logo/app-icon.png",
+          "imageWidth": 180
         }
       ],
       "expo-sqlite",
       "@sentry/react-native",
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notifications/finn-notification-icon.png",
+          "color": "#20C878",
+          "defaultChannel": "journal-reminders"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "29ce8d18-a0c2-4834-8177-6f4e14d33f97"
+      }
+    },
+    "owner": "adinath-codes",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/29ce8d18-a0c2-4834-8177-6f4e14d33f97",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

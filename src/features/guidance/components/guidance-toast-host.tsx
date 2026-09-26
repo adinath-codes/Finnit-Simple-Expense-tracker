@@ -7,13 +7,17 @@ import {
   markGuidanceSeen,
   type GuidanceMessageId,
 } from "@/features/guidance/services/guidance-service";
-import { useJournal } from "@/providers/app-providers";
+import {
+  useJournalData,
+  useJournalStatus,
+} from "@/providers/app-providers";
 
 export function GuidanceToastHost() {
   const pathname = usePathname();
   const session = useSession().session;
   const userId = session?.user.id;
-  const { entries, initialSyncReady, settingsReady } = useJournal();
+  const { entries } = useJournalData();
+  const { initialSyncReady, settingsReady } = useJournalStatus();
   const { showToast } = useAppToast();
   const shownForUser = useRef<string | null>(null);
 

@@ -2,7 +2,10 @@ import { useEffect, useRef, type PropsWithChildren } from "react";
 import { usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
 import { useSession } from "@/features/auth/providers/session-provider";
-import { useJournal } from "@/providers/app-providers";
+import {
+  useJournalData,
+  useJournalStatus,
+} from "@/providers/app-providers";
 import {
   ANALYTICS_EVENTS,
   analyticsClient,
@@ -53,7 +56,8 @@ export function AnalyticsProvider({ children }: PropsWithChildren) {
 export function AnalyticsRuntime() {
   const pathname = usePathname();
   const { session, onboardingComplete } = useSession();
-  const { settings, settingsReady } = useJournal();
+  const { settings } = useJournalData();
+  const { settingsReady } = useJournalStatus();
   const previousUserId = useRef<string | null>(null);
   const appOpened = useRef(false);
 
@@ -105,4 +109,3 @@ export function AnalyticsRuntime() {
 
   return null;
 }
-

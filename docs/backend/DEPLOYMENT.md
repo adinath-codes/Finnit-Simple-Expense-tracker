@@ -50,6 +50,9 @@ FINN_API_MONTHLY_LIMIT=20000
 FINN_API_MINUTE_LIMIT=120
 REVENUECAT_SECRET_API_KEY=sk_your_secret_revenuecat_api_key
 REVENUECAT_ENTITLEMENT_ID=premium
+REVENUECAT_PROJECT_ID=proj_your_revenuecat_project_id
+REVENUECAT_ENTITLEMENT_RESOURCE_ID=entl_your_entitlement_resource_id
+REVENUECAT_WEBHOOK_AUTHORIZATION=Bearer your-random-webhook-secret
 # A URL for the dedicated finn_ask_reader login. Provision its password outside
 # migrations and use the session-pooler host with TLS.
 FINN_ASK_READ_DB_URL=postgresql://finn_ask_reader.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres?sslmode=require
@@ -92,7 +95,7 @@ npx supabase login
 npx supabase link --project-ref YOUR_FINN_PROJECT_REF
 npx supabase db push
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review delete-account scan-receipt --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review delete-account scan-receipt refresh-entitlement redeem-testing-code revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 Apply all migrations in filename order:
@@ -113,22 +116,42 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260922103031_ask_finn_claim_scope_no_auth.sql`: scopes the reader from the verified transaction-local subject without depending on managed `auth` schema grants.
 - `supabase/migrations/20260922130000_revision_aware_caching.sql`: adds the revision change log and paged journal sync RPC, bounded private Ask/catalog caches, cache metrics, and realtime revision invalidation.
 - `supabase/migrations/20260922165037_account_deletion_grace_period.sql`: adds private 30-day account-deletion requests, recovery cancellation, and the bounded hourly `pg_cron` purge.
+- `supabase/migrations/20260925100000_revenuecat_entitlement_cache.sql`: adds the private webhook/reconciliation-backed entitlement snapshot used by latency-sensitive APIs.
+- `supabase/migrations/20260926042659_tester_access_codes.sql`: adds hashed, capacity-limited tester codes, private redemption history, atomic reservation/completion RPCs, and the initial 25-account/30-day tester cohort.
 
 The caching migration was applied to the linked Finn project on September 22,
-2026. The dependent `parse-entry`, `correct-entry`, `scan-receipt`, `ask-money`,
-`ask-sql`, and `apply-preset` functions were deployed afterward. The public
+2026. The RevenueCat entitlement-cache migration, existing-customer backfill,
+webhook integration, and all dependent Edge Function bundles were deployed on
+September 25, 2026. The public
 schema types in `src/lib/supabase/generated.types.ts` were generated from that
 deployed schema. No native client release is implied by these server steps.
 
-Premium functions require `REVENUECAT_SECRET_API_KEY` and verify the
-authenticated Supabase UUID against `REVENUECAT_ENTITLEMENT_ID`. These server
-values never belong in Expo. The `delete-account` function intentionally remains
-available without Premium so a paywalled user can delete their account.
+Premium functions read the private local entitlement snapshot and never call
+RevenueCat on the capture path. `refresh-entitlement` securely reconciles the
+authenticated Supabase UUID at sign-in, purchase, restore, and offer-code
+redemption. Configure RevenueCat's project webhook to POST all environments to
+`https://YOUR_FINN_PROJECT_REF.supabase.co/functions/v1/revenuecat-webhook` and
+send the exact `REVENUECAT_WEBHOOK_AUTHORIZATION` value as its Authorization
+header. Both the RevenueCat secret key and webhook secret remain server-only.
+The RevenueCat secret must be an API v2 key with **Customer information →
+Customers → Read & write** permission because tester redemption grants a
+promotional entitlement. `REVENUECAT_PROJECT_ID` is the `proj...`
+resource ID and `REVENUECAT_ENTITLEMENT_RESOURCE_ID` is the `entl...` resource
+ID; the human-facing entitlement lookup key remains
+`REVENUECAT_ENTITLEMENT_ID`. A v1-only key will fail reconciliation before any
+Gemini work begins.
+The `delete-account` function intentionally remains available without Premium
+so a paywalled user can delete their account.
 
 The account-deletion grace-period migration and updated `delete-account`
-function are implemented locally but are not deployed as of September 22, 2026.
-Enabling their automated permanent purge on the linked project requires an
-explicit production deployment approval.
+function are deployed on the linked project. The function intentionally remains
+available without Premium so subscription state can never prevent account
+deletion.
+
+The tester-code migration and `redeem-testing-code` function are repository
+changes only until the database push and function deployment above are run.
+The client never receives the RevenueCat secret or direct access to the private
+code and redemption tables.
 
 No separate seed step is needed. If the base backend is already deployed, push
 the currency migration first, then redeploy `parse-entry`, `correct-entry`,
@@ -244,7 +267,32 @@ The entry uses its first transaction's effective day; each transaction also has
 its own day for accurate search/calendar queries. A different payload with the
 same capture ID produces a 409, rather than silently creating or altering money.
 
-The response has `{ entry, cached }`. `entry.extraction.transactions` keeps the
+Clients may send `Accept: application/x-ndjson` to receive one streamed response.
+The first optional event is a server-validated Gemini amount plan:
+
+```json
+{"type":"amount_preview","entry_id":"74996398-bc0c-40e8-8ed0-a2aa8cb8bb4e","preview":{"amount_minor":"34000","currency":"INR","scope":"user_share","estimated":true,"needs_review":false}}
+{"type":"final","entry":{},"cached":false}
+```
+
+`scope` is `personal_total`, `user_share`, or `group_total`. Every preview is
+provisional and stays outside authoritative transactions and aggregates. It is
+emitted only after the complete first `amount_plans` array is grounded against
+literal evidence and exact integer arithmetic. Mixed currencies, incompatible
+scopes, incomplete plans, and missing amounts produce no preview. If headers
+have already streamed and processing fails, the last event is
+`{ "type": "warning", "code": "...", "retryable": true }`. Cached/idempotent
+requests emit only `final` and do not call Gemini.
+
+Clients without that Accept header keep the backwards-compatible JSON
+`{ entry, cached }` response. New clients also accept that legacy JSON shape.
+Normal text capture uses one Gemini request: `amount_plans` is generated first,
+then transaction details, participants/contexts, ignored evidence, and the
+interpretation summary continue in the same structured stream. The extraction
+model uses minimal thinking without lowering the output cap. Receipt streaming
+is unchanged.
+
+`entry.extraction.transactions` keeps the
 exact stated `amount_minor` plus its `primary_amount_role`; `group_total_minor`,
 `user_share_minor`, and `paid_by_user_minor` are separate. Amount is null when
 absent. Do not treat it as zero or multiply it by quantity again. Arithmetic such
@@ -259,6 +307,12 @@ completed retries return the persisted interpretation without another model call
 and stale interrupted claims can be retried. Provider or semantic-validation
 failure leaves the local pending note available for retry without fabricating a
 financial result.
+
+Deploy `parse-entry` before releasing the streaming client. The Edge runtime
+passes streaming `Response` objects through without JSON wrapping while keeping
+the same authentication, Premium entitlement, quota, CORS, and bounded-body
+checks. Stream timing metrics contain durations and a preview-emitted boolean
+only—never note text, amount, currency, merchant, participants, or model output.
 
 ### Correction and deletion: `correct-entry`
 

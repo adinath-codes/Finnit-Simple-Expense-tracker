@@ -8,6 +8,7 @@ import Purchases, {
   type PurchasesOffering,
   type PurchasesPackage,
 } from "react-native-purchases";
+import { BackendError, callBackend } from "@/lib/ai/api";
 import type {
   SubscriptionPlan,
   TrialEligibility,
@@ -126,6 +127,40 @@ export async function loadSubscriptionSnapshot() {
     loadSubscriptionProducts(),
   ]);
   return { customerInfo, ...products };
+}
+
+/** Refresh the server snapshot outside capture's latency-sensitive path. */
+export async function reconcileSubscriptionEntitlement(userId: string) {
+  return callBackend<{
+    entitlement: { active: boolean; expires_at: string | null };
+  }>("refresh-entitlement", {}, userId);
+}
+
+export async function redeemTestingAccessCode(code: string, userId: string) {
+  await callBackend<{
+    entitlement: { active: boolean; expires_at: string | null };
+    redeemed: boolean;
+  }>("redeem-testing-code", { code }, userId);
+  await Purchases.invalidateCustomerInfoCache();
+  return Purchases.getCustomerInfo();
+}
+
+export function testingCodeErrorMessage(error: unknown) {
+  if (error instanceof BackendError) {
+    switch (error.code) {
+      case "invalid_testing_code":
+        return "That code isn’t valid. Check it and try again.";
+      case "testing_code_full":
+        return "That testing code has reached its user limit.";
+      case "testing_code_already_redeemed":
+        return "That code has already been used on this account.";
+      case "subscription_grant_unavailable":
+        return "Premium couldn’t be activated just now. Please try again.";
+      case "sign_in_required":
+        return "Sign in again before redeeming your code.";
+    }
+  }
+  return "Finn couldn’t check that code. Check your connection and try again.";
 }
 
 export function planFromPackage(

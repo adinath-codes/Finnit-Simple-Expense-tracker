@@ -49,7 +49,6 @@ export function ReceiptCameraSheet({
   onUsePhoto: (photo: ReceiptCapture) => void;
 }) {
   const camera = useRef<CameraView>(null);
-  const autoRequestStarted = useRef(false);
   const captureBusy = useRef(false);
   const captureSession = useRef(0);
   const wasVisible = useRef(false);
@@ -123,7 +122,6 @@ export function ReceiptCameraSheet({
 
   useEffect(() => {
     if (!present) {
-      autoRequestStarted.current = false;
       setCameraReady(false);
       setCapturing(false);
       setRequestingPermission(false);
@@ -131,26 +129,8 @@ export function ReceiptCameraSheet({
       setPhoto(null);
       setTorch(false);
       setFacing("back");
-      return;
     }
-
-    if (
-      !visible || !permission ||
-      permission.granted ||
-      !permission.canAskAgain ||
-      autoRequestStarted.current
-    ) {
-      return;
-    }
-
-    autoRequestStarted.current = true;
-    setRequestingPermission(true);
-    void requestPermission()
-      .catch(() => {
-        setError("Finn could not request camera access.");
-      })
-      .finally(() => setRequestingPermission(false));
-  }, [permission, requestPermission, visible, present]);
+  }, [present]);
 
   if (!present) return null;
 
@@ -259,76 +239,81 @@ export function ReceiptCameraSheet({
             surfaceStyle,
           ]}
         >
-          <ContentFade key={photo?.uri ?? (permission?.granted ? "camera" : "permission")} style={{ flex: 1 }}>
-          {photo ? (
-            <ReceiptReview
-              photo={photo}
-              onClose={close}
-              onRetake={() => {
-                setPhoto(null);
-                setCameraReady(false);
-              }}
-              onUsePhoto={() => {
-                captureAnalytics(ANALYTICS_EVENTS.receiptSubmitted, {
-                  source: "image",
-                });
-                onUsePhoto(photo);
-              }}
-            />
-          ) : permission?.granted ? (
-            <View style={styles.cameraStage}>
-              <CameraView
-                active={visible}
-                animateShutter
-                enableTorch={torch}
-                facing={facing}
-                mode="picture"
-                onCameraReady={() => setCameraReady(true)}
-                onMountError={(event) => setError(event.message)}
-                ref={camera}
-                responsiveOrientationWhenOrientationLocked
-                style={StyleSheet.absoluteFill}
-              />
-              {!cameraReady && (
-                <View style={styles.startingCamera}>
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                  <Text style={styles.startingText}>Starting camera…</Text>
+          <View style={styles.surfaceClip}>
+            <ContentFade
+              key={photo?.uri ?? (permission?.granted ? "camera" : "permission")}
+              style={{ flex: 1 }}
+            >
+              {photo ? (
+                <ReceiptReview
+                  photo={photo}
+                  onClose={close}
+                  onRetake={() => {
+                    setPhoto(null);
+                    setCameraReady(false);
+                  }}
+                  onUsePhoto={() => {
+                    captureAnalytics(ANALYTICS_EVENTS.receiptSubmitted, {
+                      source: "image",
+                    });
+                    onUsePhoto(photo);
+                  }}
+                />
+              ) : permission?.granted ? (
+                <View style={styles.cameraStage}>
+                  <CameraView
+                    active={visible}
+                    animateShutter
+                    enableTorch={torch}
+                    facing={facing}
+                    mode="picture"
+                    onCameraReady={() => setCameraReady(true)}
+                    onMountError={(event) => setError(event.message)}
+                    ref={camera}
+                    responsiveOrientationWhenOrientationLocked
+                    style={[StyleSheet.absoluteFill, styles.cameraPreview]}
+                  />
+                  {!cameraReady && (
+                    <View style={styles.startingCamera}>
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                      <Text style={styles.startingText}>Starting camera…</Text>
+                    </View>
+                  )}
+                  {!!error && (
+                    <View accessibilityLiveRegion="polite" style={styles.errorPill}>
+                      <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                  )}
+                  <CameraControls
+                    cameraReady={cameraReady}
+                    capturing={capturing}
+                    facing={facing}
+                    torch={torch}
+                    onCapture={() => void takePhoto()}
+                    onClose={close}
+                    onFlip={() => {
+                      setCameraReady(false);
+                      setTorch(false);
+                      setFacing((current) =>
+                        current === "back" ? "front" : "back",
+                      );
+                    }}
+                    onGallery={() => void pickFromGallery()}
+                    onToggleTorch={() => setTorch((current) => !current)}
+                  />
                 </View>
+              ) : (
+                <PermissionState
+                  canAskAgain={permission?.canAskAgain ?? true}
+                  error={error}
+                  loading={!permission || requestingPermission}
+                  onAllow={() => void askAgain()}
+                  onClose={close}
+                  onGallery={() => void pickFromGallery()}
+                />
               )}
-              {!!error && (
-                <View accessibilityLiveRegion="polite" style={styles.errorPill}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              )}
-              <CameraControls
-                cameraReady={cameraReady}
-                capturing={capturing}
-                facing={facing}
-                torch={torch}
-                onCapture={() => void takePhoto()}
-                onClose={close}
-                onFlip={() => {
-                  setCameraReady(false);
-                  setTorch(false);
-                  setFacing((current) =>
-                    current === "back" ? "front" : "back",
-                  );
-                }}
-                onGallery={() => void pickFromGallery()}
-                onToggleTorch={() => setTorch((current) => !current)}
-              />
-            </View>
-          ) : (
-            <PermissionState
-              canAskAgain={permission?.canAskAgain ?? true}
-              error={error}
-              loading={!permission || requestingPermission}
-              onAllow={() => void askAgain()}
-              onClose={close}
-              onGallery={() => void pickFromGallery()}
-            />
-          )}
-          </ContentFade>
+            </ContentFade>
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -365,7 +350,9 @@ function PermissionState({
       <Text style={styles.permissionBody}>
         {loading
           ? "Finn is checking camera permission."
-          : "Photograph a receipt without leaving your journal. Finn only uses the camera while this panel is open."}
+          : canAskAgain
+            ? "Photograph a receipt without leaving your journal. Finn only uses the camera while this panel is open."
+            : "Camera access is blocked. Android requires you to enable it in Settings before Finn can show the camera."}
       </Text>
       {!!error && <Text style={styles.permissionError}>{error}</Text>}
       {!loading && (
@@ -382,7 +369,7 @@ function PermissionState({
           style={styles.permissionAction}
         >
           <Text style={styles.permissionActionText}>
-            {canAskAgain ? "Allow camera" : "Open settings"}
+            {canAskAgain ? "Allow access" : "Open settings"}
           </Text>
         </Button>
       )}
@@ -486,17 +473,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   surface: {
+    borderRadius: 32,
+    boxShadow: "0px 18px 44px rgba(20, 12, 10, 0.34)",
+    maxWidth: "100%",
+  },
+  surfaceClip: {
     backgroundColor: "#151515",
     borderColor: "rgba(255, 255, 255, 0.14)",
     borderRadius: 32,
     borderWidth: StyleSheet.hairlineWidth,
-    boxShadow: "0px 18px 44px rgba(20, 12, 10, 0.34)",
-    maxWidth: "100%",
+    flex: 1,
     overflow: "hidden",
   },
   cameraStage: {
     backgroundColor: "#111111",
+    borderRadius: 32,
     flex: 1,
+    overflow: "hidden",
+  },
+  cameraPreview: {
+    backgroundColor: "transparent",
+    borderRadius: 32,
+    overflow: "hidden",
   },
   startingCamera: {
     bottom: 0,

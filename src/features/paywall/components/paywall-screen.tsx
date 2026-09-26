@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
+import { TestingCodeModal } from "@/features/paywall/components/testing-code-modal";
 import {
      isRevenueCatTestStore,
      trackPaywallImpression,
@@ -82,6 +83,7 @@ export default function PaywallScreen() {
      );
      const pager = useRef<ScrollView>(null);
      const [page, setPage] = useState(0);
+     const [testingCodeVisible, setTestingCodeVisible] = useState(false);
      const {
           state,
           offering,
@@ -91,6 +93,7 @@ export default function PaywallScreen() {
           purchase,
           restore,
           redeemOfferCode,
+          redeemTestingCode,
           refresh,
      } = useSubscription();
      const orderedPlans = useMemo(
@@ -259,15 +262,13 @@ export default function PaywallScreen() {
                                              disabled={isBusy}
                                              onPress={() => void restore()}
                                         />
-                                        {Platform.OS === "ios" ? (
-                                             <FooterLink
-                                                  label="Redeem offer code"
-                                                  disabled={isBusy}
-                                                  onPress={() =>
-                                                       void redeemOfferCode()
-                                                  }
-                                             />
-                                        ) : null}
+                                        <FooterLink
+                                             label="Have a code?"
+                                             disabled={isBusy}
+                                             onPress={() =>
+                                                  setTestingCodeVisible(true)
+                                             }
+                                        />
                                    </View>
                                    <View style={styles.legalLinks}>
                                         <FooterLink
@@ -345,6 +346,18 @@ export default function PaywallScreen() {
                          </Button>
                     </SafeAreaView>
                </SafeAreaView>
+               <TestingCodeModal
+                    visible={testingCodeVisible}
+                    busy={isBusy}
+                    onClose={() => setTestingCodeVisible(false)}
+                    onRedeem={async (code) => {
+                         await redeemTestingCode(code);
+                         setTestingCodeVisible(false);
+                    }}
+                    onRedeemStoreCode={
+                         Platform.OS === "ios" ? redeemOfferCode : undefined
+                    }
+               />
           </View>
      );
 }

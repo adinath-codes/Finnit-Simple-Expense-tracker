@@ -7,10 +7,10 @@ is the non-dismissible four-page paywall; legal pages and account settings stay
 available so a user can restore purchases, sign out, or delete their account.
 
 The journal provider does not load, synchronize, or mutate financial data while
-the entitlement is inactive. Premium Edge Functions independently query
-RevenueCat with a server-only secret key and reject inactive users with
-`premium_required`. Successful checks are cached in the warm Edge isolate for at
-most 60 seconds; inactive checks are cached for 10 seconds.
+the entitlement is inactive. Premium Edge Functions read the private Supabase
+entitlement snapshot and reject inactive users with `premium_required`.
+`refresh-entitlement` and the RevenueCat webhook keep that snapshot current;
+the latency-sensitive capture path does not call RevenueCat.
 
 ## Environment
 
@@ -38,13 +38,23 @@ Function secrets:
 ```dotenv
 REVENUECAT_SECRET_API_KEY=sk_...
 REVENUECAT_ENTITLEMENT_ID=finn_it_pro
+REVENUECAT_PROJECT_ID=proj...
+REVENUECAT_ENTITLEMENT_RESOURCE_ID=entl...
+REVENUECAT_WEBHOOK_AUTHORIZATION=Bearer your-random-webhook-secret
 ```
+
+Generate the secret as a RevenueCat API v2 key. Grant **Customer information →
+Customers → Read & write** so the tester-code endpoint can create a promotional
+entitlement; all unrelated permissions can remain **No access**.
+`REVENUECAT_ENTITLEMENT_ID` is the public lookup key (`finn_it_pro`),
+while `REVENUECAT_ENTITLEMENT_RESOURCE_ID` is RevenueCat's internal `entl...`
+resource ID. A legacy v1 key cannot call the v2 active-entitlements endpoint.
 
 Deploy the Edge secrets before deploying the gated functions:
 
 ```bash
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review scan-receipt delete-account --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review scan-receipt delete-account refresh-entitlement redeem-testing-code revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 `delete-account` deliberately authenticates the user without requiring Premium.
@@ -75,18 +85,27 @@ restore, renewal, expiry, and entitlement tests, but it does not simulate store
 introductory offers. Verify the three-day trial itself with a fresh Apple
 Sandbox account and a Google Play license tester on an Internal Testing build.
 
-## One-month tester code
+## Tester codes
 
-The “Redeem offer code” action opens Apple's native offer-code redemption sheet.
-Create the tester code in App Store Connect as a custom offer code with a
-one-month free duration for the Finn Premium subscription. Apple owns code
-validation and the redemption disclosure; RevenueCat observes the resulting
-transaction and activates `finn_it_pro` for the same Supabase UUID.
+“Have a code?” opens Finn's cross-platform code-entry modal. The authenticated
+`redeem-testing-code` function hashes the normalized input, atomically reserves
+one of the code record's `max_redemptions`, grants the configured RevenueCat
+entitlement until `premium_days` elapse, and refreshes both the server snapshot
+and SDK customer cache. Premium therefore unlocks without a store purchase.
 
-This design intentionally does not ship a shared tester code or a secret
-promotional-entitlement endpoint in the client. For Android testers, create the
-equivalent Play promo code in Play Console and have the tester redeem it with the
-same Google Play account used on the device, then use Restore purchases in Finn.
+The initial `early-testers-2026` record allows 25 unique Supabase accounts and
+grants 30 days. Only its SHA-256 digest and final-four hint are committed; keep
+the supplied raw code in the team's secret manager. Change capacity or duration
+by editing that private row. Disable it with `enabled = false`. To add a code,
+normalize it by uppercasing and removing spaces/hyphens, SHA-256 that value, and
+insert the digest, a non-secret hint, `max_redemptions`, and `premium_days` into
+`finn_private.testing_access_codes` through an administrator-only SQL session.
+
+Code tables, reservation functions, and redemption history are private and have
+RLS enabled; `anon` and `authenticated` receive no table or RPC grants. Pending
+reservations expire from capacity calculations after 15 minutes so a RevenueCat
+outage cannot permanently consume a slot. The iOS modal retains a secondary
+link to Apple's native offer-code sheet for store-managed promotions.
 
 ## App Store paywall checklist
 

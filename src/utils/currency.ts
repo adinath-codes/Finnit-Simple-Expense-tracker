@@ -1,13 +1,12 @@
 import { CURRENCIES } from "../../supabase/functions/_shared/contracts.ts";
 
-export function money(amountMinor: number, currency = "INR") {
-  const digits = CURRENCIES[currency] ?? 2;
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: digits,
-  }).format(amountMinor / 10 ** digits);
+export function money(
+  amountMinor: number,
+  amountCurrency = "INR",
+  displayCurrency = amountCurrency,
+) {
+  const sign = amountMinor < 0 ? "-" : "";
+  return `${sign}${currencySymbol(displayCurrency)}${moneyValue(Math.abs(amountMinor), amountCurrency)}`;
 }
 
 export function currencySymbol(currency = "INR") {

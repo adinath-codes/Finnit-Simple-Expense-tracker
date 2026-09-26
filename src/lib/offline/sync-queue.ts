@@ -3,6 +3,10 @@ import { File } from "expo-file-system";
 import { randomUUID } from "expo-crypto";
 import { fetch as expoFetch } from "expo/fetch";
 import { BackendError, callBackend } from "@/lib/ai/api";
+import {
+  EntryEventDecoder,
+  legacyEntryResponse,
+} from "@/lib/ai/entry-stream";
 import { notifyAiQuotaReached } from "@/features/support/services/quota-events";
 import {
   deletePresetForAccountRemote,
@@ -15,13 +19,17 @@ import {
   isBackendConfigured,
 } from "@/lib/supabase/client";
 import type {
+  EntryParseEvent,
   ReceiptScanEvent,
   ReceiptScanRequest,
   SavedEntry,
 } from "@/lib/supabase/database.types";
 import type { SyncJob } from "@/types/sync";
 import type { Preferences, Preset } from "@/types/domain";
-import { changeJournalCache, readJournalCache } from "./database";
+import {
+  changeJournalCacheTargeted,
+  readJournalCache,
+} from "./database";
 import { invalidateRefresh } from "./refresh-coordinator";
 import {
   captureOperationalError,
@@ -32,7 +40,27 @@ import {
   captureAnalytics,
 } from "@/lib/analytics/analytics";
 
+type SyncLane = "text" | "receipt" | "account";
+const SYNC_LANES: SyncLane[] = ["text", "receipt", "account"];
 const running = new Map<string, Promise<void>>();
+const preparing = new Map<string, Promise<void>>();
+const CONFLICT_CODE = "revision_or_idempotency_conflict";
+
+function laneKey(userId: string, lane: SyncLane) {
+  return `${userId}:${lane}`;
+}
+
+function laneFor(job: SyncJob, cache: Awaited<ReturnType<typeof readJournalCache>>): SyncLane {
+  if (
+    job.endpoint === "sync-settings" ||
+    job.endpoint === "sync-preset" ||
+    job.endpoint === "delete-preset"
+  ) return "account";
+  if (job.endpoint === "scan-receipt" || cache.receipts[job.entryId]) {
+    return "receipt";
+  }
+  return "text";
+}
 
 async function backendSession(userId: string) {
   const db = getSupabase();
@@ -49,6 +77,105 @@ async function backendSession(userId: string) {
   return session;
 }
 
+async function parseTextEntry(job: SyncJob, userId: string): Promise<SavedEntry> {
+  const session = await backendSession(userId);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  const startedAt = Date.now();
+  try {
+    const response = await expoFetch(
+      `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/parse-entry`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/x-ndjson",
+          "Content-Type": "application/json",
+          apikey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(job.payload),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      let body: { error?: { code?: string; retryable?: boolean } } = {};
+      try { body = await response.json(); } catch { /* invalid response */ }
+      if (body.error?.code === "ai_quota_exhausted") notifyAiQuotaReached();
+      throw new BackendError(
+        body.error?.code ?? "entry_parse_failed",
+        response.status,
+        body.error?.retryable ?? response.status >= 500,
+      );
+    }
+
+    // A new client may briefly talk to an older deployment.
+    if (!response.headers.get("content-type")?.includes("application/x-ndjson")) {
+      let legacy: unknown;
+      try { legacy = await response.json(); }
+      catch { throw new BackendError("invalid_backend_response", 502, true); }
+      try {
+        return legacyEntryResponse(legacy, job.entryId);
+      } catch {
+        throw new BackendError("invalid_backend_response", 502, true);
+      }
+    }
+
+    const eventDecoder = new EntryEventDecoder();
+    let finalEntry: SavedEntry | null = null;
+    const processEvent = async (event: EntryParseEvent) => {
+      if (event.type === "amount_preview") {
+        if (
+          event.entry_id !== job.entryId ||
+          !/^\d{1,16}$/.test(event.preview.amount_minor) ||
+          !["personal_total", "user_share", "group_total"].includes(event.preview.scope)
+        ) throw new BackendError("invalid_entry_stream", 502, true);
+        await changeJournalCacheTargeted(userId, {
+          entryIds: [job.entryId],
+        }, (state) => {
+          const current = state.entries[job.entryId];
+          if (!current || current.deleted) return;
+          current.amountPreview = event.preview;
+        });
+        recordOperation("sync.parse-entry.preview", "succeeded", {
+          duration_ms: Date.now() - startedAt,
+        });
+      } else if (event.type === "final") {
+        if (event.entry.id !== job.entryId) {
+          throw new BackendError("invalid_entry_stream", 502, true);
+        }
+        finalEntry = event.entry;
+      } else {
+        if (event.code === "ai_quota_exhausted") notifyAiQuotaReached();
+        throw new BackendError(event.code, 422, event.retryable);
+      }
+    };
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        let events: EntryParseEvent[];
+        try {
+          events = eventDecoder.push(decoder.decode(value, { stream: !done }), done);
+        } catch {
+          throw new BackendError("invalid_entry_stream", 502, true);
+        }
+        for (const event of events) await processEvent(event);
+        if (done) break;
+      }
+    } else {
+      let events: EntryParseEvent[];
+      try { events = eventDecoder.push(await response.text(), true); }
+      catch { throw new BackendError("invalid_entry_stream", 502, true); }
+      for (const event of events) await processEvent(event);
+    }
+    if (!finalEntry) throw new BackendError("incomplete_entry_stream", 502, true);
+    return finalEntry;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function scanReceipt(job: SyncJob, userId: string) {
   const request = job.payload as ReceiptScanRequest;
   const cache = await readJournalCache(userId);
@@ -58,7 +185,9 @@ async function scanReceipt(job: SyncJob, userId: string) {
   const file = new File(receipt.localUri);
   if (!file.exists) throw new BackendError("receipt_file_missing", 410, false);
 
-  await changeJournalCache(userId, (state) => {
+  await changeJournalCacheTargeted(userId, {
+    receiptIds: [job.entryId],
+  }, (state) => {
     const current = state.receipts[job.entryId];
     if (current) current.status = "scanning";
   });
@@ -100,7 +229,10 @@ async function scanReceipt(job: SyncJob, userId: string) {
       try { event = JSON.parse(line) as ReceiptScanEvent; }
       catch { throw new BackendError("invalid_receipt_stream", 502, true); }
       if (event.type === "item") {
-        await changeJournalCache(userId, (state) => {
+        await changeJournalCacheTargeted(userId, {
+          receiptIds: [job.entryId],
+          affectsContent: true,
+        }, (state) => {
           const current = state.receipts[job.entryId];
           if (!current || current.deleted) return;
           const next = current.lines.filter(
@@ -111,7 +243,11 @@ async function scanReceipt(job: SyncJob, userId: string) {
         });
       } else if (event.type === "final") {
         finalSeen = true;
-        await changeJournalCache(userId, (state) => {
+        await changeJournalCacheTargeted(userId, {
+          receiptIds: [job.entryId],
+          jobs: true,
+          affectsContent: true,
+        }, (state) => {
           const current = state.receipts[job.entryId];
           if (!current) return;
           current.lines = event.lines;
@@ -161,7 +297,10 @@ async function scanReceipt(job: SyncJob, userId: string) {
     if (buffer.trim()) await processLine(buffer);
     if (!finalSeen)
       throw new BackendError("incomplete_receipt_stream", 502, true);
-    await changeJournalCache(userId, (state) => {
+    await changeJournalCacheTargeted(userId, {
+      receiptIds: [job.entryId],
+      jobs: true,
+    }, (state) => {
       state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
       const current = state.receipts[job.entryId];
       if (current) current.localUri = undefined;
@@ -172,44 +311,71 @@ async function scanReceipt(job: SyncJob, userId: string) {
   }
 }
 
-export function syncJournal(userId: string): Promise<void> {
-  const active = running.get(userId);
+async function prepareQueue(userId: string) {
+  const active = preparing.get(userId);
+  if (active) return active;
+  if (SYNC_LANES.some((lane) => running.has(laneKey(userId, lane)))) return;
+  const task = readJournalCache(userId).then((snapshot) => {
+    const recoverable = snapshot.jobs.filter((job) => job.state === "running");
+    if (!recoverable.length) return;
+    const entryIds = [...new Set(recoverable.map((job) => job.entryId))];
+    return changeJournalCacheTargeted(userId, {
+      entryIds,
+      receiptIds: entryIds,
+      jobs: true,
+    }, (state) => {
+    // A process death can strand a durably marked running job. Explicitly
+    // blocked failures stay blocked until the user retries them.
+    for (const job of state.jobs) {
+      if (job.state === "running") {
+        job.state = "pending";
+        if (state.entries[job.entryId]) state.entries[job.entryId].sync = "pending";
+        const receipt = state.receipts[job.entryId];
+        if (receipt?.status === "failed") receipt.status = "queued";
+      }
+    }
+    });
+  });
+  preparing.set(userId, task);
+  void task.finally(() => preparing.delete(userId)).catch(() => undefined);
+  return task;
+}
+
+async function runLane(userId: string, lane: SyncLane) {
+  const key = laneKey(userId, lane);
+  const active = running.get(key);
   if (active) return active;
   const run = (async () => {
-    // A process death can strand a durably marked running job. A new worker
-    // owns no in-flight requests yet, so all such jobs are safe to requeue.
-    await changeJournalCache(userId, (state) => {
-      for (const job of state.jobs) {
-        if (job.state === "running") job.state = "pending";
-      }
-    });
     while (true) {
       if ((await currentUserId()) !== userId) return;
       const cache = await readJournalCache(userId);
-      // Preserve per-entry order: a failed create/correction blocks later writes
-      // for that entry, while other notes can still synchronize.
+      // Per-entry ordering remains global even though independent resource
+      // lanes now make progress concurrently.
       const job = cache.jobs.find(
         (candidate, index) =>
+          laneFor(candidate, cache) === lane &&
           candidate.state === "pending" &&
           candidate.nextAttemptAt <= Date.now() &&
-          !cache.jobs
-            .slice(0, index)
-            .some((earlier) => earlier.entryId === candidate.entryId),
+          !cache.jobs.slice(0, index).some(
+            (earlier) => earlier.entryId === candidate.entryId,
+          ),
       );
       if (!job) return;
-      await changeJournalCache(userId, (state) => {
+      await changeJournalCacheTargeted(userId, { jobs: true }, (state) => {
         const queued = state.jobs.find((candidate) => candidate.id === job.id);
-        if (queued) queued.state = "running";
+        if (queued) {
+          queued.state = "running";
+          delete queued.error;
+        }
       });
       recordOperation("sync.job", "started", {
         endpoint: job.endpoint,
+        lane,
         attempt: job.attempts + 1,
       });
       const syncStartedAt = Date.now();
       const recordSyncSuccess = () => {
-        recordOperation("sync.job", "succeeded", {
-          endpoint: job.endpoint,
-        });
+        recordOperation("sync.job", "succeeded", { endpoint: job.endpoint, lane });
         captureAnalytics(ANALYTICS_EVENTS.syncJobCompleted, {
           endpoint: job.endpoint,
           attempt: job.attempts + 1,
@@ -219,7 +385,7 @@ export function syncJournal(userId: string): Promise<void> {
       try {
         if (job.endpoint === "scan-receipt") {
           await scanReceipt(job, userId);
-          await changeJournalCache(userId, (state) => {
+          await changeJournalCacheTargeted(userId, { jobs: true }, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "journal");
@@ -231,7 +397,7 @@ export function syncJournal(userId: string): Promise<void> {
             userId,
             (job.payload as { settings: Preferences }).settings,
           );
-          await changeJournalCache(userId, (state) => {
+          await changeJournalCacheTargeted(userId, { jobs: true }, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "settings");
@@ -243,7 +409,7 @@ export function syncJournal(userId: string): Promise<void> {
             userId,
             (job.payload as { preset: Preset }).preset,
           );
-          await changeJournalCache(userId, (state) => {
+          await changeJournalCacheTargeted(userId, { jobs: true }, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "presets");
@@ -255,20 +421,27 @@ export function syncJournal(userId: string): Promise<void> {
             userId,
             (job.payload as { presetId: string }).presetId,
           );
-          await changeJournalCache(userId, (state) => {
+          await changeJournalCacheTargeted(userId, { jobs: true }, (state) => {
             state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
           });
           await invalidateRefresh(userId, "presets");
           recordSyncSuccess();
           continue;
         }
-        const { entry } = await callBackend<{ entry: SavedEntry }>(
-          job.endpoint,
-          job.payload,
-          userId,
-        );
+        const entry = job.endpoint === "parse-entry"
+          ? await parseTextEntry(job, userId)
+          : (await callBackend<{ entry: SavedEntry }>(
+              job.endpoint,
+              job.payload,
+              userId,
+            )).entry;
         let localReceiptImage: string | undefined;
-        await changeJournalCache(userId, (state) => {
+        await changeJournalCacheTargeted(userId, {
+          entryIds: [job.entryId],
+          receiptIds: [job.entryId],
+          jobs: true,
+          affectsContent: true,
+        }, (state) => {
           state.jobs = state.jobs.filter((j) => j.id !== job.id);
           const local = state.entries[job.entryId];
           if (local) {
@@ -278,6 +451,7 @@ export function syncJournal(userId: string): Promise<void> {
               local.extraction = entry.extraction;
               local.sync = "synced";
               local.deleted = !!entry.deleted_at;
+              delete local.amountPreview;
               delete local.remoteShadow;
               local.input = {
                 ...local.input,
@@ -311,13 +485,16 @@ export function syncJournal(userId: string): Promise<void> {
         recordSyncSuccess();
       } catch (error) {
         const permanent = error instanceof BackendError && !error.retryable;
-        recordOperation("sync.job", permanent ? "failed" : "deferred", {
+        const conflict = error instanceof BackendError &&
+          error.code === CONFLICT_CODE;
+        recordOperation("sync.job", conflict || permanent ? "failed" : "deferred", {
           endpoint: job.endpoint,
+          lane,
           attempt: job.attempts + 1,
           code: error instanceof BackendError ? error.code : "connection_unavailable",
         });
         captureAnalytics(
-          permanent
+          conflict || permanent
             ? ANALYTICS_EVENTS.syncJobFailed
             : ANALYTICS_EVENTS.syncJobDeferred,
           {
@@ -343,20 +520,28 @@ export function syncJournal(userId: string): Promise<void> {
             },
           });
         }
-        await changeJournalCache(userId, (state) => {
+        await changeJournalCacheTargeted(userId, {
+          entryIds: [job.entryId],
+          receiptIds: [job.entryId],
+          jobs: true,
+        }, (state) => {
           const queued = state.jobs.find((j) => j.id === job.id);
           if (!queued) return;
           queued.attempts += 1;
-          queued.state = permanent ? "blocked" : "pending";
+          queued.state = conflict || permanent ? "blocked" : "pending";
           queued.error =
             error instanceof BackendError
               ? error.code
               : "connection_unavailable";
           queued.nextAttemptAt =
-            Date.now() +
-            Math.min(300000, 1000 * 2 ** Math.min(queued.attempts, 8));
+            permanent
+              ? 0
+              : Date.now() +
+                Math.min(300000, 1000 * 2 ** Math.min(queued.attempts, 8));
           if (state.entries[job.entryId])
-            state.entries[job.entryId].sync = permanent ? "blocked" : "pending";
+            state.entries[job.entryId].sync = conflict || permanent
+              ? "blocked"
+              : "pending";
           const receipt = state.receipts[job.entryId];
           if (receipt) {
             // A remote delete rejection still belongs to the user: keep its
@@ -372,7 +557,7 @@ export function syncJournal(userId: string): Promise<void> {
               delete state.receipts[job.entryId];
               return;
             }
-            receipt.status = permanent ? "failed" : "queued";
+            receipt.status = conflict || permanent ? "failed" : "queued";
             receipt.error = queued.error;
           }
         });
@@ -384,9 +569,15 @@ export function syncJournal(userId: string): Promise<void> {
       }
     }
   })();
-  running.set(userId, run);
-  void run.finally(() => running.delete(userId)).catch(() => undefined);
+  running.set(key, run);
+  void run.finally(() => running.delete(key)).catch(() => undefined);
   return run;
+}
+
+/** Run independent text, receipt and account-metadata queues concurrently. */
+export async function syncJournal(userId: string): Promise<void> {
+  await prepareQueue(userId);
+  await Promise.all(SYNC_LANES.map((lane) => runLane(userId, lane)));
 }
 /** Mount once with authenticated app providers; return value cleans up listeners. */
 export function startJournalSync() {

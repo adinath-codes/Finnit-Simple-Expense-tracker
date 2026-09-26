@@ -1,6 +1,7 @@
 import type {
   CaptureInput,
   Catalog,
+  EntryAmountPreview,
   Extraction,
   ReceiptAttachment,
   ReceiptCorrectionInput,
@@ -76,6 +77,8 @@ export type SyncJob = {
 export type CachedEntry = {
   input: CaptureInput;
   extraction: Extraction;
+  /** Server-validated Gemini amount, kept outside authoritative transactions. */
+  amountPreview?: EntryAmountPreview;
   remote?: SavedEntry;
   /** Latest server document retained while an optimistic local job is pending. */
   remoteShadow?: SavedEntry;

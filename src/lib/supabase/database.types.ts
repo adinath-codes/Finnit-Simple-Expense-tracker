@@ -3,6 +3,8 @@ export type { Database, Json } from "./generated.types";
 export type {
   CaptureInput,
   Catalog,
+  EntryAmountPreview,
+  EntryParseEvent,
   Extraction,
   ReceiptAttachment,
   ReceiptCorrectionInput,

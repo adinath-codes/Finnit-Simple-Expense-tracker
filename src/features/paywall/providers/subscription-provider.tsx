@@ -15,9 +15,10 @@ import {
   clearRevenueCatUser,
   configureRevenueCat,
   loadSubscriptionProducts,
-  loadSubscriptionSnapshot,
   presentOfferCodeRedemption,
   purchaseSubscription,
+  reconcileSubscriptionEntitlement,
+  redeemTestingAccessCode,
   restoreSubscription,
   revenueCatConfigurationError,
   showSubscriptionManagement,
@@ -76,17 +77,25 @@ export function SubscriptionProvider({ children }: PropsWithChildren) {
     setIsBusy(true);
     try {
       await configureRevenueCat(userId);
-      const next = await loadSubscriptionSnapshot();
+      const [customerInfo] = await Promise.all([
+        Purchases.getCustomerInfo(),
+        reconcileSubscriptionEntitlement(userId),
+      ]);
       if (!mounted.current || activeUserId.current !== userId) return;
-      const entitlement = activePremiumEntitlement(next.customerInfo);
-      setSnapshot({
+      const entitlement = activePremiumEntitlement(customerInfo);
+      setSnapshot((current) => ({
+        ...current,
         state: entitlement ? "active" : "inactive",
-        customerInfo: next.customerInfo,
+        customerInfo,
         entitlement,
-        offering: next.offering,
-        plans: next.plans,
         error: null,
-      });
+      }));
+      void loadSubscriptionProducts()
+        .then((products) => {
+          if (!mounted.current || activeUserId.current !== userId) return;
+          setSnapshot((current) => ({ ...current, ...products }));
+        })
+        .catch(() => undefined);
     } catch (error) {
       if (!mounted.current || activeUserId.current !== userId) return;
       setSnapshot((current) => ({
@@ -140,6 +149,7 @@ export function SubscriptionProvider({ children }: PropsWithChildren) {
     setSnapshot((current) => ({ ...current, error: null }));
     try {
       const result = await purchaseSubscription(plan);
+      if (userId) await reconcileSubscriptionEntitlement(userId);
       return applyCustomerInfo(result.customerInfo);
     } catch (error) {
       const message = subscriptionErrorMessage(error);
@@ -150,13 +160,15 @@ export function SubscriptionProvider({ children }: PropsWithChildren) {
     } finally {
       if (mounted.current) setIsBusy(false);
     }
-  }, [applyCustomerInfo]);
+  }, [applyCustomerInfo, userId]);
 
   const restore = useCallback(async () => {
     setIsBusy(true);
     setSnapshot((current) => ({ ...current, error: null }));
     try {
-      return applyCustomerInfo(await restoreSubscription());
+      const customerInfo = await restoreSubscription();
+      if (userId) await reconcileSubscriptionEntitlement(userId);
+      return applyCustomerInfo(customerInfo);
     } catch (error) {
       if (mounted.current) {
         setSnapshot((current) => ({
@@ -168,13 +180,15 @@ export function SubscriptionProvider({ children }: PropsWithChildren) {
     } finally {
       if (mounted.current) setIsBusy(false);
     }
-  }, [applyCustomerInfo]);
+  }, [applyCustomerInfo, userId]);
 
   const redeemOfferCode = useCallback(async () => {
     setIsBusy(true);
     setSnapshot((current) => ({ ...current, error: null }));
     try {
-      return applyCustomerInfo(await presentOfferCodeRedemption());
+      const customerInfo = await presentOfferCodeRedemption();
+      if (userId) await reconcileSubscriptionEntitlement(userId);
+      return applyCustomerInfo(customerInfo);
     } catch (error) {
       if (mounted.current) {
         setSnapshot((current) => ({
@@ -186,7 +200,20 @@ export function SubscriptionProvider({ children }: PropsWithChildren) {
     } finally {
       if (mounted.current) setIsBusy(false);
     }
-  }, [applyCustomerInfo]);
+  }, [applyCustomerInfo, userId]);
+
+  const redeemTestingCode = useCallback(async (code: string) => {
+    if (!userId) throw new Error("sign_in_required");
+    setIsBusy(true);
+    try {
+      const customerInfo = await redeemTestingAccessCode(code, userId);
+      if (!applyCustomerInfo(customerInfo)) {
+        throw new Error("testing_entitlement_not_visible");
+      }
+    } finally {
+      if (mounted.current) setIsBusy(false);
+    }
+  }, [applyCustomerInfo, userId]);
 
   const value = useMemo<SubscriptionContextValue>(() => ({
     ...snapshot,
@@ -196,8 +223,17 @@ export function SubscriptionProvider({ children }: PropsWithChildren) {
     purchase,
     restore,
     redeemOfferCode,
+    redeemTestingCode,
     manage: showSubscriptionManagement,
-  }), [isBusy, purchase, redeemOfferCode, refresh, restore, snapshot]);
+  }), [
+    isBusy,
+    purchase,
+    redeemOfferCode,
+    redeemTestingCode,
+    refresh,
+    restore,
+    snapshot,
+  ]);
 
   return (
     <SubscriptionContext.Provider value={value}>

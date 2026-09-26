@@ -82,6 +82,8 @@ export const Finn = {
      blueSparkleEnd: "#77B4F4",
      pink: "#EE849A",
      danger: "#CA5C60",
+     /** High-contrast destructive action; reserved for irreversible controls. */
+     destructive: "#FF3B30",
      wash: "#F6F1ED",
      radius: 22,
      shadow: { boxShadow: "0px 4px 14px rgba(169, 148, 130, 0.09)" },

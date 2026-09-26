@@ -1,7 +1,11 @@
 import { CURRENCIES } from "../../../../supabase/functions/_shared/contracts.ts";
 import { displayDay } from "../../../utils/dates.ts";
 /** Split arbitrary SQL sums exactly, without coercing large minor units to Number. */
-export function exactMoneyParts(minor: string, currency: string) {
+export function exactMoneyParts(
+  minor: string,
+  currency: string,
+  displayCurrency = currency,
+) {
   const digits = CURRENCIES[currency] ?? 2;
   const amount = BigInt(minor),
     negative = amount < 0n;
@@ -18,7 +22,7 @@ export function exactMoneyParts(minor: string, currency: string) {
   const symbol =
     new Intl.NumberFormat("en-IN", {
       style: "currency",
-      currency,
+      currency: displayCurrency,
       currencyDisplay: "symbol",
     })
       .formatToParts(0)
@@ -33,8 +37,8 @@ export function exactMoneyParts(minor: string, currency: string) {
 }
 
 /** Format arbitrary SQL sums exactly, without coercing large minor units to Number. */
-export function exactMoney(minor: string, currency: string) {
-  return exactMoneyParts(minor, currency).label;
+export function exactMoney(minor: string, currency: string, displayCurrency = currency) {
+  return exactMoneyParts(minor, currency, displayCurrency).label;
 }
 export { displayDay };
 export function timelineDateParts(day: string) {

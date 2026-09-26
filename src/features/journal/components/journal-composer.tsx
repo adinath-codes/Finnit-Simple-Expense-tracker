@@ -12,26 +12,46 @@ import {
 import { useFocusEffect } from "expo-router";
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import type { CameraOrigin } from "@/features/camera/components/receipt-camera-sheet";
-import * as Network from "expo-network";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReducedMotion } from "react-native-reanimated";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, {
+     Extrapolation,
+     interpolate,
+     useAnimatedStyle,
+     useDerivedValue,
+     useSharedValue,
+     withTiming,
+     type SharedValue,
+} from "react-native-reanimated";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { SkeletonBlock } from "@/components/common/loading-state";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
+import { Motion } from "@/constants/motion";
 import { Finn, JournalType } from "@/constants/theme";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { JournalGlyph, type JournalGlyphName } from "./journal-glyph";
-import { useJournal } from "@/providers/app-providers";
+import {
+     useJournalData,
+     useJournalStatus,
+} from "@/providers/app-providers";
 import { entryTotal } from "@/utils/amounts";
 import { currencySymbol, moneyValue } from "@/utils/currency";
 import { SpendingBreakdownCard } from "@/features/summary/components/spending-breakdown-card";
 import { ReceiptCameraSheet } from "@/features/camera/components/receipt-camera-sheet";
 import type { ReceiptPhoto } from "@/types/domain";
-import { subscribePendingJournalChangeCount } from "../services/journal-service";
+
+const TOOL_BUTTON_SIZE = 44;
+const TOOL_GAP = 12;
+const CLOSED_TOOLBAR_INSET = 8;
+const EXPANDED_ACTION_SPACE = TOOL_BUTTON_SIZE * 3 + TOOL_GAP * 3;
 
 export function JournalComposer({
      focused,
      draft,
+     saveValue,
+     saveLabel,
+     editingEntry,
      submitting,
      input,
      onSave,
@@ -42,6 +62,9 @@ export function JournalComposer({
 }: {
      focused: boolean;
      draft: string;
+     saveValue: string;
+     saveLabel: string;
+     editingEntry: boolean;
      submitting: boolean;
      input: RefObject<TextInput | null>;
      onSave: () => void;
@@ -50,14 +73,17 @@ export function JournalComposer({
      tool: "add" | "receipt" | null;
      setTool: (tool: "add" | "receipt" | null) => void;
 }) {
-     const { entries, selectedDate, goals, settings, syncStatus, journalLoading } = useJournal();
+     const { entries, selectedDate, settings } = useJournalData();
+     const { syncStatus, journalLoading } = useJournalStatus();
      const insets = useSafeAreaInsets();
-     const reduced = useReducedMotion();
-     const { isOffline, queuedItemCount } = useOfflineQueueStatus();
+     const reduced = useMotionPreference();
+     const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
      const [summaryOpen, setSummaryOpen] = useState(false);
      const cameraButton = useRef<View>(null);
      const [cameraOrigin, setCameraOrigin] = useState<CameraOrigin | null>(null);
      const [keepToolbar, setKeepToolbar] = useState(false);
+     const retainedProgress = useSharedValue(keepToolbar ? 1 : 0);
+     const webFocusProgress = useSharedValue(focused ? 1 : 0);
      const receiptOpen = useRef(tool === "receipt");
      receiptOpen.current = tool === "receipt";
      useFocusEffect(useCallback(() => {
@@ -101,57 +127,141 @@ export function JournalComposer({
      useEffect(() => {
           if (focused) setSummaryOpen(false);
      }, [focused]);
+     useEffect(() => {
+          retainedProgress.set(withTiming(keepToolbar ? 1 : 0, {
+               duration: Motion.layout,
+               easing: Motion.easeInOut,
+          }));
+     }, [keepToolbar, retainedProgress]);
+     useEffect(() => {
+          if (Platform.OS !== "web") return;
+          webFocusProgress.set(withTiming(focused ? 1 : 0, {
+               duration: reduced ? Motion.fade : Motion.layout,
+               easing: Motion.easeInOut,
+          }));
+     }, [focused, reduced, webFocusProgress]);
+
+     const toolbarProgress = useDerivedValue(() => {
+          const keyboard = Platform.OS === "web"
+               ? webFocusProgress.get()
+               : keyboardProgress.get();
+          return Math.min(1, Math.max(0, Math.max(keyboard, retainedProgress.get())));
+     });
+     const surfaceStyle = useAnimatedStyle(() => {
+          const progress = toolbarProgress.get();
+          if (reduced) {
+               return {
+                    opacity: interpolate(progress, [0, 0.45, 0.55, 1], [1, 1, 0, 0], Extrapolation.CLAMP),
+                    left: CLOSED_TOOLBAR_INSET,
+                    right: CLOSED_TOOLBAR_INSET,
+               };
+          }
+          return {
+               opacity: 1,
+               left: interpolate(progress, [0, 1], [CLOSED_TOOLBAR_INSET, 0], Extrapolation.CLAMP),
+               right: interpolate(
+                    progress,
+                    [0, 1],
+                    [CLOSED_TOOLBAR_INSET, EXPANDED_ACTION_SPACE],
+                    Extrapolation.CLAMP,
+               ),
+          };
+     });
+     const reducedCompactSurfaceStyle = useAnimatedStyle(() => ({
+          opacity: reduced
+               ? interpolate(toolbarProgress.get(), [0, 0.45, 0.55, 1], [0, 0, 1, 1], Extrapolation.CLAMP)
+               : 0,
+     }));
+     const closedContentStyle = useAnimatedStyle(() => {
+          const progress = toolbarProgress.get();
+          return {
+               opacity: interpolate(
+                    progress,
+                    reduced ? [0, 0.45, 0.55, 1] : [0, 0.32, 1],
+                    reduced ? [1, 1, 0, 0] : [1, 0, 0],
+                    Extrapolation.CLAMP,
+               ),
+               transform: [{
+                    translateX: reduced
+                         ? 0
+                         : interpolate(progress, [0, 0.32], [0, -4], Extrapolation.CLAMP),
+               }],
+          };
+     });
+     const compactContentStyle = useAnimatedStyle(() => {
+          const progress = toolbarProgress.get();
+          return {
+               opacity: interpolate(
+                    progress,
+                    reduced ? [0, 0.45, 0.55, 1] : [0, 0.28, 0.58, 1],
+                    reduced ? [0, 0, 1, 1] : [0, 0, 1, 1],
+                    Extrapolation.CLAMP,
+               ),
+               transform: [{
+                    translateX: reduced
+                         ? 0
+                         : interpolate(progress, [0.28, 0.58], [-6, 0], Extrapolation.CLAMP),
+               }],
+          };
+     });
+     const checkStyle = useToolbarPeelStyle(toolbarProgress, 0.05, 0.65, reduced);
+     const cameraStyle = useToolbarPeelStyle(toolbarProgress, 0.12, 0.78, reduced);
+     const plusStyle = useToolbarPeelStyle(toolbarProgress, 0.20, 0.92, reduced);
+     const expanded = focused || keepToolbar;
+     const summaryLabel = journalLoading
+          ? "Loading journal total"
+          : summaryOpen
+          ? "Hide spending breakdown"
+          : "View spending breakdown and goals";
+     const toggleSummary = () => {
+          const nextOpen = !summaryOpen;
+          if (nextOpen) {
+               Keyboard.dismiss();
+               input.current?.blur();
+               onDismiss();
+          }
+          setSummaryOpen(nextOpen);
+     };
      return (
           <>
                <View
                     style={[
                          styles.footer,
                          {
-                              paddingHorizontal: focused ? 28 : 36,
+                              paddingHorizontal: 28,
                               paddingBottom: 16,
                          },
                     ]}
                >
                               <SpendingBreakdownCard visible={summaryOpen} />
-                              {isOffline && (
-                                   <OfflineQueueStatus
-                                        queuedItemCount={queuedItemCount}
-                                   />
-                              )}
-                              {!isOffline && syncStatus.pending > 0 && (
-                                   <SyncProgressStatus count={syncStatus.pending} />
-                              )}
-                              {syncStatus.blocked > 0 && (
-                                   <SyncIssueStatus
-                                        conflicts={syncStatus.conflicts}
-                                        failed={syncStatus.failed}
-                                   />
+                              {syncStatus.conflicts > 0 && (
+                                   <SyncConflictStatus count={syncStatus.conflicts} />
                               )}
                               <View style={styles.toolbar}>
-                                   <View style={{ flex: 1 }}>
+                                   <Animated.View
+                                        pointerEvents="none"
+                                        style={[styles.summarySurface, summaryOpen && styles.summaryOpen, surfaceStyle]}
+                                   />
+                                   <Animated.View
+                                        pointerEvents="none"
+                                        style={[
+                                             styles.summarySurface,
+                                             styles.compactSummarySurface,
+                                             summaryOpen && styles.summaryOpen,
+                                             reducedCompactSurfaceStyle,
+                                        ]}
+                                   />
+                                   <Animated.View
+                                        pointerEvents={expanded ? "none" : "auto"}
+                                        accessibilityElementsHidden={expanded}
+                                        importantForAccessibility={expanded ? "no-hide-descendants" : "auto"}
+                                        style={[styles.closedSummaryLayer, closedContentStyle]}
+                                   >
                                         <Button
-                                             label={
-                                                  journalLoading
-                                                       ? "Loading journal total"
-                                                       : summaryOpen
-                                                       ? "Hide spending breakdown"
-                                                       : "View spending breakdown and goals"
-                                             }
-                                             disabled={journalLoading}
-                                             onPress={() => {
-                                                  const nextOpen = !summaryOpen;
-                                                  if (nextOpen) {
-                                                       Keyboard.dismiss();
-                                                       input.current?.blur();
-                                                       onDismiss();
-                                                  }
-                                                  setSummaryOpen(nextOpen);
-                                             }}
-                                             style={[
-                                                  styles.summary,
-                                                  summaryOpen &&
-                                                       styles.summaryOpen,
-                                             ]}
+                                             label={summaryLabel}
+                                             disabled={journalLoading || editingEntry}
+                                             onPress={toggleSummary}
+                                             style={styles.summaryContent}
                                         >
                                              {journalLoading ? (
                                                   <SkeletonBlock width={116} height={18} radius={9} />
@@ -160,66 +270,110 @@ export function JournalComposer({
                                                        <Text style={styles.currencyIcon}>
                                                             {currencySymbol(settings.currency)}
                                                        </Text>
-                                                       <Text style={styles.total}>
-                                                            {moneyValue(
-                                                                 focused
-                                                                      ? Math.max(0, (goals[0]?.limit ?? 0) - total)
-                                                                      : total,
-                                                            )}
-                                                       </Text>
-                                                       {focused ? (
-                                                            <Text style={styles.remaining}>spent</Text>
-                                                       ) : (
-                                                            (["food", "transport", "shopping"] as const).map((category, index) => (
-                                                                 <View key={category} style={styles.mini}>
-                                                                      <Text style={styles.separator}>·</Text>
-                                                                      <JournalGlyph
-                                                                           name={(["food", "car", "bag"] as const)[index]}
-                                                                           size={11}
-                                                                           color={(["#EF7899", "#EBC64F", Finn.primary] as const)[index]}
-                                                                      />
-                                                                      <Text style={styles.miniValue}>
-                                                                           {Math.round(categoryTotal(category) / 100)}
-                                                                      </Text>
-                                                                 </View>
-                                                            ))
-                                                       )}
+                                                       <Text style={styles.total}>{moneyValue(total)}</Text>
+                                                       {(["food", "transport", "shopping"] as const).map((category, index) => (
+                                                            <View key={category} style={styles.mini}>
+                                                                 <Text style={styles.separator}>·</Text>
+                                                                 <JournalGlyph
+                                                                      name={(["food", "car", "bag"] as const)[index]}
+                                                                      size={11}
+                                                                      color={(["#EF7899", "#EBC64F", Finn.primary] as const)[index]}
+                                                                 />
+                                                                 <Text style={styles.miniValue}>
+                                                                      {Math.round(categoryTotal(category) / 100)}
+                                                                 </Text>
+                                                            </View>
+                                                       ))}
                                                   </>
                                              )}
                                         </Button>
-                                   </View>
-                                   {(focused || keepToolbar) && (
-                                        <>
+                                   </Animated.View>
+                                   <Animated.View
+                                        pointerEvents={expanded ? "auto" : "none"}
+                                        accessibilityElementsHidden={!expanded}
+                                        importantForAccessibility={expanded ? "auto" : "no-hide-descendants"}
+                                        style={[styles.compactSummaryLayer, compactContentStyle]}
+                                   >
+                                        <Button
+                                             label={summaryLabel}
+                                             disabled={journalLoading || editingEntry}
+                                             onPress={toggleSummary}
+                                             style={styles.summaryContent}
+                                        >
+                                             {journalLoading ? (
+                                                  <SkeletonBlock width={82} height={18} radius={9} />
+                                             ) : (
+                                                  <>
+                                                       <Text style={styles.currencyIcon}>
+                                                            {currencySymbol(settings.currency)}
+                                                       </Text>
+                                                       <Text style={styles.total}>
+                                                            {moneyValue(total)}
+                                                       </Text>
+                                                       <Text style={styles.remaining}>spent</Text>
+                                                  </>
+                                             )}
+                                        </Button>
+                                   </Animated.View>
+                                   <Animated.View
+                                        pointerEvents={expanded ? "auto" : "none"}
+                                        accessibilityElementsHidden={!expanded}
+                                        importantForAccessibility={expanded ? "auto" : "no-hide-descendants"}
+                                        style={[styles.toolSlot, styles.plusSlot, plusStyle]}
+                                   >
+                                        {editingEntry ? (
+                                             <ToolbarButton
+                                                  name="plus"
+                                                  color="#EDB16D"
+                                                  label="Open saved entries"
+                                                  disabled
+                                             />
+                                        ) : (
                                              <ZoomLink href="/settings/presets"><ToolbarButton
                                                   name="plus"
                                                   color="#EDB16D"
                                                   label="Open saved entries"
                                                   onPress={openSavedEntries}
                                              /></ZoomLink>
-                                             <ToolbarButton
-                                                  ref={cameraButton}
-                                                  name="camera"
-                                                  color={Finn.ink}
-                                                  label="Open receipt camera"
-                                                  onPress={() => {
-                                                       const show = () => { setKeepToolbar(true); openTool("receipt"); };
-                                                       if (!cameraButton.current) { setCameraOrigin(null); show(); return; }
-                                                       cameraButton.current.measureInWindow((x, y, width, height) => {
-                                                            setCameraOrigin(width && height ? { x, y, width, height } : null);
-                                                            show();
-                                                       });
-                                                  }}
-                                             />
-                                             <ToolbarButton
-                                                  name="check"
-                                                  color={Finn.surface}
-                                                  filled
-                                                  label="Save note"
-                                                  disabled={!draft.trim() || submitting}
-                                                  onPress={onSave}
-                                             />
-                                        </>
-                                   )}
+                                        )}
+                                   </Animated.View>
+                                   <Animated.View
+                                        pointerEvents={expanded ? "auto" : "none"}
+                                        accessibilityElementsHidden={!expanded}
+                                        importantForAccessibility={expanded ? "auto" : "no-hide-descendants"}
+                                        style={[styles.toolSlot, styles.cameraSlot, cameraStyle]}
+                                   >
+                                        <ToolbarButton
+                                             ref={cameraButton}
+                                             name="camera"
+                                             color={Finn.ink}
+                                             label="Open receipt camera"
+                                             disabled={editingEntry}
+                                             onPress={() => {
+                                                  const show = () => { setKeepToolbar(true); openTool("receipt"); };
+                                                  if (!cameraButton.current) { setCameraOrigin(null); show(); return; }
+                                                  cameraButton.current.measureInWindow((x, y, width, height) => {
+                                                       setCameraOrigin(width && height ? { x, y, width, height } : null);
+                                                       show();
+                                                  });
+                                             }}
+                                        />
+                                   </Animated.View>
+                                   <Animated.View
+                                        pointerEvents={expanded ? "auto" : "none"}
+                                        accessibilityElementsHidden={!expanded}
+                                        importantForAccessibility={expanded ? "auto" : "no-hide-descendants"}
+                                        style={[styles.toolSlot, styles.checkSlot, checkStyle]}
+                                   >
+                                        <ToolbarButton
+                                             name="check"
+                                             color={Finn.surface}
+                                             filled
+                                             label={saveLabel}
+                                             disabled={(!editingEntry && !saveValue.trim()) || submitting}
+                                             onPress={onSave}
+                                        />
+                                   </Animated.View>
                               </View>
                </View>
                <ReceiptCameraSheet
@@ -285,78 +439,12 @@ export function JournalComposer({
      );
 }
 
-function useOfflineQueueStatus() {
-     const network = Network.useNetworkState();
-     const [queuedItemCount, setQueuedItemCount] = useState(0);
-
-     useEffect(
-          () => subscribePendingJournalChangeCount(setQueuedItemCount),
-          [],
-     );
-
-     return {
-          isOffline:
-               network.isConnected === false ||
-               network.isInternetReachable === false,
-          queuedItemCount,
-     };
-}
-
-function OfflineQueueStatus({ queuedItemCount }: { queuedItemCount: number }) {
-     const itemLabel = queuedItemCount === 1 ? "item" : "items";
-
-     return (
-          <View
-               accessible
-               accessibilityLabel={`Offline. ${queuedItemCount} ${itemLabel} queued for syncing.`}
-               accessibilityLiveRegion="polite"
-               style={styles.offlineStatus}
-          >
-               <Icon name="offline" color="#D59A52" size={16} />
-               <Text
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.82}
-                    numberOfLines={1}
-                    style={styles.offlineStatusText}
-               >
-                    Offline · {queuedItemCount} {itemLabel} queued for syncing
-               </Text>
-          </View>
-     );
-}
-
-function SyncProgressStatus({ count }: { count: number }) {
-     const changeLabel = count === 1 ? "change" : "changes";
-     return (
-          <View accessible accessibilityLiveRegion="polite" style={styles.offlineStatus}>
-               <Icon name="refresh" color={Finn.muted} size={16} />
-               <Text style={[styles.offlineStatusText, styles.syncProgressText]}>
-                    {count} journal {changeLabel} waiting to sync
-               </Text>
-          </View>
-     );
-}
-
-function SyncIssueStatus({
-     failed,
-     conflicts,
-}: {
-     failed: number;
-     conflicts: number;
-}) {
-     const parts = [
-          conflicts > 0
-               ? `${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"} to resolve`
-               : null,
-          failed > 0
-               ? `${failed} failed ${failed === 1 ? "change" : "changes"} to retry`
-               : null,
-     ].filter(Boolean);
+function SyncConflictStatus({ count }: { count: number }) {
      return (
           <View accessible accessibilityLiveRegion="polite" style={[styles.offlineStatus, styles.syncIssueStatus]}>
-               <Icon name="offline" color={Finn.danger} size={16} />
-               <Text style={[styles.offlineStatusText, { color: Finn.danger }]}>
-                    {parts.join(" · ")}
+               <Icon name="refresh" color="#A16D20" size={16} />
+               <Text style={[styles.offlineStatusText, { color: "#A16D20" }]}>
+                    {count} {count === 1 ? "change needs" : "changes need"} a version choice
                </Text>
           </View>
      );
@@ -373,6 +461,34 @@ const ToolbarButton = forwardRef<View, Omit<ButtonProps, "children"> & {
           <JournalGlyph name={name} color={color} size={20} />
      </Button>;
 });
+
+function useToolbarPeelStyle(
+     progress: SharedValue<number>,
+     start: number,
+     end: number,
+     reduced: boolean,
+) {
+     return useAnimatedStyle(() => {
+          const current = progress.get();
+          const range = reduced ? [0.45, 0.55] : [start, end];
+          const opacity = interpolate(current, range, [0, 1], Extrapolation.CLAMP);
+          return {
+               opacity,
+               transform: [
+                    {
+                         translateX: reduced
+                              ? 0
+                              : interpolate(current, [start, end], [-10, 0], Extrapolation.CLAMP),
+                    },
+                    {
+                         scale: reduced
+                              ? 1
+                              : interpolate(current, [start, end], [0.94, 1], Extrapolation.CLAMP),
+                    },
+               ],
+          };
+     });
+}
 
 function MenuRow({
      icon,
@@ -402,7 +518,10 @@ const styles = StyleSheet.create({
      footer: {
           paddingTop: 16,
      },
-     toolbar: { flexDirection: "row", alignItems: "center", gap: 12 },
+     toolbar: {
+          height: 48,
+          position: "relative",
+     },
      offlineStatus: {
           alignItems: "center",
           alignSelf: "stretch",
@@ -427,7 +546,6 @@ const styles = StyleSheet.create({
           lineHeight: 17,
      },
      syncIssueStatus: { backgroundColor: "rgba(255,244,242,0.92)" },
-     syncProgressText: { color: Finn.muted },
      toolButton: {
           width: 44,
           height: 44,
@@ -442,16 +560,60 @@ const styles = StyleSheet.create({
           backgroundColor: Finn.primary,
           borderColor: Finn.primary,
      },
-     summary: {
+     summarySurface: {
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: 0,
+          height: 48,
           borderRadius: 28,
-          minHeight: 48,
           backgroundColor: "rgba(255,255,255,0.92)",
           borderWidth: 1,
           borderColor: "rgba(255,255,255,0.96)",
+          boxShadow: "0px 8px 26px rgba(161, 125, 75, 0.11)",
+     },
+     compactSummarySurface: {
+          right: EXPANDED_ACTION_SPACE,
+     },
+     closedSummaryLayer: {
+          position: "absolute",
+          left: CLOSED_TOOLBAR_INSET,
+          right: CLOSED_TOOLBAR_INSET,
+          top: 0,
+          height: 48,
+          zIndex: 1,
+     },
+     compactSummaryLayer: {
+          position: "absolute",
+          left: 0,
+          right: EXPANDED_ACTION_SPACE,
+          top: 0,
+          height: 48,
+          zIndex: 1,
+     },
+     summaryContent: {
+          width: "100%",
+          height: 48,
+          minHeight: 48,
           flexDirection: "row",
           gap: 4,
           paddingHorizontal: 12,
-          boxShadow: "0px 8px 26px rgba(161, 125, 75, 0.11)",
+     },
+     toolSlot: {
+          position: "absolute",
+          top: 2,
+          width: TOOL_BUTTON_SIZE,
+          height: TOOL_BUTTON_SIZE,
+          zIndex: 2,
+     },
+     plusSlot: {
+          right: (TOOL_BUTTON_SIZE + TOOL_GAP) * 2,
+     },
+     cameraSlot: {
+          right: TOOL_BUTTON_SIZE + TOOL_GAP,
+     },
+     checkSlot: {
+          right: 0,
      },
      summaryOpen: {
           boxShadow: "0px 10px 30px rgba(130, 96, 73, 0.16)",

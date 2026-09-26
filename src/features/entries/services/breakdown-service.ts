@@ -80,9 +80,9 @@ export function deriveReceiptAmountBreakdown(
   });
 }
 
-export function amountBreakdownText(terms: EntryAmountTerm[]) {
+export function amountBreakdownText(terms: EntryAmountTerm[], displayCurrency?: string) {
   return terms.map((term) =>
-    `${term.factors.join(" * ")} * ${currencySymbol(term.currency)}${moneyValue(term.unitAmountMinor, term.currency)}`
+    `${term.factors.join(" * ")} * ${currencySymbol(displayCurrency ?? term.currency)}${moneyValue(term.unitAmountMinor, term.currency)}`
   ).join(" + ");
 }
 

@@ -19,10 +19,11 @@ import { Screen } from "@/components/common/screen";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
+import { MagicTypeText } from "@/components/ui/magic-type-text";
 import { ContentFade, MotionLayout } from "@/components/ui/motion";
 import { Finn, JournalType } from "@/constants/theme";
 import type { SearchPlan } from "@/lib/supabase/database.types";
-import { useJournal } from "@/providers/app-providers";
+import { useJournalData } from "@/providers/app-providers";
 import { useSearch } from "../hooks/use-search";
 import {
   compactPeriodLabel,
@@ -97,11 +98,11 @@ function answerLabelFor(plan?: SearchPlan) {
 
 function finnThinkingLabel(message: string) {
   const copy = message.trim();
-  return `Finn thinks that ${copy}${/[.!?]$/.test(copy) ? "" : "."}`;
+  return `Finn thinks. ${copy}${/[.!?]$/.test(copy) ? "" : "."}`;
 }
 
 export default function SearchScreen() {
-  const { selectedDate, today } = useJournal();
+  const { selectedDate, settings, today } = useJournalData();
   const screenActive = useIsFocused();
   const listRef = useRef<FlatList<SearchItem>>(null);
   const [query, setQuery] = useState("");
@@ -240,7 +241,7 @@ export default function SearchScreen() {
             keyboardShouldPersistTaps="handled"
             keyExtractor={(item) => item.id}
             maxToRenderPerBatch={6}
-            renderItem={({ item }) => <SourceTransactionRow item={item} />}
+            renderItem={({ item }) => <SourceTransactionRow displayCurrency={settings.currency} item={item} />}
             windowSize={7}
             ListHeaderComponent={
               <MotionLayout>
@@ -291,6 +292,7 @@ export default function SearchScreen() {
                               {row.money ? (
                                 <AskMoneyAmount
                                   currency={row.money.currency}
+                                  displayCurrency={settings.currency}
                                   minor={row.money.minor}
                                   style={styles.answerAmount}
                                 />
@@ -318,7 +320,9 @@ export default function SearchScreen() {
                             style={styles.thinkingRow}
                           >
                             <Image contentFit="contain" source={finnLaptop} style={styles.thinkingFinn} />
-                            <Text style={styles.thinkingText}>thinks that “{explanation}”</Text>
+                            <MagicTypeText key={explanation} style={styles.thinkingText}>
+                              {`thinks… ${explanation}`}
+                            </MagicTypeText>
                           </View>
                         </View>
                       )

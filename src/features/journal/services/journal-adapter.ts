@@ -183,6 +183,17 @@ export function textJournalEntry(
         ),
       };
     }),
+    ...(entry.amountPreview
+      ? {
+          amountPreview: {
+            amountMinor: Number(entry.amountPreview.amount_minor),
+            currency: entry.amountPreview.currency,
+            scope: entry.amountPreview.scope,
+            estimated: entry.amountPreview.estimated,
+            needsReview: entry.amountPreview.needs_review,
+          },
+        }
+      : {}),
     amountBreakdown: deriveAmountBreakdown(entry.extraction, entry.input.id),
     allocationRows,
     thought: entry.sync === "synced"
@@ -190,6 +201,8 @@ export function textJournalEntry(
         "Finn parsed this note and saved its financial details."
       : entry.sync === "blocked"
         ? "This note is saved on this device and needs your attention before it can sync."
+        : entry.amountPreview
+          ? "Amount found. Finn is finishing the breakdown."
         : "This note is saved on this device and will sync automatically.",
     sources: [
       { title: "Your original note", detail: entry.input.raw_text, icon: "note" },

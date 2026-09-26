@@ -10,7 +10,6 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { ContentFade } from "@/components/ui/motion";
-import { AnimatedSplashOverlay } from "@/components/animated-icon";
 import { AppProviders } from "@/providers/app-providers";
 import { Finn } from "@/constants/theme";
 import { useEffect } from "react";
@@ -21,6 +20,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { QuotaReachedModalHost } from "@/features/support/components/quota-reached-modal";
 import { ToastProvider } from "@/components/ui/toast-provider";
 import { GuidanceToastHost } from "@/features/guidance/components/guidance-toast-host";
+import { NotificationPermissionHost } from "@/features/notifications/components/notification-permission-host";
 import { ErrorRecoveryScreen } from "@/features/support/components/error-recovery-screen";
 import { SentryUserContext } from "@/lib/observability/sentry-user-context";
 import { sentryNavigationIntegration } from "@/lib/observability/sentry";
@@ -103,6 +103,7 @@ function RootApplication() {
                               <RootNavigator reduced={reduced} />
                               <QuotaReachedModalHost />
                               <GuidanceToastHost />
+                              <NotificationPermissionHost />
                          </ThemeProvider>
                     </AppProviders>
                </SubscriptionProvider>
@@ -124,13 +125,18 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
           sentryNavigationIntegration.registerNavigationContainer(navigationRef);
      }, [navigationRef]);
 
+     useEffect(() => {
+          if (!booting) {
+               SplashScreen.hide();
+          }
+     }, [booting]);
+
      if (booting) return null;
 
      const authenticated = onboardingComplete && !!session;
      const premiumAccess = authenticated && subscription.isActive;
 
      return (
-          <>
           <ContentFade style={{ flex: 1 }}>
                <Stack
                     ref={navigationRef}
@@ -241,8 +247,6 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                     </Stack.Protected>
                </Stack>
           </ContentFade>
-          <AnimatedSplashOverlay reducedMotion={reduced} />
-          </>
      );
 }
 

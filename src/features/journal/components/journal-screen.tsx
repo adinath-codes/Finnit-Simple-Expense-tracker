@@ -15,32 +15,53 @@ import { Screen } from "@/components/common/screen";
 import { LoadingState } from "@/components/common/loading-state";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
+import {
+  useJournalActions,
+  useJournalData,
+  useJournalStatus,
+} from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
-import type { ReceiptPhoto } from "@/types/domain";
+import type { JournalEntry, ReceiptPhoto } from "@/types/domain";
 import { captureReceipt } from "@/features/camera/services/receipt-service";
 import { JournalHeader } from "./journal-header";
 import { JournalEntryCard } from "./journal-entry-card";
 import { JournalComposer } from "./journal-composer";
+import {
+  JournalEntryConfirmationModal,
+  type JournalEntryConfirmationKind,
+} from "./journal-entry-confirmation-modal";
 import { JournalEmptyPrompt } from "./journal-empty-prompt";
-import { JournalProcessingStatus } from "./journal-processing-status";
+import {
+  JournalProcessingDots,
+  JournalProcessingStatus,
+} from "./journal-processing-status";
 import { loadJournalDrafts, saveJournalDrafts } from "../store/journal-draft-store";
+import {
+  classifyJournalEdit,
+  type EntryTextSaveMode,
+} from "../services/journal-edit-flow";
+
+type EditContinuation =
+  | { kind: "none" }
+  | { kind: "entry"; entryId: string }
+  | { kind: "composer" };
+
+type EditPrompt = {
+  kind: JournalEntryConfirmationKind;
+  entryId: string;
+  draft: string;
+};
 
 export default function JournalScreen() {
+  const { entries, selectedDate, settings, recentPresetEntryId } = useJournalData();
   const {
-    entries,
-    selectedDate,
     captureNote,
-    updateEntry,
+    saveEntryText,
     deleteEntry,
-    settings,
-    mutationError,
     clearMutationError,
-    retrySync,
-    journalLoading,
-    recentPresetEntryId,
     clearRecentPresetEntry,
-  } = useJournal();
+  } = useJournalActions();
+  const { mutationError, journalLoading } = useJournalStatus();
   const ownerId = useSession().session?.user.id;
   const screenActive = useIsFocused();
   const [draft, setDraft] = useState("");
@@ -50,10 +71,18 @@ export default function JournalScreen() {
   const [focused, setFocused] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [entryDraft, setEntryDraft] = useState("");
+  const [editPrompt, setEditPrompt] = useState<EditPrompt | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
   const [receiptError, setReceiptError] = useState<string | null>(null);
   const [tool, setTool] = useState<"add" | "receipt" | null>(null);
   const input = useRef<TextInput>(null);
   const entryInputs = useRef(new Map<string, TextInput>());
+  const editingEntryIdRef = useRef<string | null>(null);
+  const entryDraftRef = useRef("");
+  const editPromptRef = useRef<EditPrompt | null>(null);
+  const editContinuation = useRef<EditContinuation>({ kind: "none" });
+  const editResolutionLock = useRef(false);
+  const suppressEditBlur = useRef(false);
   const lastReturnSubmission = useRef<string | null>(null);
   const submitLock = useRef(false);
   const draftTouchedBeforeLoad = useRef(false);
@@ -84,19 +113,15 @@ export default function JournalScreen() {
       void saveJournalDrafts(ownerId, { composer: draft, edits: editDrafts });
     }
   }, [draft, draftLoaded, editDrafts, ownerId]);
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    const hidden = Keyboard.addListener("keyboardDidHide", () => {
-      setFocused(false);
-      input.current?.blur();
-    });
-    return () => hidden.remove();
-  }, []);
   useFocusEffect(
     useCallback(
-      () => () => {
-        setFocused(false);
-        Keyboard.dismiss();
+      () => {
+        suppressEditBlur.current = false;
+        return () => {
+          suppressEditBlur.current = true;
+          setFocused(false);
+          Keyboard.dismiss();
+        };
       },
       [],
     ),
@@ -180,50 +205,104 @@ export default function JournalScreen() {
     if (!screenActive || !recentPresetEntryId || !recentPresetVisible) return;
     const frame = requestAnimationFrame(() => {
       scroll.current?.scrollToEnd({ animated: false });
-      clearRecentPresetEntry();
     });
     return () => cancelAnimationFrame(frame);
-  }, [screenActive, recentPresetEntryId, recentPresetVisible, clearRecentPresetEntry]);
-  const commitEntryDraft = async (
-    entry: (typeof entries)[number],
-    nextDraft: string,
-  ) => {
-    const note = nextDraft.trim();
-    if (!note) {
-      try { await deleteEntry(entry.id); } catch { return false; }
-      return true;
-    }
-
-    const sources = entry.sources.map((source) =>
-      source.title === "Your original note"
-        ? { ...source, detail: note }
-        : source,
-    );
-    if (note !== entry.note) {
-      try { await updateEntry({ ...entry, note, sources }); }
-      catch { return false; }
-    }
-    return true;
-  };
-  const startEditingEntry = (entry: (typeof entries)[number]) => {
-    setEditingEntryId(entry.id);
-    setEntryDraft(editDrafts[entry.id] ?? entry.note);
-  };
-  const finishEditingEntry = async (entry: (typeof entries)[number], nextDraft: string) => {
-    if (!(await commitEntryDraft(entry, nextDraft))) return false;
+  }, [screenActive, recentPresetEntryId, recentPresetVisible]);
+  const clearStoredEdit = useCallback((entryId: string) => {
     setEditDrafts((current) => {
-      const { [entry.id]: _saved, ...remaining } = current;
+      const { [entryId]: _saved, ...remaining } = current;
       return remaining;
     });
-    setEditingEntryId((current) =>
-      current === entry.id ? null : current,
-    );
-    return true;
-  };
-  const changeEntryDraft = (nextDraft: string) => {
+  }, []);
+  const beginEditingEntry = useCallback((entry: JournalEntry) => {
+    const nextDraft = editDrafts[entry.id] ?? entry.note;
+    suppressEditBlur.current = false;
+    editingEntryIdRef.current = entry.id;
+    entryDraftRef.current = nextDraft;
+    setEditingEntryId(entry.id);
     setEntryDraft(nextDraft);
-    if (editingEntryId) {
-      setEditDrafts((current) => ({ ...current, [editingEntryId]: nextDraft }));
+    requestAnimationFrame(() => entryInputs.current.get(entry.id)?.focus());
+  }, [editDrafts]);
+  const finishEditState = useCallback((entryId: string) => {
+    clearStoredEdit(entryId);
+    if (editingEntryIdRef.current === entryId) {
+      editingEntryIdRef.current = null;
+      entryDraftRef.current = "";
+      setEditingEntryId(null);
+      setEntryDraft("");
+    }
+  }, [clearStoredEdit]);
+  const runEditContinuation = useCallback((continuation: EditContinuation) => {
+    if (continuation.kind === "entry") {
+      const nextEntry = dayEntries.find((entry) => entry.id === continuation.entryId);
+      if (nextEntry && !nextEntry.receipt) beginEditingEntry(nextEntry);
+      return;
+    }
+    if (continuation.kind === "composer") {
+      setFocused(true);
+      requestAnimationFrame(() => input.current?.focus());
+    }
+  }, [beginEditingEntry, dayEntries]);
+  const requestEditResolution = useCallback((continuation: EditContinuation) => {
+    if (
+      editPromptRef.current ||
+      suppressEditBlur.current ||
+      editResolutionLock.current
+    ) {
+      if (continuation.kind !== "none") editContinuation.current = continuation;
+      return;
+    }
+
+    const entryId = editingEntryIdRef.current;
+    if (!entryId) {
+      runEditContinuation(continuation);
+      return;
+    }
+    const entry = dayEntries.find((candidate) => candidate.id === entryId);
+    if (!entry) {
+      finishEditState(entryId);
+      runEditContinuation(continuation);
+      return;
+    }
+
+    editContinuation.current = continuation;
+    const nextDraft = entryDraftRef.current;
+    const change = classifyJournalEdit(entry.note, nextDraft);
+    if (change === "unchanged") {
+      finishEditState(entryId);
+      runEditContinuation(continuation);
+      return;
+    }
+
+    const prompt: EditPrompt = {
+      kind: change === "delete" ? "delete" : "recalculate",
+      entryId,
+      draft: nextDraft,
+    };
+    suppressEditBlur.current = true;
+    editPromptRef.current = prompt;
+    setEditPrompt(prompt);
+    entryInputs.current.get(entryId)?.blur();
+    Keyboard.dismiss();
+  }, [dayEntries, finishEditState, runEditContinuation]);
+  const startEditingEntry = useCallback((entry: JournalEntry) => {
+    const currentId = editingEntryIdRef.current;
+    if (!currentId) {
+      beginEditingEntry(entry);
+      return;
+    }
+    if (currentId === entry.id) {
+      entryInputs.current.get(entry.id)?.focus();
+      return;
+    }
+    requestEditResolution({ kind: "entry", entryId: entry.id });
+  }, [beginEditingEntry, requestEditResolution]);
+  const changeEntryDraft = (nextDraft: string) => {
+    entryDraftRef.current = nextDraft;
+    setEntryDraft(nextDraft);
+    const entryId = editingEntryIdRef.current;
+    if (entryId) {
+      setEditDrafts((current) => ({ ...current, [entryId]: nextDraft }));
     }
   };
   const setEntryInput = useCallback((entryId: string, input: TextInput | null) => {
@@ -241,18 +320,81 @@ export default function JournalScreen() {
         : undefined;
 
       if (!nextEntry) {
-        setEditingEntryId(null);
-        setEntryDraft("");
-        requestAnimationFrame(() => input.current?.focus());
+        requestEditResolution({ kind: "composer" });
         return;
       }
-
-      setEditingEntryId(nextEntry.id);
-      setEntryDraft(editDrafts[nextEntry.id] ?? nextEntry.note);
-      requestAnimationFrame(() => entryInputs.current.get(nextEntry.id)?.focus());
+      requestEditResolution({ kind: "entry", entryId: nextEntry.id });
     },
-    [dayEntries, editDrafts],
+    [dayEntries, requestEditResolution],
   );
+  const showDeletePrompt = useCallback((entry: JournalEntry) => {
+    if (editPromptRef.current || editResolutionLock.current) return;
+    const prompt: EditPrompt = {
+      kind: "delete",
+      entryId: entry.id,
+      draft: entryDraftRef.current,
+    };
+    editContinuation.current = { kind: "none" };
+    suppressEditBlur.current = true;
+    editPromptRef.current = prompt;
+    setEditPrompt(prompt);
+    entryInputs.current.get(entry.id)?.blur();
+    Keyboard.dismiss();
+  }, []);
+  const dismissEditPrompt = useCallback(() => {
+    if (editResolutionLock.current) return;
+    const entryId = editPromptRef.current?.entryId;
+    editPromptRef.current = null;
+    editContinuation.current = { kind: "none" };
+    suppressEditBlur.current = false;
+    setEditPrompt(null);
+    if (entryId) {
+      requestAnimationFrame(() => entryInputs.current.get(entryId)?.focus());
+    }
+  }, []);
+  const applyEditPrompt = useCallback(async (mode?: EntryTextSaveMode) => {
+    const prompt = editPromptRef.current;
+    if (!prompt || editResolutionLock.current) return;
+    editResolutionLock.current = true;
+    setEditSaving(true);
+    try {
+      if (prompt.kind === "delete") {
+        await deleteEntry(prompt.entryId);
+      } else if (mode) {
+        await saveEntryText(prompt.entryId, prompt.draft, mode);
+      } else {
+        throw new Error("Choose how Finn should save this edit.");
+      }
+    } catch {
+      editResolutionLock.current = false;
+      editPromptRef.current = null;
+      editContinuation.current = { kind: "none" };
+      suppressEditBlur.current = false;
+      setEditSaving(false);
+      setEditPrompt(null);
+      requestAnimationFrame(() => entryInputs.current.get(prompt.entryId)?.focus());
+      return;
+    }
+
+    const continuation = editContinuation.current;
+    editResolutionLock.current = false;
+    editPromptRef.current = null;
+    editContinuation.current = { kind: "none" };
+    suppressEditBlur.current = false;
+    setEditSaving(false);
+    setEditPrompt(null);
+    finishEditState(prompt.entryId);
+    requestAnimationFrame(() => runEditContinuation(continuation));
+  }, [deleteEntry, finishEditState, runEditContinuation, saveEntryText]);
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const hidden = Keyboard.addListener("keyboardDidHide", () => {
+      setFocused(false);
+      input.current?.blur();
+      requestEditResolution({ kind: "none" });
+    });
+    return () => hidden.remove();
+  }, [requestEditResolution]);
   return (
     <Screen journal>
       <SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
@@ -300,10 +442,17 @@ export default function JournalScreen() {
                 draft={editingEntryId === entry.id ? entryDraft : entry.note}
                 onStartEditing={() => startEditingEntry(entry)}
                 onChangeDraft={changeEntryDraft}
-                onCommit={(note) => finishEditingEntry(entry, note)}
-                onReturn={advanceEditingEntry}
+                onRequestFinish={(advance) => {
+                  if (advance) advanceEditingEntry(entry.id);
+                  else requestEditResolution({ kind: "none" });
+                }}
+                onEditBlur={() => requestEditResolution({ kind: "none" })}
+                onPrepareDelete={() => showDeletePrompt(entry)}
+                onRequestDelete={() => showDeletePrompt(entry)}
                 inputRef={(node) => setEntryInput(entry.id, node)}
-                onRetrySync={() => { void retrySync(entry.id).catch(() => undefined); }}
+                editBusy={editSaving && editPrompt?.entryId === entry.id}
+                magicType={screenActive && entry.id === recentPresetEntryId}
+                onMagicTypeComplete={clearRecentPresetEntry}
               />
             ))
           )}
@@ -311,6 +460,7 @@ export default function JournalScreen() {
             {!journalLoading && dayEntries.length === 0 && draft.length === 0 && !focused && (
               <JournalEmptyPrompt
                 key={selectedDate}
+                currency={settings.currency}
                 onPress={() => input.current?.focus()}
               />
             )}
@@ -324,7 +474,14 @@ export default function JournalScreen() {
               onKeyPress={(event) => {
                 if (event.nativeEvent.key === "Enter") submitOnReturn(draft);
               }}
-              onFocus={() => setFocused(true)}
+              onFocus={() => {
+                if (editingEntryIdRef.current) {
+                  requestEditResolution({ kind: "composer" });
+                  input.current?.blur();
+                  return;
+                }
+                setFocused(true);
+              }}
               onBlur={() => {
                 if (Platform.OS !== "web") setFocused(false);
               }}
@@ -334,19 +491,16 @@ export default function JournalScreen() {
             />
             {focused && !!draft && (
               <View style={styles.statusSlot}>
-                <JournalProcessingStatus
-                  phase={submitting ? "organizing" : "thinking"}
-                  result={null}
-                  idle={!submitting}
-                />
-                {!submitting && (
+                {submitting ? (
+                  <JournalProcessingStatus phase="organizing" result={null} />
+                ) : (
                   <Button label="Note options" onPress={() => {
                     Keyboard.dismiss();
                     input.current?.blur();
                     setFocused(false);
                     setTool("add");
                   }} style={styles.noteOptionsButton}>
-                    <Text style={styles.noteOptionsText}>···</Text>
+                    <JournalProcessingDots decorative />
                   </Button>
                 )}
               </View>
@@ -354,17 +508,34 @@ export default function JournalScreen() {
           </View>
         </ScrollView>
           <JournalComposer
-            focused={focused}
+            focused={focused || !!editingEntryId}
             draft={draft}
-            submitting={submitting}
+            saveValue={editingEntryId ? entryDraft : draft}
+            saveLabel={editingEntryId ? "Review edited note" : "Save note"}
+            editingEntry={!!editingEntryId}
+            submitting={submitting || editSaving}
             input={input}
-            onSave={() => { void submitDraft(draft, true); }}
+            onSave={() => {
+              if (editingEntryIdRef.current) {
+                requestEditResolution({ kind: "none" });
+              } else {
+                void submitDraft(draft, true);
+              }
+            }}
             onReceiptCaptured={attachReceiptPhoto}
             onDismiss={() => setFocused(false)}
             tool={tool}
             setTool={setTool}
           />
         </KeyboardAvoidingView>
+        <JournalEntryConfirmationModal
+          kind={editPrompt?.kind ?? null}
+          busy={editSaving}
+          onDismiss={dismissEditPrompt}
+          onRecalculate={() => { void applyEditPrompt("recalculate"); }}
+          onPreserve={() => { void applyEditPrompt("preserve"); }}
+          onDelete={() => { void applyEditPrompt(); }}
+        />
       </SafeAreaView>
     </Screen>
   );
@@ -394,11 +565,6 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
     minHeight: 30,
     width: 44,
-  },
-  noteOptionsText: {
-    color: Finn.muted,
-    fontSize: 18,
-    lineHeight: 24,
   },
   input: {
     flex: 1,

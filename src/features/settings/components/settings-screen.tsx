@@ -1,13 +1,17 @@
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import type { Href } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useState, type ReactNode } from "react";
-import { Alert, Platform, StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { Alert, Linking, Platform, StyleSheet, Text, View } from "react-native";
 import { AppSheet, SectionLabel } from "@/components/sheets/app-sheet";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
+import {
+  useJournalActions,
+  useJournalData,
+  useJournalStatus,
+} from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
 import {
   scheduleCurrentAccountDeletion,
@@ -26,17 +30,20 @@ import {
   captureAnalytics,
 } from "@/lib/analytics/analytics";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
+import { LEGAL_WEBSITE_URLS } from "@/features/legal/legal-links";
+import {
+  cancelJournalReminders,
+  requestJournalReminderPermission,
+  scheduleJournalReminders,
+} from "@/features/notifications/services/notification-service";
+import { localDayKey } from "@/utils/dates";
 
 type Picker = "currency" | null;
 
 export default function SettingsScreen() {
-  const {
-    presets,
-    settings,
-    updateSettings,
-    mutationError,
-    clearMutationError,
-  } = useJournal();
+  const { entries, presets, settings } = useJournalData();
+  const { updateSettings, clearMutationError } = useJournalActions();
+  const { mutationError } = useJournalStatus();
   const { setOnboardingComplete } = useSession();
   const {
     entitlement,
@@ -48,6 +55,7 @@ export default function SettingsScreen() {
   const [picker, setPicker] = useState<Picker>(null);
   const [accountBusy, setAccountBusy] = useState<"sign-out" | "delete" | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [reminderBusy, setReminderBusy] = useState(false);
 
   const togglePicker = (next: Exclude<Picker, null>) => {
     setPicker((current) => (current === next ? null : next));
@@ -66,6 +74,42 @@ export default function SettingsScreen() {
     }
   };
 
+  const toggleReminders = async () => {
+    if (reminderBusy) return;
+    setReminderBusy(true);
+    try {
+      if (settings.reminders) {
+        await cancelJournalReminders();
+        await applySettings({ reminders: false });
+        return;
+      }
+      const granted = await requestJournalReminderPermission();
+      if (!granted) {
+        Alert.alert(
+          "Notifications are off",
+          "Allow notifications in your phone settings whenever you want Finn’s journal nudges.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open settings", onPress: () => { void Linking.openSettings(); } },
+          ],
+        );
+        return;
+      }
+      await applySettings({ reminders: true });
+      await scheduleJournalReminders(
+        settings.reminderTime,
+        entries.some((entry) => entry.date === localDayKey()),
+      );
+    } catch {
+      Alert.alert(
+        "Couldn’t update reminders",
+        "Finn couldn’t change that setting just now. Please try again.",
+      );
+    } finally {
+      setReminderBusy(false);
+    }
+  };
+
   const openSubscriptionManagement = async () => {
     setAccountError(null);
     try {
@@ -76,6 +120,17 @@ export default function SettingsScreen() {
           ? error.message
           : "Couldn’t open your subscription settings.",
       );
+    }
+  };
+
+  const openLegalWebsite = async (
+    url: (typeof LEGAL_WEBSITE_URLS)[keyof typeof LEGAL_WEBSITE_URLS],
+  ) => {
+    setAccountError(null);
+    try {
+      await WebBrowser.openBrowserAsync(url);
+    } catch {
+      setAccountError("Couldn’t open that legal page. Try again later.");
     }
   };
 
@@ -143,6 +198,23 @@ export default function SettingsScreen() {
         />
       </View>
 
+      {Platform.OS !== "web" && entries.length > 0 ? (
+        <>
+          <SectionLabel style={styles.sectionLabel}>Reminders</SectionLabel>
+          <View style={styles.group}>
+            <SettingsRow
+              icon="bell"
+              color={Finn.primary}
+              title={reminderBusy ? "Updating reminders…" : "Journal reminders"}
+              subtitle="Light Finn nudges when a day might slip by"
+              value={settings.reminders ? "On" : "Off"}
+              disclosure="none"
+              onPress={() => { void toggleReminders(); }}
+            />
+          </View>
+        </>
+      ) : null}
+
       <SectionLabel style={styles.sectionLabel}>Finn Premium</SectionLabel>
       <View style={styles.group}>
         <SettingsRow
@@ -201,14 +273,24 @@ export default function SettingsScreen() {
           icon="globe"
           color="#5865D8"
           title="Privacy Policy"
-          onPress={() => router.push("/legal/privacy")}
+          subtitle="finnit.app"
+          onPress={() => void openLegalWebsite(LEGAL_WEBSITE_URLS.privacyPolicy)}
         />
         <Divider />
         <SettingsRow
           icon="note"
           color="#8A6C55"
           title="Terms of Service"
-          onPress={() => router.push("/legal/terms")}
+          subtitle="finnit.app"
+          onPress={() => void openLegalWebsite(LEGAL_WEBSITE_URLS.termsOfService)}
+        />
+        <Divider />
+        <SettingsRow
+          icon="note"
+          color="#7A7572"
+          title="Acknowledgement"
+          subtitle="finnit.app"
+          onPress={() => void openLegalWebsite(LEGAL_WEBSITE_URLS.acknowledgement)}
         />
       </View>
 

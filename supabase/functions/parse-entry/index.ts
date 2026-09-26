@@ -9,14 +9,30 @@ import {
 import { withApproximatePlace } from "../_shared/entry-context.ts";
 import {
   catalog,
+  cors,
   metric,
   requireQuota,
   rpc,
   serve,
+  type Context,
 } from "../_shared/runtime.ts";
-import type { SavedEntry } from "../_shared/contracts.ts";
+import type {
+  EntryAmountPreview,
+  EntryParseEvent,
+  SavedEntry,
+} from "../_shared/contracts.ts";
 
-serve(async (body, ctx) => {
+type ParseResult = { entry: SavedEntry; cached: boolean };
+type StreamCallbacks = {
+  onAmountPreview?: (preview: EntryAmountPreview) => void | Promise<void>;
+  onFirstOutput?: () => void | Promise<void>;
+};
+
+async function parseEntry(
+  body: Record<string, unknown>,
+  ctx: Context,
+  callbacks: StreamCallbacks = {},
+): Promise<ParseResult> {
   const input = capture(body);
   // Idempotent retries return persisted interpretation without another model call.
   const { data: existing, error } = await ctx.db
@@ -38,9 +54,7 @@ serve(async (body, ctx) => {
           input[key as keyof typeof input] ===
           original[key as keyof typeof original],
       );
-    if (!same) {
-      throw new ApiError(409, "idempotency_conflict");
-    }
+    if (!same) throw new ApiError(409, "idempotency_conflict");
     return {
       entry: await rpc(ctx.admin, "finn_entry_document", {
         p_user: ctx.userId,
@@ -75,11 +89,11 @@ serve(async (body, ctx) => {
   }
   try {
     const candidates = await catalog(ctx);
-    const { result, modelResult } = await enrich(ctx, input, candidates);
+    const { result, modelResult } = await enrich(ctx, input, candidates, callbacks);
     const interpreted = extraction(
       withApproximatePlace(result, input.approximate_place),
-      candidates.categories.map((c) => c.id),
-      candidates.merchants.map((m) => m.id),
+      candidates.categories.map((category) => category.id),
+      candidates.merchants.map((merchant) => merchant.id),
     );
     const entry = await rpc<SavedEntry>(ctx.admin, "finn_commit_entry", {
       p_user: ctx.userId,
@@ -113,4 +127,65 @@ serve(async (body, ctx) => {
     }).catch(() => undefined);
     throw error;
   }
+}
+
+serve(async (body, ctx, request) => {
+  if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
+    return parseEntry(body, ctx);
+  }
+
+  const startedAt = Date.now();
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (event: EntryParseEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      let previewEmitted = false;
+      try {
+        const input = capture(body);
+        const result = await parseEntry(body, ctx, {
+          onFirstOutput: () => {
+            metric(ctx, "entry_stream_first_output", {
+              metadata: { duration_ms: Date.now() - startedAt },
+            });
+          },
+          onAmountPreview: (preview) => {
+            previewEmitted = true;
+            emit({ type: "amount_preview", entry_id: input.id, preview });
+            metric(ctx, "entry_stream_amount_preview", {
+              metadata: { duration_ms: Date.now() - startedAt },
+            });
+          },
+        });
+        emit({ type: "final", ...result });
+        metric(ctx, "entry_stream_final", {
+          metadata: {
+            duration_ms: Date.now() - startedAt,
+            preview_emitted: previewEmitted,
+          },
+        });
+      } catch (error) {
+        const known = error instanceof ApiError;
+        const status = known ? error.status : 500;
+        const code = known ? error.code : "backend_unavailable";
+        emit({
+          type: "warning",
+          code,
+          retryable: code !== "ai_quota_exhausted" &&
+            (status === 429 || status >= 500),
+        });
+        console.error(JSON.stringify({ event: "entry_stream_failed", code, status }));
+      } finally {
+        controller.close();
+      }
+    },
+  }), {
+    headers: {
+      ...cors,
+      "Cache-Control": "no-store",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 });

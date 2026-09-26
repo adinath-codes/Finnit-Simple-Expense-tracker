@@ -24,7 +24,7 @@ async function read(userId: string) {
 
 export const persistentCacheStore: PersistentCacheStore = {
   read,
-  async write(userId, _previous, next) {
+  async write(userId, _previous, next, _targets) {
     await AsyncStorage.setItem(journalCacheKey(userId), JSON.stringify(next));
   },
   async delete(userId) {

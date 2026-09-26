@@ -1,5 +1,7 @@
 import type { JournalCache } from "@/types/sync";
 import { persistentCacheStore } from "./persistent-store";
+import { targetedCacheCopy } from "./cache-mutation";
+import type { CacheMutationTargets } from "./persistent-store.types";
 
 // One document per account makes local entry + outbox changes a single durable
 // write. Never acknowledge a note until setItem succeeds. This is not encryption.
@@ -67,6 +69,36 @@ export function changeJournalCache<T>(
       if (locks.get(userId) === pending) locks.delete(userId);
     })
     .catch(() => undefined);
+  return pending;
+}
+
+/**
+ * Preferred mutation path. It preserves untouched entity references and lets
+ * native SQLite persist only the rows named by `targets`.
+ */
+export function changeJournalCacheTargeted<T>(
+  userId: string,
+  targets: CacheMutationTargets,
+  change: (cache: JournalCache) => T,
+): Promise<T> {
+  const pending = (locks.get(userId) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(async () => {
+      const current = await read(userId);
+      const cache = targetedCacheCopy(current, targets);
+      const result = change(cache);
+      if (targets.affectsContent) {
+        cache.metadata.contentVersion = current.metadata.contentVersion + 1;
+      }
+      await persistentCacheStore.write(userId, current, cache, targets);
+      snapshots.set(userId, cache);
+      notify(userId);
+      return result;
+    });
+  locks.set(userId, pending);
+  void pending.finally(() => {
+    if (locks.get(userId) === pending) locks.delete(userId);
+  }).catch(() => undefined);
   return pending;
 }
 

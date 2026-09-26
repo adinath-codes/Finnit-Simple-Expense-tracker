@@ -61,6 +61,13 @@ export type EntrySource = {
   detail: string;
   icon: "note" | "location";
 };
+export type JournalAmountPreview = {
+  amountMinor: number;
+  currency: string;
+  scope: "personal_total" | "user_share" | "group_total";
+  estimated: boolean;
+  needsReview: boolean;
+};
 export type ReceiptPhoto = {
   uri?: string;
   width: number;
@@ -87,6 +94,8 @@ export type JournalEntry = {
   time: string;
   items: EntryItem[];
   amountBreakdown?: EntryAmountTerm[];
+  /** Presentation-only streamed amount; never included in financial totals. */
+  amountPreview?: JournalAmountPreview;
   allocationRows?: EntryAllocationRow[];
   thought: string;
   sources: EntrySource[];

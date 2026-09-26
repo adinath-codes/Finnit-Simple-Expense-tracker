@@ -2,14 +2,18 @@ import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { DisclosureChevron, MotionLayout } from "@/components/ui/motion";
+import { Motion } from "@/constants/motion";
 import { Finn, Categories, FinancialCategoryLabels, JournalType } from "@/constants/theme";
 import { sheetStyles as shared } from "@/components/sheets/app-sheet";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
 import type { Category, EntryItem, JournalEntry } from "@/types/domain";
 import { money } from "@/utils/currency";
+import Animated, { FadeIn, FadeInDown, FadeOut } from "react-native-reanimated";
 
-function calculationExpression(item: EntryItem) {
+function calculationExpression(item: EntryItem, displayCurrency: string) {
   return item.components?.map((component, index) => {
-    const term = `${component.quantity} * ${money(component.unitPriceMinor, item.currency)}`;
+    const term = `${component.quantity} * ${money(component.unitPriceMinor, item.currency, displayCurrency)}`;
     if (index === 0) return term;
     return `+ ${term}`;
   }).join(" ") ?? "";
@@ -31,11 +35,14 @@ function journalCategory(value: string): Category {
 
 export function TransactionBreakdown({
   entry,
+  currency,
   onChange,
 }: {
   entry: JournalEntry;
+  currency: string;
   onChange: (entry: JournalEntry) => void | Promise<void>;
 }) {
+  const reducedMotion = useMotionPreference();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -53,39 +60,48 @@ export function TransactionBreakdown({
     Number.isSafeInteger(Number(quantity)) &&
     Number(quantity) > 0 &&
     Number(quantity) <= 999 && description.trim().length > 0;
+  const detailEntrance = (delay: number) => reducedMotion
+    ? FadeIn.duration(Motion.fade)
+    : FadeInDown
+      .duration(Motion.content)
+      .delay(delay)
+      .easing(Motion.easeOut)
+      .withInitialValues({ opacity: 0, transform: [{ translateY: -6 }] });
   return (
     <View style={{ gap: 9 }}>
-      {visibleItems.map((item) => (
-        <View key={item.id} style={styles.card}>
+      {visibleItems.map((item) => {
+        const isExpanded = expanded === item.id;
+        return (
+          <MotionLayout key={item.id} style={styles.card}>
           <Button
-            accessibilityState={{ expanded: expanded === item.id }}
-            label={`${expanded === item.id ? "Collapse" : "Expand"} ${item.name}, ${money(item.amountMinor, item.currency)}`}
-            onPress={() => setExpanded(expanded === item.id ? null : item.id)}
+            accessibilityState={{ expanded: isExpanded }}
+            label={`${isExpanded ? "Collapse" : "Expand"} ${item.name}, ${money(item.amountMinor, item.currency, currency)}`}
+            onPress={() => setExpanded(isExpanded ? null : item.id)}
             style={styles.row}
           >
             <Text
               ellipsizeMode="tail"
-              numberOfLines={expanded === item.id ? undefined : 1}
+              numberOfLines={isExpanded ? undefined : 1}
               style={styles.name}
             >
               {item.name}
             </Text>
             <Text
               ellipsizeMode="tail"
-              numberOfLines={expanded === item.id ? undefined : 1}
+              numberOfLines={isExpanded ? undefined : 1}
               style={styles.amount}
             >
-              {money(item.amountMinor, item.currency)}
+              {money(item.amountMinor, item.currency, currency)}
             </Text>
-            <Icon
-              name={expanded === item.id ? "up" : "down"}
+            <DisclosureChevron
+              expanded={isExpanded}
               size={12}
               color={Finn.muted}
             />
           </Button>
-          {expanded === item.id && (
-            <>
-              <View style={styles.metadata}>
+          {isExpanded && (
+            <Animated.View exiting={FadeOut.duration(Motion.fade)}>
+              <Animated.View entering={detailEntrance(0)} style={styles.metadata}>
                 <ItemMetric
                   accent="#F5B82D"
                   icon="quantity"
@@ -96,14 +112,14 @@ export function TransactionBreakdown({
                   accent="#F77B96"
                   icon="wallet"
                   label={amountScopeLabel(item)}
-                  value={money(item.amountMinor, item.currency)}
+                  value={money(item.amountMinor, item.currency, currency)}
                 />
                 {item.unitPriceMinor !== null && item.unitPriceMinor !== undefined && (
                   <ItemMetric
                     accent="#F77B96"
                     icon="wallet"
                     label="Per item"
-                    value={money(item.unitPriceMinor, item.currency)}
+                    value={money(item.unitPriceMinor, item.currency, currency)}
                   />
                 )}
                 <ItemMetric
@@ -112,12 +128,12 @@ export function TransactionBreakdown({
                   label="Category"
                   value={FinancialCategoryLabels[item.categoryId ?? item.category] ?? Categories[item.category].label}
                 />
-              </View>
+              </Animated.View>
               {!!item.components?.length && (
-                <View style={styles.calculation}>
+                <Animated.View entering={detailEntrance(35)} style={styles.calculation}>
                   <Text style={styles.calculationLabel}>Cost calculation</Text>
                   <Text selectable style={styles.expression}>
-                    {calculationExpression(item)}
+                    {calculationExpression(item, currency)}
                   </Text>
                   <View style={styles.componentList}>
                     {item.components.map((component) => (
@@ -125,40 +141,40 @@ export function TransactionBreakdown({
                         <View style={styles.componentDescription}>
                           <Text style={styles.componentName}>{component.label}</Text>
                           <Text style={styles.componentMath}>
-                            {component.quantity} * {money(component.unitPriceMinor, item.currency)}
+                            {component.quantity} * {money(component.unitPriceMinor, item.currency, currency)}
                           </Text>
                         </View>
                         <Text style={styles.componentTotal}>
-                          {money(component.lineTotalMinor, item.currency)}
+                          {money(component.lineTotalMinor, item.currency, currency)}
                         </Text>
                       </View>
                     ))}
                   </View>
-                </View>
+                </Animated.View>
               )}
               {(item.groupTotalMinor !== null && item.groupTotalMinor !== undefined ||
                 item.userShareMinor !== null && item.userShareMinor !== undefined ||
                 item.paidByUserMinor !== null && item.paidByUserMinor !== undefined) && (
-                <View style={styles.scopeSummary}>
+                <Animated.View entering={detailEntrance(60)} style={styles.scopeSummary}>
                   {item.groupTotalMinor !== null && item.groupTotalMinor !== undefined && (
                     <Text style={styles.scopeText}>
-                      Group total · {money(item.groupTotalMinor, item.currency)}
+                      Group total · {money(item.groupTotalMinor, item.currency, currency)}
                     </Text>
                   )}
                   <Text style={styles.scopeText}>
                     Your share · {item.userShareMinor === null || item.userShareMinor === undefined
                       ? "Not recorded"
-                      : money(item.userShareMinor, item.currency)}
+                      : money(item.userShareMinor, item.currency, currency)}
                   </Text>
                   {item.paidByUserMinor !== null && item.paidByUserMinor !== undefined && (
                     <Text style={styles.scopeText}>
-                      You paid · {money(item.paidByUserMinor, item.currency)}
+                      You paid · {money(item.paidByUserMinor, item.currency, currency)}
                     </Text>
                   )}
-                </View>
+                </Animated.View>
               )}
               {editing === item.id ? (
-                <View style={{ padding: 14, gap: 10 }}>
+                <Animated.View entering={detailEntrance(85)} style={styles.editFields}>
                   <View>
                     <Text style={styles.fieldLabel}>Description</Text>
                     <TextInput
@@ -286,45 +302,50 @@ export function TransactionBreakdown({
                       </Text>
                     </Button>
                   </View>
-                </View>
+                </Animated.View>
               ) : (
-                <Button
-                  label={`Edit ${item.name}`}
-                  onPress={() => {
-                    setEditing(item.id);
-                    setDescription(item.name);
-                    setAmount(String(Math.abs(item.amountMinor) / 100));
-                    setQuantity(String(item.quantity));
-                    setCategory(item.category);
-                    setCategoryId(item.categoryId ?? item.category);
-                    setCategoryChanged(false);
-                    setKind(item.kind ?? "item");
-                  }}
-                  style={styles.edit}
-                >
-                  <Text style={styles.editText}>
-                    Edit line details
-                  </Text>
-                </Button>
+                <Animated.View entering={detailEntrance(85)}>
+                  <Button
+                    label={`Edit ${item.name}`}
+                    onPress={() => {
+                      setEditing(item.id);
+                      setDescription(item.name);
+                      setAmount(String(Math.abs(item.amountMinor) / 100));
+                      setQuantity(String(item.quantity));
+                      setCategory(item.category);
+                      setCategoryId(item.categoryId ?? item.category);
+                      setCategoryChanged(false);
+                      setKind(item.kind ?? "item");
+                    }}
+                    style={styles.edit}
+                  >
+                    <Text style={styles.editText}>
+                      Edit line details
+                    </Text>
+                  </Button>
+                </Animated.View>
               )}
               {entry.receipt && entry.items.length > 1 && pendingItem?.id !== item.id && (
-                <Button
-                  label={`Remove ${item.name}`}
-                onPress={() => {
-                  void Promise.resolve(onChange({
-                    ...entry,
-                    items: entry.items.filter((current) => current.id !== item.id),
-                  })).catch(() => undefined);
-                }}
-                  style={styles.remove}
-                >
-                  <Text style={styles.removeText}>Remove line</Text>
-                </Button>
+                <Animated.View entering={detailEntrance(110)}>
+                  <Button
+                    label={`Remove ${item.name}`}
+                    onPress={() => {
+                      void Promise.resolve(onChange({
+                        ...entry,
+                        items: entry.items.filter((current) => current.id !== item.id),
+                      })).catch(() => undefined);
+                    }}
+                    style={styles.remove}
+                  >
+                    <Text style={styles.removeText}>Remove line</Text>
+                  </Button>
+                </Animated.View>
               )}
-            </>
+            </Animated.View>
           )}
-        </View>
-      ))}
+          </MotionLayout>
+        );
+      })}
       {entry.receipt && entry.items.length < 100 && pendingItem === null && (
         <Button
           label="Add receipt line"
@@ -493,6 +514,7 @@ const styles = StyleSheet.create({
   editText: { color: Finn.primary, fontFamily: JournalType.medium, fontSize: 11 },
   fieldLabel: { fontSize: 10, color: Finn.secondary, marginBottom: 6 },
   categories: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  editFields: { gap: 10, padding: 14 },
   category: {
     minHeight: 34,
     paddingHorizontal: 10,

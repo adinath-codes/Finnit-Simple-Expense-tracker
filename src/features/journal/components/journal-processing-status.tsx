@@ -12,33 +12,32 @@ import Animated, {
   cancelAnimation,
   Easing,
   Extrapolation,
+  FadeIn,
   interpolate,
   useAnimatedStyle,
-  useReducedMotion,
   useSharedValue,
+  withDelay,
   withRepeat,
+  withSequence,
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
-import { Icon } from "@/components/ui/icon";
+import { Motion } from "@/constants/motion";
 import { Finn, JournalType } from "@/constants/theme";
-import type { EntrySource, JournalEntry } from "@/types/domain";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
 import { JournalGlyph } from "./journal-glyph";
 
 type EntryProcessingPhase =
   | "typing" | "thinking" | "reading" | "organizing"
-  | "sources" | "calculating" | "result" | "settling";
+  | "sources" | "calculating" | "preview" | "result" | "settling";
 type PendingEntryResult = {
-  entry: JournalEntry;
   resultLabel: string;
   review: boolean;
-  sourceCount: number;
+  provisional?: boolean;
+  accessibilityLabel?: string;
 };
 
-const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
-const STATUS_DURATION = 300;
 const REDUCED_DURATION = 120;
-const SETTLE_DURATION = 450;
 const FALLBACK_LINE_HEIGHT = 25;
 const SHIMMER_START = -70;
 const SHIMMER_END = 180;
@@ -56,41 +55,51 @@ const WEB_SHIMMER_KEYFRAMES = {
   "100%": { opacity: 0.56 },
 } as const;
 
-const statusPhases = [
-  "thinking",
-  "reading",
-  "organizing",
-  "sources",
-  "calculating",
-  "result",
+const loopingPhases = [
+  { key: "thinking-start", phase: "thinking" },
+  { key: "searching", phase: "searching" },
+  { key: "reading", phase: "reading" },
+  { key: "calculating", phase: "calculating" },
+  // The duplicate makes the repeated 4 -> 0 reset visually seamless.
+  { key: "thinking-loop", phase: "thinking" },
 ] as const;
 
-type VisiblePhase = (typeof statusPhases)[number];
+type LoadingPhase = (typeof loopingPhases)[number]["phase"];
+type ProcessingVariant = "text" | "receipt";
 
-const labels: Partial<Record<VisiblePhase, string>> = {
-  thinking: "Tap tick",
-  reading: "Parsing",
-  organizing: "Saving",
-  calculating: "Calculating",
+const labels: Record<ProcessingVariant, Record<LoadingPhase, string>> = {
+  text: {
+    thinking: "Thinking",
+    searching: "Searching",
+    reading: "Reading",
+    calculating: "Calculating",
+  },
+  receipt: {
+    thinking: "Thinking",
+    searching: "Scanning",
+    reading: "Reading",
+    calculating: "Calculating",
+  },
 };
 
 export function JournalProcessingStatus({
   phase,
   result,
-  idle = false,
+  variant = "text",
 }: {
   phase: Exclude<EntryProcessingPhase, "typing">;
   result: PendingEntryResult | null;
-  idle?: boolean;
+  variant?: ProcessingVariant;
 }) {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useMotionPreference();
   const [foreground, setForeground] = useState(AppState.currentState === "active");
-  const position = useSharedValue(-1);
+  const position = useSharedValue(0);
   const lineHeight = useSharedValue(FALLBACK_LINE_HEIGHT);
+  const resultProgress = useSharedValue(0);
   const settleProgress = useSharedValue(0);
   const shimmerOffset = useSharedValue(SHIMMER_START);
-  const visiblePhase = phase === "settling" ? "result" : phase;
-  const phaseIndex = statusPhases.indexOf(visiblePhase);
+  const resultVisible = phase === "preview" || phase === "result" || phase === "settling";
+  const processing = !resultVisible;
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -101,34 +110,57 @@ export function JournalProcessingStatus({
 
   useEffect(() => {
     cancelAnimation(position);
-    position.set(
-      withTiming(phaseIndex, {
-        duration: reducedMotion ? REDUCED_DURATION : STATUS_DURATION,
-        easing: EASE_OUT,
-      }),
-    );
-  }, [phaseIndex, position, reducedMotion, visiblePhase]);
+    if (processing && foreground) {
+      position.set(0);
+      const transition = (next: number) => withDelay(
+        Motion.statusHold,
+        withTiming(next, {
+          duration: reducedMotion ? 0 : Motion.statusTransition,
+          easing: Motion.easeOut,
+        }),
+      );
+      position.set(withRepeat(withSequence(
+        transition(1),
+        transition(2),
+        transition(3),
+        transition(4),
+      ), -1, false));
+    }
+    return () => cancelAnimation(position);
+  }, [foreground, position, processing, reducedMotion]);
+
+  useEffect(() => {
+    cancelAnimation(resultProgress);
+    resultProgress.set(resultVisible
+      ? withTiming(1, {
+          duration: reducedMotion ? REDUCED_DURATION : Motion.statusTransition,
+          easing: Motion.easeOut,
+        })
+      : 0);
+    return () => cancelAnimation(resultProgress);
+  }, [reducedMotion, resultProgress, resultVisible]);
 
   useEffect(() => {
     cancelAnimation(settleProgress);
     settleProgress.set(
       phase === "settling"
         ? withTiming(1, {
-            duration: reducedMotion ? REDUCED_DURATION : SETTLE_DURATION,
-            easing: EASE_OUT,
+            duration: reducedMotion ? REDUCED_DURATION : Motion.resultSettle,
+            easing: Motion.easeOut,
           })
         : 0,
     );
+    return () => cancelAnimation(settleProgress);
   }, [phase, reducedMotion, settleProgress]);
 
   useEffect(() => {
     cancelAnimation(shimmerOffset);
     shimmerOffset.set(SHIMMER_START);
-    if (!reducedMotion && foreground) {
+    if (!reducedMotion && foreground && !resultVisible) {
       shimmerOffset.set(
         withRepeat(
           withTiming(SHIMMER_END, {
-            duration: 1_400,
+            duration: Motion.statusHold + Motion.statusTransition,
             easing: Easing.linear,
           }),
           -1,
@@ -137,26 +169,24 @@ export function JournalProcessingStatus({
       );
     }
     return () => cancelAnimation(shimmerOffset);
-  }, [foreground, reducedMotion, shimmerOffset]);
+  }, [foreground, reducedMotion, resultVisible, shimmerOffset]);
 
   const handleMeasure = (event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.height;
     if (measured > 0) lineHeight.set(measured);
   };
 
-  const accessibilityLabel = idle
-    ? "Tap tick to save"
-    : visiblePhase === "sources"
-      ? `${result?.sourceCount ?? 1} ${pluralize("source", result?.sourceCount ?? 1)}`
-      : visiblePhase === "result"
-        ? result?.resultLabel ?? "Entry ready"
-        : labels[visiblePhase] ?? "Processing entry";
+  const accessibilityLabel = resultVisible
+    ? result?.accessibilityLabel ?? result?.resultLabel ?? "Entry ready"
+    : variant === "receipt"
+      ? "Finn is thinking, scanning, reading, and calculating"
+      : "Finn is thinking, searching, reading, and calculating";
 
   return (
     <View
       accessibilityLabel={accessibilityLabel}
       accessibilityLiveRegion="polite"
-      accessibilityRole={idle || visiblePhase === "result" ? "text" : "progressbar"}
+      accessibilityRole={resultVisible ? "text" : "progressbar"}
       style={styles.viewport}
     >
       <Text
@@ -166,19 +196,26 @@ export function JournalProcessingStatus({
       >
         Calculating
       </Text>
-      {statusPhases.map((item, index) => (
+      {loopingPhases.map((item, index) => (
         <StatusLayer
-          key={item}
+          key={item.key}
           index={index}
           lineHeight={lineHeight}
-          phase={item}
+          phase={item.phase}
           position={position}
           reducedMotion={reducedMotion}
-          result={result}
-          settleProgress={settleProgress}
+          resultProgress={resultProgress}
           shimmerOffset={shimmerOffset}
+          variant={variant}
         />
       ))}
+      <ResultStatus
+            lineHeight={lineHeight}
+            reducedMotion={reducedMotion}
+            result={result}
+            resultProgress={resultProgress}
+            settleProgress={settleProgress}
+      />
     </View>
   );
 }
@@ -189,18 +226,18 @@ function StatusLayer({
   phase,
   position,
   reducedMotion,
-  result,
-  settleProgress,
+  resultProgress,
   shimmerOffset,
+  variant,
 }: {
   index: number;
   lineHeight: SharedValue<number>;
-  phase: VisiblePhase;
+  phase: LoadingPhase;
   position: SharedValue<number>;
   reducedMotion: boolean;
-  result: PendingEntryResult | null;
-  settleProgress: SharedValue<number>;
+  resultProgress: SharedValue<number>;
   shimmerOffset: SharedValue<number>;
+  variant: ProcessingVariant;
 }) {
   const layerStyle = useAnimatedStyle(() => {
     const distance = index - position.get();
@@ -208,16 +245,51 @@ function StatusLayer({
       opacity: interpolate(
         Math.abs(distance),
         [0, 1],
-        [1, 0],
+        [1 - resultProgress.get(), 0],
         Extrapolation.CLAMP,
       ),
       transform: [
         {
-          translateY: reducedMotion ? 0 : -distance * lineHeight.get(),
+          translateY: reducedMotion
+            ? 0
+            : (-distance + resultProgress.get()) * lineHeight.get(),
         },
       ],
     };
   });
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.layer, layerStyle]}>
+      <ShimmerText
+        reducedMotion={reducedMotion}
+        shimmerOffset={shimmerOffset}
+        text={labels[variant][phase]}
+      />
+    </Animated.View>
+  );
+}
+
+function ResultStatus({
+  lineHeight,
+  reducedMotion,
+  result,
+  resultProgress,
+  settleProgress,
+}: {
+  lineHeight: SharedValue<number>;
+  reducedMotion: boolean;
+  result: PendingEntryResult | null;
+  resultProgress: SharedValue<number>;
+  settleProgress: SharedValue<number>;
+}) {
+  const layerStyle = useAnimatedStyle(() => ({
+    opacity: resultProgress.get(),
+    transform: [{
+      translateY: reducedMotion
+        ? 0
+        : -(1 - resultProgress.get()) * lineHeight.get(),
+    }],
+  }));
   const emphasizedResultStyle = useAnimatedStyle(() => ({
     opacity: 1 - settleProgress.get(),
   }));
@@ -227,109 +299,57 @@ function StatusLayer({
 
   return (
     <Animated.View pointerEvents="none" style={[styles.layer, layerStyle]}>
-      {phase === "sources" ? (
-        <SourceStatus
-          count={result?.sourceCount ?? 1}
-          reducedMotion={reducedMotion}
-          shimmerOffset={shimmerOffset}
-          sources={result?.entry.sources ?? []}
-        />
-      ) : phase === "result" ? (
-        <View style={styles.resultStack}>
-          <Animated.View
-            style={[styles.resultRow, styles.resultLayer, emphasizedResultStyle]}
+      <View style={styles.resultStack}>
+        <Animated.View
+          style={[styles.resultRow, styles.resultLayer, emphasizedResultStyle]}
+        >
+          <JournalGlyph
+            name="sparkle"
+            size={13}
+            color={result?.review ? Finn.amber : Finn.blue}
+            colors={
+              result?.review
+                ? undefined
+                : [Finn.blueSparkleStart, Finn.blueSparkleEnd]
+            }
+          />
+          <Animated.Text
+            key={`emphasized-${result?.resultLabel ?? ""}`}
+            entering={FadeIn.duration(reducedMotion ? REDUCED_DURATION : Motion.statusTransition)}
+            numberOfLines={1}
+            style={[
+              styles.resultText,
+              { color: result?.review ? Finn.amber : Finn.blue },
+            ]}
           >
-            <JournalGlyph
-              name="sparkle"
-              size={13}
-              color={result?.review ? Finn.amber : Finn.blue}
-              colors={
-                result?.review
-                  ? undefined
-                  : [Finn.blueSparkleStart, Finn.blueSparkleEnd]
-              }
-            />
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.resultText,
-                { color: result?.review ? Finn.amber : Finn.blue },
-              ]}
-            >
-              {result?.resultLabel ?? ""}
-            </Text>
-          </Animated.View>
-          <Animated.View
-            style={[styles.resultRow, styles.resultLayer, settledResultStyle]}
+            {result?.resultLabel ?? ""}
+          </Animated.Text>
+        </Animated.View>
+        <Animated.View
+          style={[styles.resultRow, styles.resultLayer, settledResultStyle]}
+        >
+          {result?.review && (
+            <JournalGlyph name="sparkle" size={12} color={Finn.amber} />
+          )}
+          <Animated.Text
+            key={`settled-${result?.resultLabel ?? ""}`}
+            entering={FadeIn.duration(reducedMotion ? REDUCED_DURATION : Motion.statusTransition)}
+            numberOfLines={1}
+            style={styles.settledResultText}
           >
-            {result?.review && (
-              <JournalGlyph name="sparkle" size={11} color={Finn.amber} />
-            )}
-            <Text numberOfLines={1} style={styles.settledResultText}>
-              {result?.resultLabel ?? ""}
-            </Text>
-          </Animated.View>
-        </View>
-      ) : (
-        <ShimmerText
-          reducedMotion={reducedMotion}
-          shimmerOffset={shimmerOffset}
-          text={labels[phase] ?? ""}
-        />
-      )}
+            {result?.resultLabel ?? ""}
+          </Animated.Text>
+        </Animated.View>
+      </View>
     </Animated.View>
   );
 }
 
-function SourceStatus({
-  count,
-  reducedMotion,
-  shimmerOffset,
-  sources,
-}: {
-  count: number;
-  reducedMotion: boolean;
-  shimmerOffset: SharedValue<number>;
-  sources: EntrySource[];
-}) {
-  const badges = Math.min(Math.max(count, 1), 3);
-  return (
-    <View style={styles.sourceRow}>
-      <View style={styles.badges}>
-        {Array.from({ length: badges }, (_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.badge,
-              index > 0 && styles.overlappingBadge,
-              { backgroundColor: ["#EDB16D", "#EBC64F", Finn.primary][index] },
-            ]}
-          >
-            <Icon
-              name={sources[index]?.icon ?? "note"}
-              size={8}
-              color="#FFFDF9"
-            />
-          </View>
-        ))}
-      </View>
-      <ShimmerText
-        compact
-        reducedMotion={reducedMotion}
-        shimmerOffset={shimmerOffset}
-        text={`${count} ${pluralize("source", count)}`}
-      />
-    </View>
-  );
-}
-
 function ShimmerText({
-  compact = false,
   reducedMotion,
   shimmerOffset,
   text,
 }: {
-  compact?: boolean;
   reducedMotion: boolean;
   shimmerOffset: SharedValue<number>;
   text: string;
@@ -364,7 +384,7 @@ function ShimmerText({
           {text}
         </Text>
       }
-      style={[styles.shimmerMask, compact && styles.compactShimmerMask]}
+      style={styles.shimmerMask}
     >
       <View style={styles.shimmerBase} />
       {!reducedMotion && (
@@ -374,15 +394,25 @@ function ShimmerText({
   );
 }
 
-export function JournalProcessingDots() {
-  const reducedMotion = useReducedMotion();
+export function JournalProcessingDots({ decorative = false }: {
+  decorative?: boolean;
+}) {
+  if (decorative) return <BouncingDots />;
   return (
     <View
       accessibilityLabel="Waiting to process entry"
       accessibilityLiveRegion="polite"
       accessibilityRole="progressbar"
-      style={styles.dots}
     >
+      <BouncingDots />
+    </View>
+  );
+}
+
+function BouncingDots() {
+  const reducedMotion = useMotionPreference();
+  return (
+    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.dots}>
       {[0, 1, 2].map((index) => (
         <Animated.View
           key={index}
@@ -402,10 +432,6 @@ export function JournalProcessingDots() {
       ))}
     </View>
   );
-}
-
-function pluralize(word: string, count: number) {
-  return count === 1 ? word : `${word}s`;
 }
 
 const styles = StyleSheet.create({
@@ -450,9 +476,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
   },
-  compactShimmerMask: {
-    width: 72,
-  },
   shimmerHighlight: {
     bottom: 0,
     experimental_backgroundImage:
@@ -460,28 +483,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     width: 64,
-  },
-  sourceRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 7,
-    justifyContent: "flex-end",
-  },
-  badges: {
-    alignItems: "center",
-    flexDirection: "row",
-  },
-  badge: {
-    alignItems: "center",
-    borderColor: "rgba(255,255,255,0.9)",
-    borderRadius: 7,
-    borderWidth: 1,
-    height: 14,
-    justifyContent: "center",
-    width: 14,
-  },
-  overlappingBadge: {
-    marginLeft: -4,
   },
   resultStack: {
     alignItems: "flex-end",
@@ -496,7 +497,7 @@ const styles = StyleSheet.create({
   resultRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 5,
+    gap: 4,
     justifyContent: "flex-end",
   },
   resultText: {
@@ -508,7 +509,7 @@ const styles = StyleSheet.create({
   settledResultText: {
     color: Finn.secondary,
     fontFamily: JournalType.regular,
-    fontSize: 13,
+    fontSize: 14,
     fontVariant: ["tabular-nums"],
     includeFontPadding: false,
     lineHeight: 19,
@@ -521,7 +522,7 @@ const styles = StyleSheet.create({
     minHeight: 25,
   },
   dot: {
-    backgroundColor: Finn.primary,
+    backgroundColor: "#C7C0C0",
     borderRadius: 3,
     height: 5,
     width: 5,

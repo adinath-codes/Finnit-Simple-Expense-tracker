@@ -7,6 +7,7 @@ import {
   EXTRACTION_SCHEMA_VERSION,
   extractionInputHash,
   geminiModel,
+  resolveRelativeAmountCorrection,
 } from "../_shared/gemini.ts";
 import { withApproximatePlace } from "../_shared/entry-context.ts";
 import { CURRENCIES } from "../_shared/contracts.ts";
@@ -170,7 +171,7 @@ serve(async (body, ctx) => {
     try {
       await requireQuota(ctx);
       const { data: current, error } = await ctx.db.from("journal_entries")
-        .select("source_type,raw_text,revision,capture_request")
+        .select("source_type,raw_text,revision,capture_request,extraction")
         .eq("id", id)
         .maybeSingle();
       if (error) throw new ApiError(503, "database_unavailable");
@@ -181,16 +182,32 @@ serve(async (body, ctx) => {
         throw new ApiError(409, "revision_or_idempotency_conflict");
       }
       const originalInput = capture(current.capture_request);
+      const candidates = await catalog(ctx);
+      const currentExtraction = extraction(
+        current.extraction,
+        candidates.categories.map((category) => category.id),
+        candidates.merchants.map((merchant) => merchant.id),
+      );
+      const relativeAmount = resolveRelativeAmountCorrection(
+        instruction,
+        currentExtraction,
+      );
       const correctionInput = {
         ...originalInput,
-        raw_text: `${current.raw_text}\nUser correction: ${instruction}`,
+        raw_text: [
+          current.raw_text,
+          `User correction: ${instruction}`,
+          relativeAmount?.evidence,
+        ].filter(Boolean).join("\n"),
       };
-      const candidates = await catalog(ctx);
       const { result, modelResult } = await enrich(
         ctx,
         correctionInput,
         candidates,
-        { correctionInstruction: instruction },
+        {
+          correctionInstruction: instruction,
+          currentExtraction,
+        },
       );
       const interpreted = extraction(
         withApproximatePlace(result, originalInput.approximate_place),

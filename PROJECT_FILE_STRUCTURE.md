@@ -43,6 +43,9 @@ Shared buttons and icon buttons forward native refs and press props for Router l
 | `assets/images/character/error/recovery.png` | Transparent Finn cutout calmly repairing a piggy bank for the global recovery screen. |
 | `docs/observability/SENTRY.md` | Credential, EAS/source-map, privacy, sampling, and release-verification handoff. |
 | `.env.example` | Safe local/EAS configuration template; real tokens remain outside source control. |
+| `app.json` | Expo app metadata plus the EAS project link, app-version runtime policy, and automatic update checks. |
+| `eas.json` | Preview and production build profiles with matching EAS Update channels. |
+| `docs/updates/EAS_UPDATE.md` | OTA release commands, preview-first rollout, native-build boundary, and runtime-version rules. |
 
 Sentry is disabled in development and while the DSN is a placeholder. Production
 events deliberately exclude financial text, receipt data/images, search questions,
@@ -102,19 +105,23 @@ reachable with larger text or smaller screens.
 The reference images are recreated with **Finn financial content**, confirmed by the user, and a small vector recreation of the reference’s green mountain mark. This direct request takes precedence over the earlier inspiration-only guidance in `PRODUCT_DESIGN.md`.
 
 - `src/storage/journal-repository.ts` creates the empty first-run journal state. Components never import bundled data or call a backend directly.
-- `src/providers/app-providers.tsx` subscribes to the authenticated account's durable cache, adapts cached text/receipt records for the UI, starts foreground sync/refresh, and exposes promise-returning mutations. Entries, presets, goals, and settings are never acknowledged before their local write succeeds.
+- `src/providers/app-providers.tsx` subscribes to the authenticated account's durable cache, adapts cached text/receipt records for the UI, starts foreground sync/refresh, and exposes separate data, status, and action contexts. Entries, presets, goals, and settings are never acknowledged before their local write succeeds; sync-state changes no longer invalidate data-only consumers.
 
 - `src/types/domain.ts` defines typed UI records; `src/utils/amounts.ts`, `currency.ts`, and `dates.ts` supply stored-entry totals, formatting, and date labels without interpreting draft text.
+- `tests/unit/currency-display.test.ts` verifies that the Settings currency changes presentation symbols without converting or rescaling stored monetary values.
 - `src/features/journal/components/journal-glyph.tsx` maps journal controls to the shared native-symbol layer: SF Symbols on iOS and Material Symbols on Android/web. `assets/images/journal/` owns the small reference-inspired header mark and legacy static SVG glyph assets.
 - `assets/images/character/header/` contains three transparent monochrome Finn header poses and laptop “Finn it!” typography prototypes. `journal-header.tsx` temporarily displays the dollar-green rebus prototype, where Finn replaces both `i` glyphs, while the matching treatment for the other two poses awaits approval.
 - `assets/sf-pro-display/` contains the supplied SF Pro Display fonts. The root layout loads regular, medium, and bold faces for Android/web before showing the app; iOS uses its native system font. `metro.config.js` registers the supplied uppercase `.OTF` extension.
 - `src/components/ui/icon.tsx` maps SF Symbols on iOS to Material Symbols on Android/web and applies the native one-shot symbol effect requested by the nearest button. `button.tsx` supplies 120ms press feedback, triggers symbol effects, and respects reduced motion. `icon-button.tsx` supplies floating circular controls.
+- `src/components/ui/magic-type-text.tsx` supplies a reusable reduced-motion-aware character reveal while reserving the final text layout.
 - `src/components/common/screen.tsx` supplies the warm canvas, optional journal peach-to-lilac gradient, and desktop width limit. `src/components/sheets/app-sheet.tsx` owns sheet chrome, scrolling, dismissal, SDK-57 keyboard synchronization, and sticky footer spacing. `src/components/ui/use-rotating-placeholder.ts` shares the journal's reduced-motion-aware typing cadence with focused correction inputs.
-- Implemented journal components: `journal-screen.tsx`, `journal-header.tsx`, `journal-entry-card.tsx`, `journal-composer.tsx`, `journal-processing-status.tsx`, and `journal-glyph.tsx`. The blank paper is the input; focusing it reveals the saved-entry/add, camera, and green-tick toolbar, and keyboard dismissal restores the compact totals pill. When connectivity is unavailable, a quiet footer pill reports the durable outbox's pending-job count without blocking capture. Drafts show a shimmered “Tap tick” prompt; only the tick or Return starts capture and parsing, with no artificial processing delay. Composer and in-place edit drafts persist locally through blur. The draft dots open note options. The camera action opens the permission-aware `expo-camera` preview with gallery import, persists and normalizes the image locally for offline retry, and sends it only as a transient authenticated parsing request. Successful extraction retains text/structured values and deletes the local image. Scanned receipts render as one generated journal sentence with the extracted total; their itemized arithmetic stays in Entry Details behind tap-to-expand ellipsis.
+- Implemented journal components: `journal-screen.tsx`, `journal-header.tsx`, `journal-entry-card.tsx`, `journal-composer.tsx`, `journal-processing-status.tsx`, and `journal-glyph.tsx`. The blank paper is the input; focusing it reveals the saved-entry/add, camera, and green-tick toolbar, and keyboard dismissal restores the compact totals pill. Offline and ordinary sync failures stay silent while the durable outbox retries them automatically; only a cross-device revision conflict surfaces because it needs a version choice. Drafts show only a subtle bouncing ellipsis while typing; only the tick or Return starts capture and parsing, with no artificial processing delay. Composer and in-place edit drafts persist locally through blur. The draft dots open note options. The camera action opens the permission-aware `expo-camera` preview with gallery import, persists and normalizes the image locally for offline retry, and sends it only as a transient authenticated parsing request. Successful extraction retains text/structured values and deletes the local image. Scanned receipts render as one generated journal sentence with the extracted total; their itemized arithmetic stays in Entry Details behind tap-to-expand ellipsis.
 - Implemented detail components: `entry-detail-sheet.tsx`, `transaction-breakdown.tsx`, and `finn-correction-composer.tsx`. The sheet shows arithmetic and participant allocations, keeps the source note immutable during durable Gemini corrections, and entries can become saved shortcuts.
 - `features/presets/components/preset-list.tsx` owns search, create/edit/delete, and one-tap journal insertion that closes the sheet and shows the new entry on the main journal.
 - `features/settings/components/settings-screen.tsx` owns currency preferences, saved-entry navigation, legal-document links, local sign-out, and confirmed 30-day account-deletion scheduling. Retired location and Back Tap opt-ins are forced off for existing accounts.
 - `features/guidance/` owns durable per-account, one-time guidance and versioned feature announcements. First-note guidance is shown only on an empty journal; the saved-entry announcement links directly to its action.
+- `features/notifications/` owns Finn's first-person reminder copy, the post-first-entry permission rationale, per-account one-time rationale state, Android reminder channel, seven-day rolling local schedule, and iOS mascot attachments. Every durable first text, preset, or receipt entry emits the same in-process first-entry event; permission is never requested during onboarding or before that event. Reminder bodies deliberately omit financial amounts and expense details.
+- `assets/images/notifications/finn-notification-icon.png` is the generated, build-time Android monochrome Finn tray icon. Rich notification imagery uses the existing `character/header/finn-paperwork.png` asset on iOS and in the custom permission rationale.
 - `features/summary/components/spending-breakdown-card.tsx` owns the floating total's ten-coin category breakdown and rolling amount.
 - `features/calendar/components/calendar-screen.tsx` owns month browsing and selected-day journal navigation.
 - `features/onboarding/` owns a short Finn flow: eight illustrated story slides, a paced conversational handoff, and six white question slides covering desired outcomes, memory gaps, context, capture style, and default currency. Every selection and navigation step is serialized to an AsyncStorage draft so interrupted onboarding resumes exactly. The Supabase `user_onboarding` row is authoritative per account: a missing or incomplete row sends that account to the questions, and another account can never inherit a local draft. Successful owner-only uploads delete the local answers/progress.
@@ -151,6 +158,8 @@ limits, and the current integration boundary.
 | `supabase/migrations/20260922130000_revision_aware_caching.sql` | Account revision change log, fixed-snapshot delta sync, bounded Ask/catalog caches, cache metrics, and realtime invalidation. |
 | `supabase/migrations/20260922165037_account_deletion_grace_period.sql` | Private 30-day deletion requests, cancellation RPCs, and an hourly bounded Cron purge of expired Auth users. |
 | `supabase/migrations/20260923100000_usage_analytics_preference.sql` | Durable per-account usage-analytics opt-out preference. |
+| `supabase/migrations/20260925100000_revenuecat_entitlement_cache.sql` | Private RevenueCat entitlement snapshot and service-role-only local premium-check/update RPCs. |
+| `supabase/migrations/20260926042659_tester_access_codes.sql` | Private hashed tester-code definitions, capacity-limited redemption history, atomic reservation/completion RPCs, and the initial tester cohort. |
 | `supabase/config.toml` | CLI-generated local project settings and authenticated Edge Function entry points. |
 | `supabase/.gitignore` | Excludes CLI project links, temporary files and local secrets. |
 | `supabase/functions/deno.json` | Server TypeScript runtime and formatting configuration, separate from Expo. |
@@ -162,14 +171,18 @@ limits, and the current integration boundary.
 | `supabase/functions/_shared/text.ts` | Shared normalization and literal candidate matching for search and user rules. |
 | `supabase/functions/_shared/pending-entry.ts` | Unparsed local placeholder used while an explicitly submitted note waits for Gemini. |
 | `supabase/functions/_shared/entry-context.ts` | Adds the user-approved coarse place label to a validated interpretation. |
-| `supabase/functions/_shared/runtime.ts` | Session verification, RLS/admin clients, request bounds, quotas, catalogs and private-text-free metrics. |
+| `supabase/functions/_shared/runtime.ts` | Session verification, RLS/admin clients, local premium checks, request bounds, quotas, catalogs, and response-path-free private-text-free metrics. |
+| `supabase/functions/_shared/revenuecat.ts` | RevenueCat v2 active-entitlement reconciliation and promotional grants, expiry/lifetime validation, webhook user extraction, and private snapshot updates. |
+| `supabase/functions/_shared/testing-access.ts` | Tester-code normalization, SHA-256 hashing, defensive reservation parsing, and private redemption RPC boundary. |
 | `supabase/functions/_shared/gemini.ts` | Role-based Gemini Flash-Lite selection, role-specific cost metrics, bounded structured output, and evidence-grounded interpretation validation. |
+| `supabase/functions/_shared/json-stream.ts` | Pure SSE frame splitting and balanced partial-JSON property extraction for streamed structured output. |
 | `supabase/functions/_shared/receipt.ts` | Strict receipt evidence/money validation, partial JSON row parsing, reconciliation, and correction validation. |
 | `supabase/functions/_shared/search.ts` | Deterministic query-to-filter parsing and allowlisted search-plan validation. |
 | `supabase/functions/_shared/ask-sql-guard.ts` | PostgreSQL 17 AST allowlist for the curated cohort and typed answer SELECT shapes. |
 | `supabase/functions/_shared/ask-sql.ts` | Restricted-role read-only execution, answer/source consistency, private sessions, revision paging, and grounded explanations. |
 | `supabase/functions/_shared/cache.ts` | Versioned SHA-256 cache keys and strict generic-explanation cacheability checks. |
 | `supabase/functions/_shared/preset.ts` | AI-free preset note formatting and deterministic extraction using ISO currency minor units. |
+| `supabase/tests/revenuecat.test.ts` | Network-free validation of RevenueCat v2 active, lifetime, absent, expired, and malformed entitlement responses. |
 | `supabase/functions/parse-entry/index.ts` | Idempotent Gemini-only text interpretation, grounded validation, and authoritative commit. |
 | `supabase/functions/correct-entry/index.ts` | Revision-checked text reparse, manual correction, and deletion with optional explicit personal category rules. |
 | `supabase/functions/ask-money/index.ts` | Authenticated natural-language/explicit-filter search with SQL-only financial totals. |
@@ -178,26 +191,32 @@ limits, and the current integration boundary.
 | `supabase/functions/delete-account/index.ts` | Authenticated scheduling/cancellation for the caller's 30-day account deletion window; expired reactivations are purged server-side. |
 | `supabase/functions/scan-receipt/index.ts` | Authenticated transient multipart image parsing, Gemini structured-output stream, progressive NDJSON rows, and text-only authoritative commit. |
 | `supabase/functions/apply-preset/index.ts` | Idempotent, authenticated preset snapshot commit with no Gemini request. |
+| `supabase/functions/refresh-entitlement/index.ts` | Authenticated client reconciliation that refreshes the private entitlement snapshot outside capture requests. |
+| `supabase/functions/redeem-testing-code/index.ts` | Authenticated capacity reservation, RevenueCat promotional Premium grant, entitlement reconciliation, and redemption completion. |
+| `supabase/functions/revenuecat-webhook/index.ts` | Authorization-checked RevenueCat webhook that refreshes affected account snapshots and returns non-2xx for retryable failures. |
 | `src/features/auth/` | Session provider, email/password auth, Google/Apple OAuth, callback handling, recovery, and reset UI. |
-| `src/features/legal/` | Shared readable legal-document surface used by the bundled privacy policy and terms. |
+| `src/features/legal/` | Shared bundled legal-document surface plus the canonical future website links used from Settings. |
 | `src/lib/supabase/client.ts` | Lazy publishable-key client, explicit optional anonymous auth and session identity. |
 | `src/lib/supabase/session-storage.ts` | AsyncStorage session persistence adapter. |
 | `src/lib/supabase/database.types.ts` | Shared backend wire types plus the generated SQL schema type exports. |
 | `src/lib/supabase/generated.types.ts` | CLI-generated public-schema types from the linked Finn database after caching migration deployment. |
 | `src/lib/ai/api.ts` | Authenticated Edge requests, session refresh, bounded timeout and typed retry errors. |
-| `src/lib/offline/database.ts` | Serialized account-scoped snapshot facade, structural sharing, and subscriptions over the platform repository. |
+| `src/lib/ai/entry-stream.ts` | Pure parse-entry NDJSON framing, event validation, and legacy JSON fallback checks. |
+| `src/lib/offline/database.ts` | Serialized account-scoped snapshot facade with a legacy whole-document path plus preferred entity-targeted immutable mutations and subscriptions. |
+| `src/lib/offline/cache-mutation.ts` | Targeted copy-on-write helper that clones only the entities declared by a mutation. |
 | `src/lib/offline/cache-schema.ts` | Versioned cache defaults, account keys, and lossless v1/v2-to-v3 normalization for semantic entries, receipts, outbox jobs, presets, goals, and settings. |
-| `src/lib/offline/sync-queue.ts` | Ordered retry queue, revision-conflict retention and foreground sync lifecycle. |
+| `src/lib/offline/sync-queue.ts` | Concurrent text, receipt, and account queue lanes with per-entry ordering, retry backoff, revision-conflict retention, and foreground lifecycle. |
 | `src/lib/offline/persistent-store.types.ts` | Shared native/web offline repository contract. |
 | `src/lib/offline/persistent-store.ts` | Platform-resolved offline repository entry point for shared imports. |
-| `src/lib/offline/persistent-store.native.ts` | Normalized account-scoped SQLite persistence, atomic entry/outbox writes, verified rollback-safe AsyncStorage migration, and deletion. |
+| `src/lib/offline/persistent-store.native.ts` | Normalized account-scoped SQLite persistence, entity-targeted row writes, atomic entry/outbox writes, verified rollback-safe AsyncStorage migration, and deletion. |
 | `src/lib/offline/persistent-store.web.ts` | Web AsyncStorage repository implementation behind the shared contract. |
 | `src/lib/offline/sqlite.native.ts` | Expo SQLite WAL/foreign-key schema for entries, receipts/lines, jobs, settings, presets, goals, metadata, Ask results, and metrics. |
+| `src/lib/offline/journal-retention.ts` | Native persistence policy retaining completed journal and receipt details for today/yesterday while never pruning pending work or conflict recovery state. |
 | `src/lib/offline/refresh-coordinator.ts` | Account/resource request coalescing and 15-second/5-minute freshness policy. |
 | `src/lib/offline/cache-metrics.ts` | Locally aggregated, bounded, content-free cache telemetry. |
 | `src/lib/cache/lru.ts` | Small bounded process-local LRU used by derived UI calculations. |
 | `src/types/sync.ts` | Cached entry, correction/deletion payload, durable job and cache types. |
-| `src/features/journal/services/journal-service.ts` | Durable capture, deterministic presets, fixed-snapshot delta sync, conflict shadows, and one-release full-refresh fallback. |
+| `src/features/journal/services/journal-service.ts` | Durable capture, deterministic presets, fixed-snapshot delta sync, conflict shadows, one-release full-refresh fallback, and online-only hydration of historical ranges outside the two-day offline window. |
 | `src/features/journal/services/journal-sync-merge.ts` | Pure complete-server-document merge with pending local edit and conflict-shadow protection. |
 | `src/features/journal/services/journal-adapter.ts` | Pure cached-record-to-UI adaptation and revision-safe text correction payload construction. |
 | `src/features/journal/services/sync-recovery-service.ts` | Entry-scoped retry plus explicit local-or-remote revision-conflict resolution. |
@@ -208,6 +227,8 @@ limits, and the current integration boundary.
 | `supabase/tests/money-evidence.test.ts` | Exact minor-unit parsing, multiplier-aware money tokenization, deterministic equal allocations/remainder handling, mixed-currency evidence, and pending-entry safety tests. |
 | `supabase/tests/search.test.ts` | Metric-aware deterministic query planning, backwards-compatible defaults, and query-plan allowlist tests. |
 | `supabase/tests/gemini-config.test.ts` | Extraction/reasoning/fast model defaults, override isolation, identifier validation, and role-specific cost estimation. |
+| `supabase/tests/gemini-preview.test.ts` | Network-free amount-plan validation for personal, group, split, component, mixed-currency, duplicate, and unsafe preview cases. |
+| `supabase/tests/text-stream.test.ts` | Arbitrary Gemini SSE chunk boundaries, escaped JSON evidence, and amount-plan completion gating. |
 | `supabase/tests/ask-sql-guard.test.ts` | Valid aggregate/date/count plans plus hostile writes, CTEs, functions, schemas, joins, unions, and output-limit rejection. |
 | `supabase/tests/ask-sql-role.test.ts` | Live restricted-login RLS, date-window, write/function denial, and answer-to-five-item-source consistency checks. |
 | `supabase/migrations/20260922050000_fix_receipt_search_terms.sql` | Post-deploy receipt writer repair that groups JSON text extraction correctly for linked-database lint and runtime execution. |
@@ -400,8 +421,9 @@ Routes not listed in the implemented preview above remain planned. Expo Router r
 | `src/components/ui/icon.tsx` | Cross-platform SF/Material icon map; no mascot artwork. |
 | `src/components/ui/icon-button.tsx` | Accessible icon-only button with touch target and pressed state. |
 | `src/components/ui/text-field.tsx` | Shared text input primitive. |
+| `src/components/ui/magic-type-text.tsx` | Reusable character-by-character text reveal with stable final layout and a Reduced Motion fallback. |
 | `src/components/ui/collapsible.tsx` | Existing Expo starter collapsible; keep only if Finn needs it. |
-| `src/components/animated-icon.tsx` | Native launch overlay: monochrome Finn character pop/settle, wordmark reveal, progress accent, and whole-scene zoom/fade into the ready route; reduced motion uses an opacity-only handoff. |
+| `src/components/animated-icon.tsx` | Legacy standalone Expo icon animation; it is not mounted during app startup. |
 | `src/components/animated-icon.web.tsx` | Web version of the starter icon animation. |
 | `src/components/app-tabs.tsx` | Existing starter tab navigator; replace during product navigation work. |
 | `src/components/app-tabs.web.tsx` | Existing web tab implementation. |
@@ -415,17 +437,19 @@ Routes not listed in the implemented preview above remain planned. Expo Router r
 
 | File | Functionality |
 | --- | --- |
-| `components/journal-screen.tsx` | Composes journal header, chronological entries, totals, presets, and composer. |
+| `components/journal-screen.tsx` | Composes journal header, chronological entries, totals, presets, composer, and the guarded inline-edit resolution flow. |
 | `components/journal-glyph.tsx` | Fixed vector artwork for home toolbar and summary glyphs on every platform. |
 | `components/journal-header.tsx` | Finn mark, selected date/calendar entry, and adjacent Ask Finn/settings buttons. |
 | `components/journal-day-section.tsx` | One chronological day group with daily total. |
 | `components/journal-entry-card.tsx` | Human-readable entry with amount and restrained metadata. |
+| `components/journal-entry-confirmation-modal.tsx` | Custom accessible recalculate/preserve and destructive-delete confirmation card for inline journal edits. |
 | `components/journal-empty-prompt.tsx` | Empty-day writing CTA with reduced-motion-aware rotating example text. |
 | `components/journal-composer.tsx` | Primary natural-language input with camera, later voice, and explicit green-tick submit. |
-| `components/journal-processing-status.tsx` | Reduced-motion-aware shimmered “Tap tick” and real processing status. |
+| `components/journal-processing-status.tsx` | Reduced-motion-aware typing ellipsis, looping text-entry Thinking/Searching/Reading/Calculating and receipt Thinking/Scanning/Reading/Calculating shimmers, and sparkle-to-neutral amount handoff. |
 | `hooks/use-journal.ts` | Queries and mutations for journal capture/browsing. |
 | `services/journal-service.ts` | Capture, retrieve, edit, and queue journal use cases. |
 | `services/journal-adapter.ts` | Pure durable-cache adaptation and correction payload construction. |
+| `services/journal-edit-flow.ts` | Pure inline-edit classification and recalculate-versus-preserve text-save planning. |
 | `services/sync-recovery-service.ts` | Retry and local-or-remote conflict resolution for durable entry jobs. |
 | `store/journal-draft-store.ts` | Account-scoped persisted composer and in-place edit drafts. |
 | `types/journal.types.ts` | Journal-only UI state and view models. |
@@ -485,7 +509,7 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 
 | File | Functionality |
 | --- | --- |
-| `components/receipt-camera-sheet.tsx` | Implemented compact permission-aware camera overlay with live preview, torch, camera flip, shutter, and denied/settings states. |
+| `components/receipt-camera-sheet.tsx` | Implemented compact permission-aware camera overlay with a rounded, clipped live preview, torch, camera flip, shutter, and denied/settings states. |
 | `components/receipt-review.tsx` | Implemented captured-photo preview with retake, close, and attach actions. |
 | `services/receipt-service.ts` | Temporary local capture, transient multipart extraction, retry, and image cleanup. |
 | `types/receipt.types.ts` | Local receipt-capture type for the camera and transient extraction handoff. |
@@ -544,15 +568,17 @@ Projects preserve contextual grouping from the sketch without turning Finn into 
 
 | File | Functionality |
 | --- | --- |
-| `features/onboarding/components/onboarding-screen.tsx` | Reference-adapted welcome, paced story-to-question conversation, question cards, searchable ISO currency selection with keyboard dismissal, progress/footer chrome, reduced-motion transitions, and completion handoff. |
+| `features/onboarding/components/initial-story-screen.tsx` | Eight-chapter, tap-paced motion story with a continuous narrative thread, liquid ambient fields, scene-specific choreography, UI-thread loops, lifecycle pausing, live Reduced Motion behavior, and Android-verified layouts. |
+| `features/onboarding/components/onboarding-screen.tsx` | Onboarding orchestration, paced story-to-question conversation, question cards, searchable ISO currency selection with keyboard dismissal, progress/footer chrome, reduced-motion transitions, and completion handoff. |
 | `features/onboarding/data/onboarding-steps.ts` | Finn-specific questions, options, education copy, and flow order. |
 | `features/onboarding/services/onboarding-service.ts` | Local-first progress/completion orchestration and authenticated Supabase restore/sync. |
 | `features/onboarding/services/onboarding-validation.ts` | Pure allowlist sanitization for questionnaire answers and catalog-backed ISO currency codes. |
 | `features/onboarding/types/onboarding.types.ts` | Versioned answer, option, step, and persistence models. |
 | `app/paywall.tsx` | Authenticated, non-dismissible route selected whenever Premium entitlement is inactive. |
-| `features/paywall/components/paywall-screen.tsx` | Four-page chromatic, outcome-led hard paywall with a Finn value story, honest manual-vs-Premium comparison, eligibility-aware three-day trial timeline, localized plans, exact trial/renewal disclosure, restore, native offer-code redemption, legal links, and account access. |
-| `features/paywall/providers/subscription-provider.tsx` | RevenueCat lifecycle, Supabase UUID identity, offering/customer refresh, purchases, restores, and entitlement state. |
-| `features/paywall/services/subscription-service.ts` | Platform SDK configuration, product/trial normalization, entitlement lookup, purchase, restore, redemption, and management boundary. |
+| `features/paywall/components/paywall-screen.tsx` | Four-page chromatic, outcome-led hard paywall with a Finn value story, honest manual-vs-Premium comparison, eligibility-aware three-day trial timeline, localized plans, exact trial/renewal disclosure, restore, code entry, legal links, and account access. |
+| `features/paywall/components/testing-code-modal.tsx` | Cross-platform, keyboard-aware “Have a code?” entry modal with inline validation and an iOS native-offer fallback. |
+| `features/paywall/providers/subscription-provider.tsx` | RevenueCat lifecycle, Supabase UUID identity, offering/customer refresh, purchases, restores, tester-code redemption, and entitlement state. |
+| `features/paywall/services/subscription-service.ts` | Platform SDK configuration, product/trial normalization, entitlement lookup, purchase, restore, tester-code/native-offer redemption, and management boundary. |
 | `features/paywall/types/subscription.types.ts` | Subscription access, plan, trial eligibility, and context contracts. |
 | `assets/images/paywall/finn-chromatic.png` | Original transparent chromatic Finn hero generated for the premium sequence. |
 | `assets/images/paywall/finn-pro-badge.png` | Original transparent chromatic Finn Pro badge generated for the first paywall page. |
@@ -628,24 +654,27 @@ Supabase safety requirements:
 | --- | --- |
 | `.env.server` (ignored) | Local Edge Function secret-deployment input; never commit it or copy it into Expo configuration. |
 | `.gitignore` | Excludes dependencies, generated output, native builds, and all real environment files. |
-| `app.json` | Expo app identity, plugins, platform config, scheme, icons, and experiments. |
-| `package.json` | Scripts and pinned application dependency ranges. |
-| `package-lock.json` | npm dependency lockfile currently present. Choose one package manager before changing dependencies. |
-| `pnpm-lock.yaml` | pnpm dependency lockfile currently present and untracked. Do not maintain two lockfiles long-term. |
-| `pnpm-workspace.yaml` | pnpm workspace configuration currently present and untracked. |
+| `app.json` | Expo app identity, plugins, platform config, scheme, icons, EAS project link, runtime policy, and update URL. |
+| `eas.json` | Preview/production build profiles and matching OTA update channels. |
+| `package.json` | Scripts, pinned application dependency ranges, and the Android source-build opt-in required for the patched Expo Camera module. |
+| `patches/expo-camera+57.0.5.patch` | Keeps Android's Expo Camera preview on CameraX's compatible `TextureView`, allowing the animated receipt-camera surface to clip to rounded corners. Applied after installs by `patch-package`; `package.json` opts this module out of Expo's prebuilt Android artifact. |
+| `package-lock.json` | Canonical npm dependency lockfile used locally and by EAS Build; the stale competing pnpm lockfile was removed. |
+| `pnpm-workspace.yaml` | Retained workspace metadata; it is not a package-manager lockfile. |
 | `tsconfig.json` | Strict Expo TypeScript configuration, `@/*` aliases and pure shared TypeScript imports; excludes Deno entry points. |
 | `README.md` | General repository setup/readme. |
 | `CLAUDE.md` | Existing alternate-agent instructions; keep aligned with project rules if used. |
 | `docs/decisions/` | Short architecture decision records for choices that future contributors must understand. |
-| `assets/expo.icon/` | Expo icon source bundle. |
-| `assets/images/` | Raster images, splash/icon sources, tab icons, and future Finn-owned visuals. |
-| `assets/images/splash-screen.xml` | Transparent Android splash drawable configured in `app.json`; supplies the required native logo resource while keeping the warm background-only splash. |
+| `assets/logo/short-light-bg.png` | Canonical supplied Finn logo artwork. |
+| `assets/logo/app-icon.png` | 1024 × 1024 app-icon derivative used for iOS, standard Android, web favicon, and splash branding. |
+| `assets/logo/android-adaptive-foreground.png` | Transparent, safe-zone-padded Finn artwork for Android adaptive launcher icons. |
+| `assets/images/` | Raster images and future Finn-owned visuals. |
 
 ## Tests
 
 | Directory | Functionality |
 | --- | --- |
 | `tests/unit/journal-offline.test.ts` | Cache migration, adapter fidelity, correction, and preset-capture regression tests. |
+| `tests/unit/entry-stream.test.ts` | Arbitrarily chunked, duplicate, warning, final, and legacy parse-entry protocol coverage. |
 | `tests/unit/journal-sync-merge.test.ts` | Repeated remote versions, tombstones, complete receipt lines, and pending-local conflict preservation. |
 | `tests/unit/ask-cache-policy.test.ts` | Answer eligibility and revision-safe cache reuse rules. |
 | `tests/unit/ask-search-format.test.ts` | Compact same-month, cross-month, cross-year, historical-year, and inclusive/exclusive Ask date-range coverage. |

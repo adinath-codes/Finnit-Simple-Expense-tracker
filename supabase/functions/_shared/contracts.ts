@@ -235,6 +235,23 @@ export type SavedEntry = Omit<CaptureInput, "raw_text"> & {
   capture_request?: CaptureInput | ReceiptScanRequest;
 };
 
+export type EntryAmountPreview = {
+  amount_minor: string;
+  currency: string;
+  scope: "personal_total" | "user_share" | "group_total";
+  /** Every streamed value is provisional, even when Gemini is confident. */
+  estimated: boolean;
+  needs_review: boolean;
+};
+export type EntryParseEvent =
+  | {
+    type: "amount_preview";
+    entry_id: string;
+    preview: EntryAmountPreview;
+  }
+  | { type: "final"; entry: SavedEntry; cached: boolean }
+  | { type: "warning"; code: string; retryable: boolean };
+
 export const RECEIPT_LINE_KINDS = [
   "item",
   "tax",

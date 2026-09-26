@@ -22,6 +22,11 @@ import {
   deriveReceiptAmountBreakdown,
 } from "../../src/features/entries/services/breakdown-service.ts";
 import type { CachedEntry, JournalCache } from "../../src/types/sync.ts";
+import { targetedCacheCopy } from "../../src/lib/offline/cache-mutation.ts";
+import {
+  classifyJournalEdit,
+  planEntryTextSave,
+} from "../../src/features/journal/services/journal-edit-flow.ts";
 
 const transaction = {
   id: "transaction-1",
@@ -56,6 +61,46 @@ const cachedEntry: CachedEntry = {
   extraction: { transactions: [transaction], people: [], contexts: [], unresolved: [] },
   sync: "pending",
 };
+
+test("journal text edits distinguish unchanged, deleted, and changed drafts", () => {
+  assert.equal(classifyJournalEdit("Coffee 120", " Coffee 120 "), "unchanged");
+  assert.equal(classifyJournalEdit("Coffee 120", "   "), "delete");
+  assert.equal(classifyJournalEdit("Coffee 120", "Coffee with Sam 120"), "changed");
+});
+
+test("preserved text edits retain extraction while recalculation omits it", () => {
+  const preserved = planEntryTextSave(cachedEntry, " Coffee with Sam 120 ", "preserve");
+  assert.equal(preserved.input.raw_text, "Coffee with Sam 120");
+  assert.equal(preserved.extraction, cachedEntry.extraction);
+
+  const recalculated = planEntryTextSave(cachedEntry, "Coffee with Sam 140", "recalculate");
+  assert.equal(recalculated.input.raw_text, "Coffee with Sam 140");
+  assert.equal(recalculated.extraction, undefined);
+});
+
+test("targeted cache copies preserve untouched entity references", () => {
+  const other = {
+    ...cachedEntry,
+    input: { ...cachedEntry.input, id: "44444444-4444-4444-8444-444444444444" },
+  };
+  const cache = normalizeJournalCache({
+    version: 3,
+    entries: { [cachedEntry.input.id]: cachedEntry, [other.input.id]: other },
+    jobs: [],
+  });
+  const next = targetedCacheCopy(cache, {
+    entryIds: [cachedEntry.input.id],
+    jobs: true,
+    affectsContent: true,
+  });
+  assert.notEqual(next, cache);
+  assert.notEqual(next.entries, cache.entries);
+  assert.notEqual(next.entries[cachedEntry.input.id], cache.entries[cachedEntry.input.id]);
+  assert.equal(next.entries[other.input.id], cache.entries[other.input.id]);
+  assert.notEqual(next.jobs, cache.jobs);
+  assert.equal(next.receipts, cache.receipts);
+  assert.equal(next.local, cache.local);
+});
 
 test("v1 cache migration preserves entries and outbox", () => {
   const migrated = normalizeJournalCache({
@@ -633,4 +678,53 @@ test("preset capture contains its durable amount and category context", () => {
     amountMinor: 18050,
     category: "food",
   }), "my usual coffee · 180.50 food");
+});
+
+test("streamed amount preview survives normalization but never enters totals", () => {
+  const pending: CachedEntry = {
+    ...cachedEntry,
+    amountPreview: {
+      amount_minor: "12000",
+      currency: "INR",
+      scope: "personal_total",
+      estimated: true,
+      needs_review: false,
+    },
+    extraction: {
+      ...cachedEntry.extraction,
+      transactions: [{
+        ...transaction,
+        amount_minor: null,
+        amount_status: "missing",
+        user_share_minor: null,
+        group_total_minor: null,
+        needs_review: true,
+        unresolved: ["gemini_pending"],
+      }],
+    },
+  };
+  const normalized = normalizeJournalCache({
+    version: 3,
+    entries: { [pending.input.id]: pending },
+    jobs: [],
+  });
+  assert.deepEqual(normalized.entries[pending.input.id].amountPreview, pending.amountPreview);
+  const adapted = journalEntriesFromCache(normalized)[0];
+  assert.equal(adapted.amountPreview?.amountMinor, 12000);
+  assert.equal(entryTotal(adapted), 0);
+
+  const finalized = normalizeJournalCache({
+    ...normalized,
+    entries: {
+      [pending.input.id]: {
+        ...pending,
+        amountPreview: undefined,
+        extraction: cachedEntry.extraction,
+        sync: "synced",
+      },
+    },
+  });
+  const finalEntry = journalEntriesFromCache(finalized)[0];
+  assert.equal(finalEntry.amountPreview, undefined);
+  assert.equal(entryTotal(finalEntry), 120000);
 });

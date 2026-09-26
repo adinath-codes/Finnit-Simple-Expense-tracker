@@ -4,24 +4,27 @@ import { Motion } from "@/constants/motion";
 import { ContentFade, Reveal, MotionLayout } from "@/components/ui/motion";
 import { useState } from "react";
 import { router } from "expo-router";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppSheet, sheetStyles as shared } from "@/components/sheets/app-sheet";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Finn, Categories } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
+import {
+  useJournalActions,
+  useJournalData,
+  useJournalStatus,
+} from "@/providers/app-providers";
 import { money } from "@/utils/currency";
 import type { Category, Preset } from "@/types/domain";
 export default function PresetList() {
+  const { presets, selectedDate, settings } = useJournalData();
   const {
-    presets,
     savePreset,
     deletePreset,
     capturePreset,
-    selectedDate,
-    mutationError,
     clearMutationError,
-  } = useJournal();
+  } = useJournalActions();
+  const { mutationError } = useJournalStatus();
   const [search, setSearch] = useState("");
   const reduced = useMotionPreference();
   const [animateList, setAnimateList] = useState(false);
@@ -30,6 +33,7 @@ export default function PresetList() {
   const [form, setForm] = useState<Preset | null>(null);
   const [amount, setAmount] = useState("");
   const [capturing, setCapturing] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const beginEdit = (preset?: Preset) => {
     setAnimateList(true);
     setForm(
@@ -53,6 +57,38 @@ export default function PresetList() {
       return;
     }
     router.dismissTo("/");
+  };
+  const remove = async (preset: Preset) => {
+    if (deleting) return;
+    setAnimateList(true);
+    setDeleting(preset.id);
+    try {
+      await deletePreset(preset.id);
+    } catch {
+      setDeleting(null);
+      return;
+    }
+    setDeleting(null);
+  };
+  const confirmRemove = (preset: Preset) => {
+    if (Platform.OS === "web") {
+      if (window.confirm(`Delete ${preset.name} from your saved entries?`)) {
+        void remove(preset);
+      }
+      return;
+    }
+    Alert.alert(
+      "Delete saved entry?",
+      `${preset.name} will be removed from this list.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => { void remove(preset); },
+        },
+      ],
+    );
   };
   const filtered = presets.filter((preset) =>
     `${preset.name} ${preset.note}`
@@ -198,63 +234,62 @@ export default function PresetList() {
       </>}</Reveal>
       <MotionLayout animate={animateList} style={{ gap: 11 }}>
         {filtered.map((preset) => (
-          <Animated.View key={preset.id} style={styles.preset}
+          <Animated.View key={preset.id}
             layout={animateList && !reduced ? LinearTransition.duration(Motion.layout).easing(Motion.easeOut) : undefined}
             entering={animateList ? FadeIn.duration(Motion.fade) : undefined}
             exiting={animateList ? FadeOut.duration(Motion.fade) : undefined}>
-            <View style={{ flex: 1 }}>
-              <Button
-                label={`Edit saved entry ${preset.name}`}
-                onPress={() => beginEdit(preset)}
-                style={styles.presetBody}
-              >
-                <Text style={styles.name}>{preset.name}</Text>
-                <View style={styles.meta}>
-                  <Icon name="wallet" size={10} color={Finn.amber} />
-                  <Text style={styles.amount}>{money(preset.amountMinor)}</Text>
-                  <Text
-                    style={{
-                      color: Categories[preset.category].color,
-                      fontSize: 8,
-                    }}
+            {editing ? (
+              <View style={styles.preset}>
+                <View style={styles.editBodySlot}>
+                  <Button
+                    label={`Edit saved entry ${preset.name}`}
+                    onPress={() => beginEdit(preset)}
+                    style={styles.editBody}
                   >
-                    ●
-                  </Text>
-                  <Text style={styles.detail}>
-                    {Categories[preset.category].label}
-                  </Text>
+                    <Text style={styles.name}>{preset.name}</Text>
+                    <View style={styles.meta}>
+                      <Text style={styles.amount}>
+                        {money(preset.amountMinor, settings.currency)}
+                      </Text>
+                      <Text style={[styles.categoryDot, { color: Categories[preset.category].color }]}>●</Text>
+                      <Text style={styles.detail}>{Categories[preset.category].label}</Text>
+                    </View>
+                  </Button>
+                </View>
+                <Button
+                  disabled={deleting !== null}
+                  label={`Delete saved entry ${preset.name}`}
+                  onPress={() => confirmRemove(preset)}
+                  style={styles.rowAction}
+                >
+                  <View style={[styles.addCircle, styles.deleteCircle]}>
+                    <Icon name="trash" animation={false} size={15} color={Finn.danger} />
+                  </View>
+                </Button>
+              </View>
+            ) : (
+              <Button
+                disabled={capturing !== null}
+                label={`Add ${preset.name}, ${money(preset.amountMinor, settings.currency)}, to journal`}
+                onPress={() => { void add(preset); }}
+                style={styles.preset}
+              >
+                <View style={styles.presetBody}>
+                  <Text style={styles.name}>{preset.name}</Text>
+                  <View style={styles.meta}>
+                    <Text style={styles.amount}>
+                      {money(preset.amountMinor, settings.currency)}
+                    </Text>
+                    <Text style={[styles.categoryDot, { color: Categories[preset.category].color }]}>●</Text>
+                    <Text style={styles.detail}>{Categories[preset.category].label}</Text>
+                  </View>
+                </View>
+                {capturing === preset.id ? <Text style={styles.adding}>Adding…</Text> : null}
+                <View style={styles.addCircle}>
+                  <Icon name="plus" animation={false} size={17} color="#fff" />
                 </View>
               </Button>
-            </View>
-            <Button
-              disabled={capturing !== null}
-              label={
-                editing
-                  ? `Delete saved entry ${preset.name}`
-                  : `Add ${preset.name} to journal`
-              }
-              onPress={async () => {
-                if (editing) {
-                  setAnimateList(true);
-                  try { await deletePreset(preset.id); } catch { return; }
-                } else await add(preset);
-              }}
-              style={styles.addButton}
-            >
-              <View
-                style={[
-                  styles.addCircle,
-                  editing && { backgroundColor: "#FBEAED" },
-                ]}
-              >
-                <Icon
-                  name={editing ? "trash" : "plus"}
-                  animation={false}
-                  size={16}
-                  color={editing ? Finn.danger : "#fff"}
-                />
-              </View>
-            </Button>
+            )}
           </Animated.View>
         ))}
       </MotionLayout>
@@ -274,7 +309,9 @@ export default function PresetList() {
         </ContentFade>
       )}
       <Text style={styles.hint}>
-        Tap + to add it to your day. Tap a name to edit.
+        {editing
+          ? "Tap a saved entry to edit it, or use the trash button to delete it."
+          : "Tap anywhere on a saved entry to add it to your journal."}
       </Text>
     </AppSheet>
   );
@@ -313,24 +350,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: Finn.surface,
     borderRadius: 17,
-    paddingLeft: 16,
-    paddingRight: 10,
+    minHeight: 72,
+    paddingLeft: 17,
+    paddingRight: 14,
+    width: "100%",
     ...Finn.shadow,
   },
-  presetBody: { alignItems: "flex-start", paddingVertical: 16, width: "100%" },
-  name: { color: Finn.ink, fontSize: 14, marginBottom: 7 },
+  presetBody: { alignItems: "flex-start", flex: 1, paddingVertical: 14 },
+  editBodySlot: { flex: 1 },
+  editBody: { alignItems: "flex-start", paddingVertical: 14, width: "100%" },
+  name: { color: Finn.ink, fontSize: 14, fontWeight: "600", marginBottom: 6 },
   meta: { flexDirection: "row", alignItems: "center", gap: 5 },
-  amount: { color: Finn.secondary, fontSize: 10, marginRight: 5 },
-  detail: { fontSize: 10, color: Finn.secondary },
-  addButton: { width: 44 },
+  amount: { color: Finn.secondary, fontSize: 12, fontWeight: "500", marginRight: 2 },
+  categoryDot: { fontSize: 8 },
+  detail: { fontSize: 11, color: Finn.secondary },
+  rowAction: { width: 46 },
   addCircle: {
-    borderRadius: 15,
+    borderRadius: 16,
     backgroundColor: Finn.primary,
-    width: 25,
-    height: 25,
+    width: 30,
+    height: 30,
     alignItems: "center",
     justifyContent: "center",
   },
+  deleteCircle: { backgroundColor: "#FBEAED" },
+  adding: { color: Finn.primary, fontSize: 11, fontWeight: "600", marginRight: 9 },
   hint: {
     fontSize: 11,
     lineHeight: 18,

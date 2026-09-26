@@ -8,7 +8,10 @@ import { AppSheet, sheetStyles as shared } from "@/components/sheets/app-sheet";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Categories, Finn, JournalType } from "@/constants/theme";
-import { useJournal } from "@/providers/app-providers";
+import {
+  useJournalActions,
+  useJournalData,
+} from "@/providers/app-providers";
 import type { Category } from "@/types/domain";
 import { money } from "@/utils/currency";
 import { displayDay } from "@/utils/dates";
@@ -28,9 +31,9 @@ import {
 
 export default function CalendarScreen() {
   const {
-    selectedDate, setSelectedDate, today, entries, settings,
-    cacheAccountId, contentVersion,
-  } = useJournal();
+    selectedDate, today, entries, settings, cacheAccountId, contentVersion,
+  } = useJournalData();
+  const { setSelectedDate, loadJournalRange } = useJournalActions();
   const [month, setMonth] = useState(() => monthStart(selectedDate));
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [visibleItemCount, setVisibleItemCount] = useState(5);
@@ -45,6 +48,14 @@ export default function CalendarScreen() {
   });
   const viewingCurrentMonth = isCurrentMonth(month, today);
   const monthKey = `${month.getFullYear()}-${month.getMonth()}`;
+  const monthStartDay = [
+    month.getFullYear(), String(month.getMonth() + 1).padStart(2, "0"), "01",
+  ].join("-");
+  const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0, 12);
+  const monthEndDay = [
+    monthEnd.getFullYear(), String(monthEnd.getMonth() + 1).padStart(2, "0"),
+    String(monthEnd.getDate()).padStart(2, "0"),
+  ].join("-");
   const categoryItems = useMemo(
     () => selectedCategory
       ? buildCalendarCategoryItems({
@@ -65,6 +76,10 @@ export default function CalendarScreen() {
   useEffect(() => {
     setVisibleItemCount(5);
   }, [monthKey, selectedCategory]);
+
+  useEffect(() => {
+    void loadJournalRange(monthStartDay, monthEndDay).catch(() => undefined);
+  }, [loadJournalRange, monthEndDay, monthStartDay]);
 
   const selectCategory = (category: Category) => {
     setSelectedCategory((current) => current === category ? null : category);
