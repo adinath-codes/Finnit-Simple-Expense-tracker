@@ -15,11 +15,11 @@ import {
      type NativeSyntheticEvent,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ExternalLink } from "@/components/external-link";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
-import { TestingCodeModal } from "@/features/paywall/components/testing-code-modal";
 import {
      isRevenueCatTestStore,
      trackPaywallImpression,
@@ -27,6 +27,8 @@ import {
 import type { SubscriptionPlan } from "@/features/paywall/types/subscription.types";
 
 const PAGE_COUNT = 4;
+const CFPB_RESEARCH_URL =
+     "https://www.consumerfinance.gov/data-research/research-reports/consumer-insights-managing-spending/";
 const PAYWALL_FONT_SIZE = {
      xxl: 24,
      xl: 19,
@@ -37,24 +39,22 @@ const PAYWALL_FONT_SIZE = {
      button: 13,
 } as const;
 const STORE_NAME = Platform.OS === "android" ? "Google Play" : "App Store";
-const STORE_CONSOLE_NAME =
-     Platform.OS === "android" ? "Google Play Console" : "App Store Connect";
 
 const HERO_BENEFITS = [
      {
-          image: require("../../../../assets/images/paywall/benefits/natural-capture.png"),
+          image: require("../../../../assets/images/paywall/benefits/natural-capture.webp"),
           accessibilityLabel: "Chromatic journal, pen, and coin",
           title: "Capture before the detail fades",
           body: "Write naturally. Finn keeps the amount, place, person, and purpose together.",
      },
      {
-          image: require("../../../../assets/images/paywall/benefits/receipt-scan.png"),
+          image: require("../../../../assets/images/paywall/benefits/receipt-scan.webp"),
           accessibilityLabel: "Chromatic receipt inside a scan frame",
           title: "Turn receipts into memory",
           body: "Scan once and keep useful line items without rebuilding the receipt by hand.",
      },
      {
-          image: require("../../../../assets/images/paywall/benefits/money-insights.png"),
+          image: require("../../../../assets/images/paywall/benefits/money-insights.webp"),
           accessibilityLabel: "Chromatic magnifying glass over a money chart",
           title: "See patterns you can act on",
           body: "Ask what changed, spot repeat spending, and make the next decision with context.",
@@ -83,7 +83,6 @@ export default function PaywallScreen() {
      );
      const pager = useRef<ScrollView>(null);
      const [page, setPage] = useState(0);
-     const [testingCodeVisible, setTestingCodeVisible] = useState(false);
      const {
           state,
           offering,
@@ -93,7 +92,6 @@ export default function PaywallScreen() {
           purchase,
           restore,
           redeemOfferCode,
-          redeemTestingCode,
           refresh,
      } = useSubscription();
      const orderedPlans = useMemo(
@@ -262,13 +260,15 @@ export default function PaywallScreen() {
                                              disabled={isBusy}
                                              onPress={() => void restore()}
                                         />
-                                        <FooterLink
-                                             label="Have a code?"
-                                             disabled={isBusy}
-                                             onPress={() =>
-                                                  setTestingCodeVisible(true)
-                                             }
-                                        />
+                                        {Platform.OS === "ios" ? (
+                                             <FooterLink
+                                                  label="Redeem offer code"
+                                                  disabled={isBusy}
+                                                  onPress={() =>
+                                                       void redeemOfferCode()
+                                                  }
+                                             />
+                                        ) : null}
                                    </View>
                                    <View style={styles.legalLinks}>
                                         <FooterLink
@@ -346,18 +346,6 @@ export default function PaywallScreen() {
                          </Button>
                     </SafeAreaView>
                </SafeAreaView>
-               <TestingCodeModal
-                    visible={testingCodeVisible}
-                    busy={isBusy}
-                    onClose={() => setTestingCodeVisible(false)}
-                    onRedeem={async (code) => {
-                         await redeemTestingCode(code);
-                         setTestingCodeVisible(false);
-                    }}
-                    onRedeemStoreCode={
-                         Platform.OS === "ios" ? redeemOfferCode : undefined
-                    }
-               />
           </View>
      );
 }
@@ -380,7 +368,7 @@ function HeroPage({ scale }: { scale: number }) {
                <View style={[styles.heroArtWrap, responsive.artWrap]}>
                     <View style={[styles.heroGlow, responsive.glow]} />
                     <Image
-                         source={require("../../../../assets/images/paywall/finn-pro-badge.png")}
+                         source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                          contentFit="contain"
                          style={[styles.finnProBadgeImage, responsive.badge]}
                          accessibilityLabel="Finn Pro"
@@ -406,7 +394,7 @@ function HeroPage({ scale }: { scale: number }) {
                          ✦
                     </Text>
                     <Image
-                         source={require("../../../../assets/images/paywall/finn-chromatic.png")}
+                         source={require("../../../../assets/images/paywall/finn-chromatic.webp")}
                          contentFit="contain"
                          style={[styles.heroArt, responsive.art]}
                          accessibilityLabel="Finn holding a glowing money journal"
@@ -417,7 +405,16 @@ function HeroPage({ scale }: { scale: number }) {
                     wanted to see what each purchase leaves in their budget.
                </Text>
                <Text style={[styles.heroStatSource, responsive.statSource]}>
-                    U.S. CFPB consumer research
+                    U.S. consumer insights ·{" "}
+                    <ExternalLink href={CFPB_RESEARCH_URL} asChild>
+                         <Text
+                              accessibilityHint="Opens the source on the Consumer Financial Protection Bureau website"
+                              accessibilityRole="link"
+                              style={styles.heroStatSourceLink}
+                         >
+                              CFPB research
+                         </Text>
+                    </ExternalLink>
                </Text>
                <View style={[styles.heroBenefitsCard, responsive.benefitsCard]}>
                     {HERO_BENEFITS.map((benefit) => (
@@ -504,7 +501,7 @@ function ComparisonPage({ width, height }: { width: number; height: number }) {
                               ]}
                          >
                               <Image
-                                   source={require("../../../../assets/images/paywall/finn-pro-badge.png")}
+                                   source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                                    contentFit="contain"
                                    style={responsive.comparisonBadge}
                                    accessibilityLabel="Finn Pro"
@@ -599,7 +596,7 @@ function TrialTimelinePage({
                showsVerticalScrollIndicator={false}
           >
                <Image
-                    source={require("../../../../assets/images/paywall/finn-pro-badge.png")}
+                    source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                     contentFit="contain"
                     style={responsive.badge}
                     accessibilityLabel="Finn Pro"
@@ -673,7 +670,7 @@ function PlanPage({
                showsVerticalScrollIndicator={false}
           >
                <Image
-                    source={require("../../../../assets/images/paywall/finn-pro-badge.png")}
+                    source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                     contentFit="contain"
                     style={styles.planBadge}
                     accessibilityLabel="Finn Pro"
@@ -774,7 +771,7 @@ function PlanPage({
                          </Text>
                          <Text style={styles.storeStateText}>
                               {error ??
-                                   "Add a current RevenueCat offering with a subscription package."}
+                                   "We couldn’t load subscription plans right now. Please try again."}
                          </Text>
                          <Button
                               label="Retry loading plans"
@@ -792,11 +789,11 @@ function PlanPage({
                          style={styles.configurationWarning}
                     >
                          <Text style={styles.configurationWarningTitle}>
-                              3-day trial setup required
+                              Free trial unavailable
                          </Text>
                          <Text style={styles.configurationWarningBody}>
-                              Add a three-day free introductory offer to this
-                              product in {STORE_CONSOLE_NAME} before release.
+                              This subscription starts immediately. You’ll see
+                              the exact price before confirming.
                          </Text>
                     </View>
                ) : null}
@@ -1169,6 +1166,10 @@ const styles = StyleSheet.create({
           fontSize: PAYWALL_FONT_SIZE.xs,
           letterSpacing: 0.28,
           marginTop: 3,
+     },
+     heroStatSourceLink: {
+          color: "rgba(220, 235, 247, 0.90)",
+          textDecorationLine: "underline",
      },
      heroArtWrap: {
           position: "relative",

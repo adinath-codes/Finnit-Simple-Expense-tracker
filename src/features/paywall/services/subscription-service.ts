@@ -8,7 +8,7 @@ import Purchases, {
   type PurchasesOffering,
   type PurchasesPackage,
 } from "react-native-purchases";
-import { BackendError, callBackend } from "@/lib/ai/api";
+import { callBackend } from "@/lib/ai/api";
 import type {
   SubscriptionPlan,
   TrialEligibility,
@@ -23,13 +23,17 @@ const preferredOfferingId =
 let configuredUserId: string | null = null;
 
 function platformApiKey() {
+  // iOS development builds must talk to Apple's sandbox so StoreKit can load
+  // the real products and apply introductory-offer eligibility. Keep Android's
+  // existing Test Store-first development behavior unchanged.
+  if (Platform.OS === "ios") {
+    return process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim();
+  }
+
   const testStoreApiKey =
     process.env.EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY?.trim();
   if (__DEV__ && !isPlaceholder(testStoreApiKey)) return testStoreApiKey;
 
-  if (Platform.OS === "ios") {
-    return process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim();
-  }
   if (Platform.OS === "android") {
     return process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY?.trim();
   }
@@ -134,33 +138,6 @@ export async function reconcileSubscriptionEntitlement(userId: string) {
   return callBackend<{
     entitlement: { active: boolean; expires_at: string | null };
   }>("refresh-entitlement", {}, userId);
-}
-
-export async function redeemTestingAccessCode(code: string, userId: string) {
-  await callBackend<{
-    entitlement: { active: boolean; expires_at: string | null };
-    redeemed: boolean;
-  }>("redeem-testing-code", { code }, userId);
-  await Purchases.invalidateCustomerInfoCache();
-  return Purchases.getCustomerInfo();
-}
-
-export function testingCodeErrorMessage(error: unknown) {
-  if (error instanceof BackendError) {
-    switch (error.code) {
-      case "invalid_testing_code":
-        return "That code isn’t valid. Check it and try again.";
-      case "testing_code_full":
-        return "That testing code has reached its user limit.";
-      case "testing_code_already_redeemed":
-        return "That code has already been used on this account.";
-      case "subscription_grant_unavailable":
-        return "Premium couldn’t be activated just now. Please try again.";
-      case "sign_in_required":
-        return "Sign in again before redeeming your code.";
-    }
-  }
-  return "Finn couldn’t check that code. Check your connection and try again.";
 }
 
 export function planFromPackage(

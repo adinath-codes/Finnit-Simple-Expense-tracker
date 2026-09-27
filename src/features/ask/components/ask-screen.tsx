@@ -29,6 +29,16 @@ import {
   compactPeriodLabel,
   monthRange,
 } from "../services/search-format";
+import {
+  ASK_FINN_AI_NOTICE,
+  buildAnswerRows,
+  conversationalFinnCopy,
+  entityFilterChips,
+  factualFallbackExplanation,
+  sourceEvidenceCount,
+  unsupportedCopy,
+  withoutEntityFilter,
+} from "../services/ask-presentation";
 import type { ActiveContext, SearchItem } from "../types/ask.types";
 import { AskDateRangePopover } from "./ask-date-range-popover";
 import { AskMoneyAmount, SourceTransactionRow } from "./source-entry-list";
@@ -41,7 +51,7 @@ const suggestions = [
 ];
 
 const finnPaperwork = require("../../../../assets/images/character/header/finn-paperwork.png");
-const finnLaptop = require("../../../../assets/images/character/header/finn-laptop.png");
+const finnLaptop = require("../../../../assets/images/character/header/finn-laptop.webp");
 
 function MoneyBagIcon({ size = 43 }: { size?: number }) {
   return (
@@ -96,11 +106,6 @@ function answerLabelFor(plan?: SearchPlan) {
   return "Recorded money";
 }
 
-function finnThinkingLabel(message: string) {
-  const copy = message.trim();
-  return `Finn thinks. ${copy}${/[.!?]$/.test(copy) ? "" : "."}`;
-}
-
 export default function SearchScreen() {
   const { selectedDate, settings, today } = useJournalData();
   const screenActive = useIsFocused();
@@ -114,8 +119,7 @@ export default function SearchScreen() {
   const plan = result?.applied_filters;
   const advanced = result?.advanced_answer;
   const totals = result?.totals ?? [];
-  const reviewCount = totals.reduce((sum, total) => sum + Number(total.review_count), 0);
-  const confirmedCount = totals.reduce((sum, total) => sum + Number(total.confirmed_count), 0);
+  const evidenceCount = sourceEvidenceCount(result);
 
   const submit = (value = query) => {
     if (!value.trim()) return;
@@ -123,16 +127,20 @@ export default function SearchScreen() {
     setQuery(value);
     setSubmitted(value);
     requestAnimationFrame(() => listRef.current?.scrollToOffset({ animated: false, offset: 0 }));
-    void search.run({ query: value.trim(), range });
+    void search.run({ query: value.trim(), range, currency: settings.currency });
   };
   const applyFilters = (filters: SearchPlan) => {
     Keyboard.dismiss();
     void search.run({ filters });
   };
+  const removeEntityFilter = (kind: "merchant" | "category" | "person" | "context", value: string) => {
+    if (!plan) return;
+    applyFilters(withoutEntityFilter(plan, kind, value));
+  };
   const changeRange = (next: typeof range) => {
     setRange(next);
     if (plan) applyFilters({ ...plan, ...next });
-    else if (advanced && submitted) void search.run({ query: submitted, range: next });
+    else if (advanced && submitted) void search.run({ query: submitted, range: next, currency: settings.currency });
     else {
       search.reset();
       setSubmitted("");
@@ -153,7 +161,7 @@ export default function SearchScreen() {
       person: null,
       merchant_id: null,
       category_id: null,
-      currency: null,
+      currency: settings.currency,
       text: null,
     });
   };
@@ -167,43 +175,13 @@ export default function SearchScreen() {
     : plan
       ? { start_date: plan.start_date, end_date: plan.end_date }
       : range;
-  const answerRows = advanced?.rows.map((row, index) => {
-    const money = row.value_minor != null && row.currency
-      ? { minor: row.value_minor, currency: row.currency }
-      : null;
-    const value = money
-      ? null
-      : row.value_date
-        ? new Date(`${row.value_date}T12:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
-        : row.value_count != null
-          ? String(row.value_count)
-          : row.label ?? "—";
-    return {
-      key: `${index}-${row.currency ?? row.label ?? ""}`,
-      money,
-      value,
-      caption: [
-        row.label,
-        row.value_date && row.value_minor != null ? row.value_date : null,
-        row.currency && advanced.rows.length > 1 ? row.currency : null,
-      ].filter(Boolean).join(" · "),
-    };
-  }) ?? totals.filter((total) => total.confirmed_count > 0).map((total) => ({
-    key: total.currency,
-    money: { minor: total.total_minor, currency: total.currency },
-    value: null,
-    caption: totals.length > 1 ? total.currency : "",
-  }));
-  const fallbackExplanation = advanced
-    ? result?.matching_count === 0
-      ? "No matching transactions were found for this question and period."
-      : `This answer uses ${result?.matching_count ?? 0} matching journal transaction${result?.matching_count === 1 ? "" : "s"} from the selected period.`
-    : result?.matching_count === 0
-      ? "No matching transactions were found. Try another period or adjust the filters."
-      : `The answer uses ${confirmedCount} confirmed transaction${confirmedCount === 1 ? "" : "s"}${reviewCount ? `; ${reviewCount} unconfirmed amount${reviewCount === 1 ? " is" : "s are"} excluded from the total` : ""}.`;
+  const answerRows = buildAnswerRows(advanced, totals);
+  const fallbackExplanation = factualFallbackExplanation(result);
   const showLanding = !submitted && !result && !search.loading && !search.error;
   const showRecommendations = showLanding && !query.trim();
   const explanation = result?.explanation ?? fallbackExplanation;
+  const finnCopy = conversationalFinnCopy(explanation);
+  const entityChips = entityFilterChips(plan, result?.filter_labels);
 
   return (
     <Screen journal>
@@ -270,8 +248,44 @@ export default function SearchScreen() {
                     <Text style={styles.small}>No total is shown until the question is clear.</Text>
                   </View>
                 ) : null}
+                {result?.needs_clarification ? (
+                  <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>I need one detail.</Text>
+                    <Text style={styles.body}>The question contains conflicting or ambiguous filters. Choose one currency, direction, entity, or period and try again.</Text>
+                    <Text style={styles.small}>No partial answer was calculated.</Text>
+                  </View>
+                ) : null}
+                {result?.unsupported_question ? (
+                  <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>That isn’t stored in your journal.</Text>
+                    <Text style={styles.body}>{unsupportedCopy(result.unsupported_reason)}</Text>
+                    <Text style={styles.small}>Finn never fills gaps with guesses.</Text>
+                  </View>
+                ) : null}
                 {!search.loading && (plan || advanced) ? (
                   <ContentFade>
+                    {plan ? (
+                      <View style={styles.interpretationCard}>
+                        <Text style={styles.small}>
+                          {plan.operation} · {plan.metric?.replaceAll("_", " ") ?? "user share"}{plan.direction ? ` · ${plan.direction}` : ""}
+                        </Text>
+                        {entityChips.length ? (
+                          <View style={styles.filterChips}>
+                            {entityChips.map((chip) => (
+                              <Button
+                                key={`${chip.kind}-${chip.value}`}
+                                label={`Remove ${chip.label} filter`}
+                                onPress={() => removeEntityFilter(chip.kind, chip.value)}
+                                style={styles.filterChip}
+                              >
+                                <Text style={styles.filterChipText}>{chip.label}</Text>
+                                <Icon name="close" size={11} color={Finn.secondary} />
+                              </Button>
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : null}
                     <View accessibilityLiveRegion="polite" style={styles.answer}>
                       {result?.stale ? (
                         <>
@@ -279,7 +293,7 @@ export default function SearchScreen() {
                           <Text style={styles.body}>Refresh to see an answer and entries that agree.</Text>
                           <Button
                             label="Refresh search results"
-                            onPress={() => plan ? applyFilters(plan) : void search.run({ query: submitted, range })}
+                            onPress={() => plan ? applyFilters(plan) : void search.run({ query: submitted, range, currency: settings.currency })}
                             style={styles.inlineAction}
                           >
                             <Text style={styles.action}>Refresh answer</Text>
@@ -289,7 +303,24 @@ export default function SearchScreen() {
                         <>
                           {answerRows.length ? answerRows.map((row) => (
                             <View key={row.key} style={styles.answerRow}>
-                              {row.money ? (
+                              {row.comparison ? (
+                                <View style={styles.comparisonBlock}>
+                                  <View style={styles.comparisonRow}>
+                                    <View style={styles.comparisonValue}>
+                                      <Text style={styles.answerCaption}>Selected period</Text>
+                                      <AskMoneyAmount currency={row.comparison.currency} displayCurrency={settings.currency} minor={row.comparison.primary} style={styles.comparisonAmount} />
+                                    </View>
+                                    <View style={styles.comparisonValue}>
+                                      <Text style={styles.answerCaption}>Previous period</Text>
+                                      <AskMoneyAmount currency={row.comparison.currency} displayCurrency={settings.currency} minor={row.comparison.previous} style={styles.comparisonAmount} />
+                                    </View>
+                                  </View>
+                                  <View style={styles.comparisonValue}>
+                                    <Text style={styles.answerCaption}>Change</Text>
+                                    <AskMoneyAmount currency={row.comparison.currency} displayCurrency={settings.currency} minor={row.comparison.delta} style={styles.comparisonAmount} />
+                                  </View>
+                                </View>
+                              ) : row.money ? (
                                 <AskMoneyAmount
                                   currency={row.money.currency}
                                   displayCurrency={settings.currency}
@@ -313,24 +344,27 @@ export default function SearchScreen() {
                         <LoadingState active={screenActive} label="Finn is adding context…" variant="explanation" />
                       ) : (
                         <View style={styles.explanation}>
-                          <Text style={styles.accessibleCopy}>{finnThinkingLabel(explanation)}</Text>
+                          <Text style={styles.accessibleCopy}>{`Finn says. ${finnCopy}`}</Text>
                           <View
                             accessibilityElementsHidden
                             importantForAccessibility="no-hide-descendants"
                             style={styles.thinkingRow}
                           >
                             <Image contentFit="contain" source={finnLaptop} style={styles.thinkingFinn} />
-                            <MagicTypeText key={explanation} style={styles.thinkingText}>
-                              {`thinks… ${explanation}`}
+                            <MagicTypeText key={finnCopy} style={styles.thinkingText}>
+                              {`says… ${finnCopy}`}
                             </MagicTypeText>
                           </View>
                         </View>
                       )
                     ) : null}
-                    {result?.matching_count ? (
+                    {!result?.stale ? (
+                      <Text style={styles.aiNotice}>{ASK_FINN_AI_NOTICE}</Text>
+                    ) : null}
+                    {evidenceCount ? (
                       <View style={styles.sectionHeading}>
                         <Text style={styles.sectionTitle}>Transactions behind this answer</Text>
-                        <Text style={styles.small}>{result.transactions?.length ?? 0} of {result.matching_count}</Text>
+                        <Text style={styles.small}>{result.transactions?.length ?? 0} of {evidenceCount}</Text>
                       </View>
                     ) : null}
                   </ContentFade>
@@ -498,6 +532,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   inlineAction: { alignSelf: "flex-start", minHeight: 40 },
+  interpretationCard: { gap: 8, marginBottom: 10 },
+  filterChips: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  filterChip: { minHeight: 32, flexDirection: "row", gap: 6, paddingHorizontal: 10, borderRadius: 16, backgroundColor: Finn.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: Finn.line },
+  filterChipText: { fontFamily: JournalType.medium, fontSize: 12, color: Finn.secondary },
   action: { fontFamily: JournalType.medium, fontSize: 14, color: Finn.ink },
   answer: {
     minHeight: 150,
@@ -512,6 +550,10 @@ const styles = StyleSheet.create({
     ...Finn.shadow,
   },
   answerRow: { alignItems: "center", marginBottom: 8 },
+  comparisonBlock: { alignItems: "center", gap: 6 },
+  comparisonRow: { flexDirection: "row", justifyContent: "center", gap: 22 },
+  comparisonValue: { alignItems: "center" },
+  comparisonAmount: { color: Finn.ink, fontFamily: JournalType.bold, fontSize: 25, lineHeight: 34, letterSpacing: -0.8, textAlign: "center", fontVariant: ["tabular-nums"] },
   answerTitle: { marginTop: 4, color: Finn.secondary, fontFamily: JournalType.medium, fontSize: 15, lineHeight: 22, letterSpacing: -0.5, textAlign: "center" },
   answerAmount: {
     color: Finn.ink,
@@ -532,6 +574,14 @@ const styles = StyleSheet.create({
   thinkingRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12 },
   thinkingFinn: { width: 48, height: 51, flexShrink: 0 },
   thinkingText: { flex: 1, color: Finn.secondary, fontFamily: JournalType.regular, fontSize: 15, lineHeight: 22 },
+  aiNotice: {
+    marginBottom: 18,
+    color: Finn.muted,
+    fontFamily: JournalType.regular,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: "center",
+  },
   footer: { paddingVertical: 8, gap: 10 },
   showMore: {
     flexDirection: "row",

@@ -193,14 +193,22 @@ export type Catalog = {
   contexts: { name: string }[];
 };
 export type SearchPlan = {
-  operation: "sum" | "list";
+  operation: "sum" | "list" | "count" | "average" | "rank" | "breakdown" | "compare";
   direction: Direction | null;
   start_date: string;
   end_date: string; // exclusive
   merchant_id: string | null;
   category_id: string | null;
+  merchant_ids?: string[];
+  exclude_merchant_ids?: string[];
+  category_ids?: string[];
+  exclude_category_ids?: string[];
   person: string | null;
   context: string | null;
+  people?: string[];
+  contexts?: string[];
+  people_match?: "any" | "all";
+  contexts_match?: "any" | "all";
   text: string | null;
   currency: string | null;
   metric?:
@@ -215,6 +223,10 @@ export type SearchPlan = {
   group_by?: Array<
     "entry" | "day" | "week" | "month" | "category" | "merchant" | "context" | "participant"
   >;
+  sort_direction?: "asc" | "desc";
+  result_limit?: number;
+  comparison_start_date?: string | null;
+  comparison_end_date?: string | null;
   participant_scope?: "any" | "self_only" | "with_others";
   split_view?: "none" | "self_vs_others" | "by_participant";
   include_sources?: boolean;

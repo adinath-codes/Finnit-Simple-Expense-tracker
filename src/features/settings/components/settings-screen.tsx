@@ -2,11 +2,22 @@ import { ZoomLink } from "@/components/navigation/zoom-link";
 import type { Href } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useState, type ReactNode } from "react";
-import { Alert, Linking, Platform, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppSheet, SectionLabel } from "@/components/sheets/app-sheet";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
 import {
   useJournalActions,
   useJournalData,
@@ -30,13 +41,20 @@ import {
   captureAnalytics,
 } from "@/lib/analytics/analytics";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
-import { LEGAL_WEBSITE_URLS } from "@/features/legal/legal-links";
+import {
+  FINN_WEBSITE_URLS,
+  type FinnWebsiteUrl,
+} from "@/constants/website-links";
 import {
   cancelJournalReminders,
   requestJournalReminderPermission,
   scheduleJournalReminders,
 } from "@/features/notifications/services/notification-service";
 import { localDayKey } from "@/utils/dates";
+import {
+  openSupportEmail,
+  SUPPORT_EMAIL,
+} from "@/features/support/services/quota-support";
 
 type Picker = "currency" | null;
 
@@ -55,7 +73,9 @@ export default function SettingsScreen() {
   const [picker, setPicker] = useState<Picker>(null);
   const [accountBusy, setAccountBusy] = useState<"sign-out" | "delete" | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [supportError, setSupportError] = useState<string | null>(null);
   const [reminderBusy, setReminderBusy] = useState(false);
+  const [showAnalyticsOptOut, setShowAnalyticsOptOut] = useState(false);
 
   const togglePicker = (next: Exclude<Picker, null>) => {
     setPicker((current) => (current === next ? null : next));
@@ -64,14 +84,20 @@ export default function SettingsScreen() {
     updateSettings(patch);
 
   const toggleAnalytics = async () => {
-    const enabled = !settings.analyticsEnabled;
-    if (enabled) await analyticsClient.optIn();
-    await applySettings({ analyticsEnabled: enabled });
-    if (enabled) {
-      captureAnalytics(ANALYTICS_EVENTS.analyticsPreferenceChanged, { enabled });
-    } else {
-      await analyticsClient.optOut();
+    if (settings.analyticsEnabled) {
+      setShowAnalyticsOptOut(true);
+      return;
     }
+
+    await analyticsClient.optIn();
+    await applySettings({ analyticsEnabled: true });
+    captureAnalytics(ANALYTICS_EVENTS.analyticsPreferenceChanged, { enabled: true });
+  };
+
+  const turnOffAnalytics = async () => {
+    setShowAnalyticsOptOut(false);
+    await applySettings({ analyticsEnabled: false });
+    await analyticsClient.optOut();
   };
 
   const toggleReminders = async () => {
@@ -123,14 +149,24 @@ export default function SettingsScreen() {
     }
   };
 
-  const openLegalWebsite = async (
-    url: (typeof LEGAL_WEBSITE_URLS)[keyof typeof LEGAL_WEBSITE_URLS],
+  const openWebsite = async (
+    url: FinnWebsiteUrl,
+    reportError: (message: string | null) => void = setAccountError,
   ) => {
-    setAccountError(null);
+    reportError(null);
     try {
       await WebBrowser.openBrowserAsync(url);
     } catch {
-      setAccountError("Couldn’t open that legal page. Try again later.");
+      reportError("Couldn’t open that webpage. Try again later.");
+    }
+  };
+
+  const contactSupport = async () => {
+    setSupportError(null);
+    try {
+      await openSupportEmail();
+    } catch {
+      setSupportError(`Couldn’t open your email app. Contact us at ${SUPPORT_EMAIL}.`);
     }
   };
 
@@ -273,26 +309,66 @@ export default function SettingsScreen() {
           icon="globe"
           color="#5865D8"
           title="Privacy Policy"
-          subtitle="finnit.app"
-          onPress={() => void openLegalWebsite(LEGAL_WEBSITE_URLS.privacyPolicy)}
+          subtitle="finn-it.app"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.privacyPolicy)}
         />
         <Divider />
         <SettingsRow
           icon="note"
           color="#8A6C55"
           title="Terms of Service"
-          subtitle="finnit.app"
-          onPress={() => void openLegalWebsite(LEGAL_WEBSITE_URLS.termsOfService)}
+          subtitle="finn-it.app"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.termsOfService)}
+        />
+        <Divider />
+        <SettingsRow
+          icon="analytics"
+          color={Finn.primary}
+          title="AI Policy"
+          subtitle="How Finn uses AI"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.aiPolicy)}
+        />
+        <Divider />
+        <SettingsRow
+          icon="globe"
+          color="#5865D8"
+          title="Privacy Choices"
+          subtitle="Manage your privacy options"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.privacyChoices)}
         />
         <Divider />
         <SettingsRow
           icon="note"
           color="#7A7572"
           title="Acknowledgement"
-          subtitle="finnit.app"
-          onPress={() => void openLegalWebsite(LEGAL_WEBSITE_URLS.acknowledgement)}
+          subtitle="finn-it.app"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.acknowledgement)}
         />
       </View>
+
+      <SectionLabel style={styles.sectionLabel}>Help & support</SectionLabel>
+      <View style={styles.group}>
+        <SettingsRow
+          icon="globe"
+          color={Finn.primary}
+          title="Support Center"
+          subtitle="Help and frequently asked questions"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.support, setSupportError)}
+        />
+        <Divider />
+        <SettingsRow
+          icon="note"
+          color={Finn.primary}
+          title="Email support"
+          subtitle={SUPPORT_EMAIL}
+          onPress={() => void contactSupport()}
+        />
+      </View>
+      {supportError ? (
+        <Text accessibilityRole="alert" style={styles.accountError}>
+          {supportError}
+        </Text>
+      ) : null}
 
       <SectionLabel style={styles.sectionLabel}>Account</SectionLabel>
       <View style={styles.group}>
@@ -302,6 +378,14 @@ export default function SettingsScreen() {
           title={accountBusy === "sign-out" ? "Signing out…" : "Sign out"}
           disclosure="none"
           onPress={signOut}
+        />
+        <Divider />
+        <SettingsRow
+          icon="note"
+          color="#7A7572"
+          title="Account deletion information"
+          subtitle="Read how account deletion works"
+          onPress={() => void openWebsite(FINN_WEBSITE_URLS.deleteAccount)}
         />
         <Divider />
         <SettingsRow
@@ -316,7 +400,77 @@ export default function SettingsScreen() {
       </View>
       {accountError ? <Text accessibilityRole="alert" style={styles.accountError}>{accountError}</Text> : null}
 
+      <AnalyticsOptOutModal
+        visible={showAnalyticsOptOut}
+        onDismiss={() => setShowAnalyticsOptOut(false)}
+        onConfirm={() => void turnOffAnalytics()}
+      />
     </AppSheet>
+  );
+}
+
+function AnalyticsOptOutModal({
+  visible,
+  onDismiss,
+  onConfirm,
+}: {
+  visible: boolean;
+  onDismiss: () => void;
+  onConfirm: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const reducedMotion = useMotionPreference();
+
+  return (
+    <Modal
+      animationType={reducedMotion ? "none" : "fade"}
+      navigationBarTranslucent
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+      transparent
+      visible={visible}
+    >
+      <View style={styles.analyticsModalBackdrop}>
+        <Pressable
+          accessibilityLabel="Keep sharing usage analytics"
+          accessibilityRole="button"
+          onPress={onDismiss}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          accessibilityViewIsModal
+          style={[
+            styles.analyticsModalCard,
+            { marginBottom: Math.max(insets.bottom, 20) },
+          ]}
+        >
+          <View style={styles.analyticsModalIcon}>
+            <Icon name="analytics" size={22} color="#5865D8" animation={false} />
+          </View>
+          <Text accessibilityRole="header" style={styles.analyticsModalTitle}>
+            Turn off usage analytics?
+          </Text>
+          <Text style={styles.analyticsModalBody}>
+            Finn will keep working normally. We’ll lose anonymous signals that
+            help us spot performance problems and understand which features need
+            improvement, so fixes and future updates may take longer to prioritize.
+          </Text>
+          <Text style={styles.analyticsModalPrivacy}>
+            Your notes, amounts, receipts, and searches are never included.
+          </Text>
+          <Button
+            label="Keep sharing usage analytics"
+            onPress={onDismiss}
+            style={styles.analyticsModalPrimaryButton}
+          >
+            <Text style={styles.analyticsModalPrimaryText}>Keep sharing</Text>
+          </Button>
+          <Button label="Turn off usage analytics" onPress={onConfirm}>
+            <Text style={styles.analyticsModalSecondaryText}>Turn off analytics</Text>
+          </Button>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -466,5 +620,67 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 10,
     paddingHorizontal: 4,
+  },
+  analyticsModalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: 16,
+    backgroundColor: "rgba(23, 23, 23, 0.24)",
+  },
+  analyticsModalCard: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 440,
+    paddingHorizontal: 24,
+    paddingTop: 26,
+    paddingBottom: 12,
+    borderRadius: 28,
+    backgroundColor: Finn.surface,
+    ...Finn.shadow,
+  },
+  analyticsModalIcon: {
+    width: 46,
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+    borderRadius: 23,
+    backgroundColor: "#EEF0FF",
+  },
+  analyticsModalTitle: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 23,
+    lineHeight: 28,
+  },
+  analyticsModalBody: {
+    marginTop: 9,
+    color: Finn.secondary,
+    fontFamily: JournalType.regular,
+    fontSize: 16,
+    lineHeight: 23,
+  },
+  analyticsModalPrivacy: {
+    marginTop: 9,
+    marginBottom: 20,
+    color: Finn.primary,
+    fontFamily: JournalType.medium,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  analyticsModalPrimaryButton: {
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    backgroundColor: Finn.primary,
+  },
+  analyticsModalPrimaryText: {
+    color: "#FFFFFF",
+    fontFamily: JournalType.bold,
+    fontSize: 15,
+  },
+  analyticsModalSecondaryText: {
+    color: Finn.secondary,
+    fontFamily: JournalType.medium,
+    fontSize: 14,
   },
 });

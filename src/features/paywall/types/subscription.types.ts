@@ -43,6 +43,5 @@ export type SubscriptionContextValue = SubscriptionSnapshot & {
   purchase: (plan: SubscriptionPlan) => Promise<boolean>;
   restore: () => Promise<boolean>;
   redeemOfferCode: () => Promise<boolean>;
-  redeemTestingCode: (code: string) => Promise<void>;
   manage: () => Promise<void>;
 };

@@ -8,7 +8,7 @@
     "scheme": "finn",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/logo/app-icon.png",
+      "icon": "./assets/logo/app-icon-ios-opaque-v5.png",
       "bundleIdentifier": "com.finnit.app",
       "usesAppleSignIn": true
     },

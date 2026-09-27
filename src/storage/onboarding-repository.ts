@@ -25,15 +25,15 @@ function validAnswers(value: unknown): OnboardingAnswers {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const source = value as Record<string, unknown>;
   const answers: OnboardingAnswers = {};
-  if (typeof source.desiredOutcome === "string") {
-    answers.desiredOutcome = source.desiredOutcome;
+  if (typeof source.name === "string") answers.name = source.name;
+  if (typeof source.worryTiming === "string") {
+    answers.worryTiming = source.worryTiming;
   }
-  if (typeof source.blindSpot === "string") answers.blindSpot = source.blindSpot;
+  if (typeof source.painPoint === "string") {
+    answers.painPoint = source.painPoint;
+  }
   if (typeof source.futureQuestion === "string") {
     answers.futureQuestion = source.futureQuestion;
-  }
-  if (typeof source.memoryContext === "string") {
-    answers.memoryContext = source.memoryContext;
   }
   if (typeof source.captureStyle === "string") {
     answers.captureStyle = source.captureStyle;

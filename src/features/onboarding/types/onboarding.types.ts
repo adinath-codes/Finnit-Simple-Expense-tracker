@@ -1,19 +1,17 @@
 import type { IconName } from "@/components/ui/icon";
 import type { CharacterAnimationType } from "@/components/character/character-animations";
 
-export const FINN_ONBOARDING_FLOW_VERSION = "2026-09-20.4";
+export const FINN_ONBOARDING_FLOW_VERSION = "2026-09-26.5";
 
 export type OnboardingQuestionId =
-  | "desiredOutcome"
-  | "blindSpot"
-  | "futureQuestion"
-  | "memoryContext"
+  | "name"
+  | "worryTiming"
+  | "painPoint"
   | "captureStyle"
-  | "currency";
+  | "currency"
+  | "futureQuestion";
 
-export type OnboardingAnswers = Partial<
-  Record<OnboardingQuestionId, string>
->;
+export type OnboardingAnswers = Partial<Record<OnboardingQuestionId, string>>;
 
 export type OnboardingOption = {
   id: string;
@@ -22,38 +20,25 @@ export type OnboardingOption = {
   icon: IconName;
 };
 
+export type StorySceneId =
+  | "hello"
+  | "worry"
+  | "busy-day"
+  | "natural-note"
+  | "receipt-scan"
+  | "month-end"
+  | "relief";
+
 type SharedStep = {
   id: string;
-  eyebrow?: string;
-  title: string;
-  subtitle: string;
+  chapter: number;
 };
-
-export type WelcomeStep = SharedStep & {
-  kind: "welcome";
-  continueLabel: string;
-};
-
-export type InitialStoryVariant =
-  | "life"
-  | "overwhelm"
-  | "forgotten"
-  | "natural-note"
-  | "organized"
-  | "journal"
-  | "ask"
-  | "handoff";
 
 export type InitialStoryStep = SharedStep & {
   kind: "story";
-  variant: InitialStoryVariant;
-  continueLabel: string;
-};
-
-export type ConversationStep = {
-  id: string;
-  kind: "conversation";
-  lines: readonly [string, string, string];
+  scene: StorySceneId;
+  copy: string;
+  highlightedWords: readonly string[];
   continueLabel: string;
 };
 
@@ -61,21 +46,20 @@ export type QuestionStep = SharedStep & {
   kind: "question";
   questionId: OnboardingQuestionId;
   animType: CharacterAnimationType;
+  responseType: "name" | "choice" | "currency";
+  title: string;
+  subtitle: string;
   options: OnboardingOption[];
 };
 
-export type EducationStep = SharedStep & {
-  kind: "education";
-  variant: "capture" | "remember";
+export type InviteStep = SharedStep & {
+  kind: "invite";
+  title: string;
+  subtitle: string;
   continueLabel: string;
 };
 
-export type OnboardingStep =
-  | WelcomeStep
-  | InitialStoryStep
-  | ConversationStep
-  | QuestionStep
-  | EducationStep;
+export type OnboardingStep = InitialStoryStep | QuestionStep | InviteStep;
 
 export type OnboardingSnapshot = {
   flowVersion: string;

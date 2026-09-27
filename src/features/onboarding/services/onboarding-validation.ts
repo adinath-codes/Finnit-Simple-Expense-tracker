@@ -2,52 +2,64 @@ import { isSupportedCurrency } from "../../../../supabase/functions/_shared/curr
 import type { OnboardingAnswers } from "@/features/onboarding/types/onboarding.types";
 
 const allowedAnswers = {
-  desiredOutcome: new Set([
-    "clear-weeks",
-    "fast-notes",
-    "fewer-leaks",
-    "better-recall",
+  worryTiming: new Set([
+    "right-after",
+    "end-of-day",
+    "balance-surprise",
+    "month-end",
   ]),
-  blindSpot: new Set(["busy-days", "cash-runs", "group-plans", "work-costs"]),
-  futureQuestion: new Set([
-    "trip-total",
-    "friend-splits",
-    "quiet-leaks",
-    "work-spend",
+  painPoint: new Set([
+    "forget-details",
+    "totals-no-story",
+    "splits-messy",
+    "tracking-homework",
   ]),
-  memoryContext: new Set(["people", "places", "reasons", "moments"]),
   captureStyle: new Set([
     "one-line",
     "receipt-snap",
+    "mix-both",
     "later-catch-up",
-    "repeat-tap",
+  ]),
+  futureQuestion: new Set([
+    "where-money-went",
+    "what-changed",
+    "friend-splits",
+    "quiet-leaks",
   ]),
 };
+
+export function sanitizeOnboardingName(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const normalized = value
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized) return undefined;
+  return Array.from(normalized).slice(0, 40).join("");
+}
 
 export function sanitizeOnboardingAnswers(
   answers: OnboardingAnswers,
 ): OnboardingAnswers {
   return {
-    desiredOutcome:
-      answers.desiredOutcome && allowedAnswers.desiredOutcome.has(answers.desiredOutcome)
-        ? answers.desiredOutcome
+    name: sanitizeOnboardingName(answers.name),
+    worryTiming:
+      answers.worryTiming && allowedAnswers.worryTiming.has(answers.worryTiming)
+        ? answers.worryTiming
         : undefined,
-    blindSpot:
-      answers.blindSpot && allowedAnswers.blindSpot.has(answers.blindSpot)
-        ? answers.blindSpot
-        : undefined,
-    futureQuestion:
-      answers.futureQuestion && allowedAnswers.futureQuestion.has(answers.futureQuestion)
-        ? answers.futureQuestion
-        : undefined,
-    memoryContext:
-      answers.memoryContext && allowedAnswers.memoryContext.has(answers.memoryContext)
-        ? answers.memoryContext
+    painPoint:
+      answers.painPoint && allowedAnswers.painPoint.has(answers.painPoint)
+        ? answers.painPoint
         : undefined,
     captureStyle:
       answers.captureStyle && allowedAnswers.captureStyle.has(answers.captureStyle)
         ? answers.captureStyle
         : undefined,
     currency: isSupportedCurrency(answers.currency) ? answers.currency : undefined,
+    futureQuestion:
+      answers.futureQuestion &&
+      allowedAnswers.futureQuestion.has(answers.futureQuestion)
+        ? answers.futureQuestion
+        : undefined,
   };
 }

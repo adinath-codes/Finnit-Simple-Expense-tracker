@@ -198,12 +198,12 @@ export function textJournalEntry(
     allocationRows,
     thought: entry.sync === "synced"
       ? entry.extraction.interpretation_summary ||
-        "Finn parsed this note and saved its financial details."
+        "Here’s what I picked up from this spending entry."
       : entry.sync === "blocked"
-        ? "This note is saved on this device and needs your attention before it can sync."
+        ? "I’ve saved this spending note here, but I need your help before I can sync it."
         : entry.amountPreview
-          ? "Amount found. Finn is finishing the breakdown."
-        : "This note is saved on this device and will sync automatically.",
+          ? "I found the amount and I’m finishing the spending breakdown."
+        : "I’ve saved this spending note here and I’ll sync it automatically.",
     sources: [
       { title: "Your original note", detail: entry.input.raw_text, icon: "note" },
       ...(entry.input.approximate_place
@@ -266,12 +266,12 @@ export function receiptJournalEntry(
     ),
     accountingTotalMinor: transactions.length ? accountingTotal : undefined,
     thought: {
-      preparing: "Preparing a scan-quality copy of your receipt.",
-      queued: "Saved offline. Finn will scan this receipt when a connection is available.",
-      scanning: `Reading the receipt… ${receipt.lines.length} line${receipt.lines.length === 1 ? "" : "s"} found.`,
-      needs_review: "Finn kept every visible line, but one or more details need review.",
-      complete: "The printed lines reconcile with the receipt total.",
-      failed: "The photo is still saved. Retry the scan or enter the details manually.",
+      preparing: "I’m getting this receipt ready so I can break down the spending.",
+      queued: "I saved this receipt here and I’ll break it down when you’re back online.",
+      scanning: `I’m reading the receipt now—${receipt.lines.length} line${receipt.lines.length === 1 ? "" : "s"} found so far.`,
+      needs_review: "I kept every visible item, but a few spending details need a quick look.",
+      complete: "Everything on this receipt adds up to the recorded total.",
+      failed: "I still have the photo. Retry the scan or enter the spending details manually.",
     }[receipt.status],
     sources: [{
       title: "Receipt text",
@@ -403,7 +403,7 @@ export function correctedTextExtraction(
     transactions,
     amount_components: retainedComponents,
     interpretation_summary:
-      "You corrected this entry. Finn preserved only arithmetic components that still match the edited total.",
+      "Got it—I updated this spending and kept only the parts that still add up to your new total.",
     unresolved: [],
   };
 }

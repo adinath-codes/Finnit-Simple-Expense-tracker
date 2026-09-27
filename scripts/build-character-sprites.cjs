@@ -1,5 +1,7 @@
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { PNG } = require("pngjs");
 
 const ROOT = path.resolve(process.cwd());
@@ -314,7 +316,8 @@ function frameMetrics(frame) {
 
 for (const [name, seed] of sprites) {
   const inputPath = path.join(ASSET_DIR, `${name}-base.png`);
-  const outputPath = path.join(ASSET_DIR, `${name}-sprite.png`);
+  const outputPath = path.join(ASSET_DIR, `${name}-sprite.webp`);
+  const temporaryPngPath = path.join(os.tmpdir(), `finn-${name}-sprite-${process.pid}.png`);
   const source = PNG.sync.read(fs.readFileSync(inputPath));
   const base = resize(source, FRAME_SIZE, FRAME_SIZE);
   const atlas = new PNG({ width: FRAME_SIZE * 2, height: FRAME_SIZE * 2, colorType: 6 });
@@ -327,7 +330,27 @@ for (const [name, seed] of sprites) {
     metrics.push(frameMetrics(finished));
   }
 
-  fs.writeFileSync(outputPath, PNG.sync.write(atlas, { colorType: 6 }));
+  fs.writeFileSync(temporaryPngPath, PNG.sync.write(atlas, { colorType: 6 }));
+  const conversion = spawnSync(
+    "magick",
+    [
+      temporaryPngPath,
+      "-resize",
+      "1080x1080!",
+      "-quality",
+      "95",
+      "-define",
+      "webp:alpha-quality=100",
+      outputPath,
+    ],
+    { encoding: "utf8" },
+  );
+  fs.unlinkSync(temporaryPngPath);
+  if (conversion.status !== 0) {
+    throw new Error(
+      `ImageMagick failed to encode ${name}: ${conversion.stderr || conversion.stdout}`,
+    );
+  }
   const [originX, originY] = metrics[0].centroid;
   const drift = Math.max(
     ...metrics.map(({ centroid: [x, y] }) => Math.hypot(x - originX, y - originY)),

@@ -4,13 +4,11 @@ export async function cacheHash(value: unknown) {
     "SHA-256",
     new TextEncoder().encode(JSON.stringify(value)),
   );
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0")
-  ).join("");
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export const EXPLANATION_CACHE_VERSION = 1;
-export const ASK_SQL_PLAN_CACHE_VERSION = 1;
+export const EXPLANATION_CACHE_VERSION = 3;
+export const ASK_SQL_PLAN_CACHE_VERSION = 2;
 
 export function safeCacheableExplanation(value: unknown) {
   return typeof value === "string" &&

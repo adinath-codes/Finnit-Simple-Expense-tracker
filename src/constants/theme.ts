@@ -135,6 +135,7 @@ export const JournalType = {
      medium: Platform.OS === "ios" ? "System" : "SFProDisplay-Medium",
      bold: Platform.OS === "ios" ? "System" : "SFProDisplay-Bold",
      black: Platform.OS === "ios" ? "System" : "SFProDisplay-Black",
+     expressive: "Caveat_600SemiBold",
 } as const;
 
 export const JournalPaper = {

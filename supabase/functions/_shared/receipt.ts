@@ -215,8 +215,8 @@ function receiptExtraction(
       unresolved: lines.some((line) => line.needs_review) || !reconciled ? ["receipt_review"] : [],
       schema_version: 2,
       interpretation_summary: reconciled
-        ? "The receipt lines reconcile with the recorded total."
-        : "The visible receipt lines were kept, but the printed total needs review.",
+        ? "Everything on this receipt adds up to the recorded total."
+        : "I kept every visible item, but the printed total needs a quick look.",
       participants: [],
       transaction_contexts: [],
       allocations: [],

@@ -22,25 +22,27 @@ import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { AppleMark, GoogleMark } from "@/features/auth/components/provider-marks";
 import {
-  sendPasswordReset,
-  signInWithEmail,
+  requestEmailOtp,
   signInWithNativeApple,
   signInWithSocialProvider,
+  verifyEmailOtp,
 } from "@/features/auth/services/auth-service";
 import {
   ANALYTICS_EVENTS,
   captureAnalytics,
 } from "@/lib/analytics/analytics";
 
-const LEFT_PEEK = require("@/assets/images/auth/finn-peek-left.png");
-const RIGHT_PEEK = require("@/assets/images/auth/finn-peek-right.png");
+const LEFT_PEEK = require("@/assets/images/auth/finn-peek-left.webp");
+const RIGHT_PEEK = require("@/assets/images/auth/finn-peek-right.webp");
 
 function messageFor(error: unknown) {
   const message = error instanceof Error ? error.message : "Please try again.";
-  if (/invalid login credentials/i.test(message))
-    return "That email or password doesn’t match. Try again.";
-  if (/email not confirmed/i.test(message))
-    return "Confirm your email first, then come back to sign in.";
+  if (/token.*expired|expired.*token|invalid.*(otp|token)|otp.*invalid/i.test(message))
+    return "That code is incorrect or expired. Check it and try again.";
+  if (/rate limit|security purposes|seconds/i.test(message))
+    return "Please wait a moment before requesting another code.";
+  if (/error sending|unable to send|email.*not.*sent/i.test(message))
+    return "Finn couldn’t send the code. Check the email setup and try again.";
   if (/provider is not enabled/i.test(message))
     return "This sign-in provider still needs to be enabled in Finn’s Supabase project.";
   return message;
@@ -49,7 +51,9 @@ function messageFor(error: unknown) {
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [otp, setOtp] = useState("");
+  const [resendSeconds, setResendSeconds] = useState(0);
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{
@@ -72,6 +76,14 @@ export default function AuthScreen() {
     }, 4000);
     return () => clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+    const timeout = setTimeout(() => {
+      setResendSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [resendSeconds]);
 
   const warnForConsent = () => {
     captureAnalytics(ANALYTICS_EVENTS.signInBlocked, {
@@ -115,33 +127,75 @@ export default function AuthScreen() {
     }
   };
 
-  const submitEmail = () => {
+  const recordEmailFailure = (caught: unknown) => {
+    captureAnalytics(ANALYTICS_EVENTS.signInFailed, {
+      method: "email",
+      failure_type: /valid|characters|code/i.test(messageFor(caught))
+        ? "validation"
+        : "provider",
+    });
+    showToast(messageFor(caught), "error");
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+  };
+
+  const sendEmailCode = async (resend = false) => {
     if (!agreed) {
       warnForConsent();
       return;
     }
-    return run("email", async () => {
+    if (busy || (resend && resendSeconds > 0)) return;
+
+    setBusy(resend ? "email-resend" : "email-send");
+    setToast(null);
+    if (!resend) {
+      captureAnalytics(ANALYTICS_EVENTS.signInStarted, { method: "email" });
+    }
+    try {
       if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
         throw new Error("Enter a valid email address.");
       }
-      if (password.length < 8) {
-        throw new Error("Use at least 8 characters for your password.");
-      }
-      await signInWithEmail(email, password);
-    });
+      const normalizedEmail = await requestEmailOtp(email);
+      setPendingEmail(normalizedEmail);
+      setOtp("");
+      setResendSeconds(60);
+      showToast(
+        resend ? "A fresh code is on its way." : "We sent your secure sign-in code.",
+        "info",
+        "Check your inbox.",
+      );
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      recordEmailFailure(caught);
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const forgotPassword = () =>
-    run("reset", async () => {
-      if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
-        throw new Error("Enter your email address first.");
+  const verifyEmailCode = async () => {
+    if (!pendingEmail || busy) return;
+    setBusy("email-verify");
+    setToast(null);
+    try {
+      if (!/^\d{6,8}$/.test(otp)) {
+        throw new Error("Enter the verification code from your email.");
       }
-      await sendPasswordReset(email);
-      captureAnalytics(ANALYTICS_EVENTS.passwordResetRequested, {
-        method: "email",
-      });
-      showToast("Password reset instructions are on their way.", "info", "Check your inbox.");
-    });
+      await verifyEmailOtp(pendingEmail, otp);
+      captureAnalytics(ANALYTICS_EVENTS.signInCompleted, { method: "email" });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      recordEmailFailure(caught);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const changeEmail = () => {
+    if (busy) return;
+    setPendingEmail(null);
+    setOtp("");
+    setResendSeconds(0);
+    setToast(null);
+  };
 
   const consentGated = !agreed;
 
@@ -204,58 +258,100 @@ export default function AuthScreen() {
                 <View style={styles.divider} />
               </View>
 
-              <TextInput
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect={false}
-                keyboardType="email-address"
-                textContentType="emailAddress"
-                placeholder="Email address"
-                placeholderTextColor={Finn.muted}
-                value={email}
-                onChangeText={setEmail}
-                editable={!busy}
-                style={styles.input}
-                accessibilityLabel="Email address"
-                returnKeyType="next"
-              />
-              <TextInput
-                autoCapitalize="none"
-                autoComplete="current-password"
-                secureTextEntry
-                textContentType="password"
-                placeholder="Password"
-                placeholderTextColor={Finn.muted}
-                value={password}
-                onChangeText={setPassword}
-                editable={!busy}
-                style={styles.input}
-                accessibilityLabel="Password"
-                returnKeyType="done"
-                onSubmitEditing={submitEmail}
-              />
-
-              <Button
-                label="Forgot password"
-                onPress={forgotPassword}
-                disabled={!!busy}
-                style={styles.forgotButton}
-              >
-                <Text style={styles.forgotText}>Forgot password?</Text>
-              </Button>
-
-              <View style={consentGated && styles.disabledButton}>
-                <Button
-                  label="Sign in with email"
-                  onPress={submitEmail}
-                  disabled={!!busy}
-                  style={styles.primaryButton}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {busy === "email" ? "Signing in…" : "Sign in"}
+              {pendingEmail ? (
+                <>
+                  <View style={styles.codeIntro}>
+                    <Text style={styles.codeTitle}>Check your email</Text>
+                    <Text style={styles.codeMessage}>
+                      Enter the verification code sent to {pendingEmail}.
+                    </Text>
+                  </View>
+                  <TextInput
+                    autoFocus
+                    autoComplete="one-time-code"
+                    keyboardType="number-pad"
+                    textContentType="oneTimeCode"
+                    placeholder="Verification code"
+                    placeholderTextColor={Finn.muted}
+                    value={otp}
+                    onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 8))}
+                    editable={!busy}
+                    maxLength={8}
+                    style={[styles.input, styles.codeInput]}
+                    accessibilityLabel="Email verification code"
+                    returnKeyType="done"
+                    onSubmitEditing={verifyEmailCode}
+                  />
+                  <Button
+                    label="Verify email and continue"
+                    onPress={verifyEmailCode}
+                    disabled={!!busy}
+                    style={styles.primaryButton}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {busy === "email-verify" ? "Verifying…" : "Verify and continue"}
+                    </Text>
+                  </Button>
+                  <View style={styles.emailActions}>
+                    <Button
+                      label={resendSeconds > 0 ? `Resend code in ${resendSeconds} seconds` : "Resend code"}
+                      onPress={() => void sendEmailCode(true)}
+                      disabled={!!busy || resendSeconds > 0}
+                      style={styles.textButton}
+                    >
+                      <Text style={styles.emailActionText}>
+                        {busy === "email-resend"
+                          ? "Sending…"
+                          : resendSeconds > 0
+                            ? `Resend in ${resendSeconds}s`
+                            : "Resend code"}
+                      </Text>
+                    </Button>
+                    <Button
+                      label="Use a different email"
+                      onPress={changeEmail}
+                      disabled={!!busy}
+                      style={styles.textButton}
+                    >
+                      <Text style={styles.emailActionText}>Change email</Text>
+                    </Button>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    textContentType="emailAddress"
+                    placeholder="Email address"
+                    placeholderTextColor={Finn.muted}
+                    value={email}
+                    onChangeText={setEmail}
+                    editable={!busy}
+                    style={styles.input}
+                    accessibilityLabel="Email address"
+                    returnKeyType="done"
+                    onSubmitEditing={() => void sendEmailCode()}
+                  />
+                  <Text style={styles.emailHint}>
+                    We’ll email a one-time code. New accounts become active only after verification.
                   </Text>
-                </Button>
-              </View>
+                  <View style={consentGated && styles.disabledButton}>
+                    <Button
+                      label="Continue with email"
+                      onPress={() => void sendEmailCode()}
+                      disabled={!!busy}
+                      style={styles.primaryButton}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {busy === "email-send" ? "Sending code…" : "Continue with email"}
+                      </Text>
+                    </Button>
+                  </View>
+                </>
+              )}
 
             </View>
 
@@ -674,8 +770,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Finn.ink,
   },
-  forgotButton: { minHeight: 26, alignSelf: "flex-end", paddingHorizontal: 3 },
-  forgotText: { fontFamily: JournalType.medium, fontSize: 12, color: "#148A52" },
+  emailHint: {
+    marginTop: -2,
+    paddingHorizontal: 4,
+    fontFamily: JournalType.regular,
+    fontSize: 12,
+    lineHeight: 17,
+    color: Finn.muted,
+  },
+  codeIntro: { paddingHorizontal: 4, gap: 3 },
+  codeTitle: {
+    fontFamily: JournalType.bold,
+    fontSize: 15,
+    color: Finn.ink,
+  },
+  codeMessage: {
+    fontFamily: JournalType.regular,
+    fontSize: 12,
+    lineHeight: 17,
+    color: Finn.secondary,
+  },
+  codeInput: {
+    textAlign: "center",
+    fontFamily: JournalType.bold,
+    fontSize: 21,
+    letterSpacing: 5,
+  },
+  emailActions: {
+    minHeight: 30,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  textButton: { minHeight: 30, paddingHorizontal: 3 },
+  emailActionText: {
+    fontFamily: JournalType.medium,
+    fontSize: 12,
+    color: "#148A52",
+  },
   primaryButton: {
     minHeight: 54,
     borderRadius: 17,

@@ -40,14 +40,14 @@ Traditional finance apps force users to think like accountants.
 
 They ask users to manually specify things such as:
 
-* amount
-* merchant
-* category
-* date
-* account
-* payment method
-* notes
-* transaction type
+- amount
+- merchant
+- category
+- date
+- account
+- payment method
+- notes
+- transaction type
 
 We want to remove almost all of this friction.
 
@@ -59,7 +59,7 @@ For example:
 
 or:
 
-`had lunch with Aswin for 340 and uber back home was 280`
+`had lunch with chris for 340 and uber back home was 280`
 
 or:
 
@@ -101,11 +101,11 @@ rather than:
 
 Our positioning should remain close to:
 
-* “Notes for your money.”
-* “Write what happened. We organize the rest.”
-* “Track money like taking notes.”
-* “Your financial journal.”
-* “Remember your financial life.”
+- “Notes for your money.”
+- “Write what happened. We organize the rest.”
+- “Track money like taking notes.”
+- “Your financial journal.”
+- “Remember your financial life.”
 
 Do not design the product around the phrase:
 
@@ -131,14 +131,14 @@ The primary user is someone who thinks:
 
 Typical users may include:
 
-* students
-* young professionals
-* freelancers
-* creators
-* founders
-* people with irregular spending
-* people who dislike spreadsheets
-* people who have previously downloaded expense trackers and stopped using them
+- students
+- young professionals
+- freelancers
+- creators
+- founders
+- people with irregular spending
+- people who dislike spreadsheets
+- people who have previously downloaded expense trackers and stopped using them
 
 They want financial awareness.
 
@@ -164,7 +164,7 @@ Example:
 
 ## Today
 
-Coffee with Aswin
+Coffee with chris
 ₹180
 
 Uber to college
@@ -186,9 +186,9 @@ At the bottom should be a natural composer similar to a messaging or notes inter
 
 Possible inputs:
 
-* text
-* camera / receipt
-* voice later
+- text
+- camera / receipt
+- voice later
 
 There should NOT be a giant traditional:
 
@@ -208,45 +208,45 @@ This is the heart of the product.
 
 When the user writes:
 
-`had dinner with Aswin and Ashok 820 then uber home 240`
+`had dinner with chris and Ashok 820 then uber home 240`
 
 the application should understand something conceptually like:
 
 Original note:
 
-`had dinner with Aswin and Ashok 820 then uber home 240`
+`had dinner with chris and Ashok 820 then uber home 240`
 
 Structured interpretation:
 
 Event/context:
 
-* Dinner with Aswin and Ashok
+- Dinner with chris and Ashok
 
 Transactions:
 
 1. ₹820
 
-   * category: Dining / Food
-   * context: dinner with friends
+   - category: Dining / Food
+   - context: dinner with friends
 
 2. ₹240
 
-   * category: Transport
-   * merchant/type: Uber
-   * context: returning home after dinner
+   - category: Transport
+   - merchant/type: Uber
+   - context: returning home after dinner
 
 People:
 
-* Aswin
-* Ashok
+- chris
+- Ashok
 
 Total:
 
-* ₹1,060
+- ₹1,060
 
 Date:
 
-* inferred from entry timestamp unless the user says otherwise
+- inferred from entry timestamp unless the user says otherwise
 
 The original note must remain stored.
 
@@ -274,21 +274,21 @@ Example:
 
 Event:
 
-* Phoenix Mall trip
+- Phoenix Mall trip
 
 Transactions:
 
-* Transport ₹380
-* Dining ₹620
-* Shopping / Shoes ₹3,200
+- Transport ₹380
+- Dining ₹620
+- Shopping / Shoes ₹3,200
 
 People/context:
 
-* friends
+- friends
 
 Total:
 
-* ₹4,200
+- ₹4,200
 
 This dual representation is important.
 
@@ -308,17 +308,17 @@ merchant + category + amount.
 
 We want the system to eventually understand relationships such as:
 
-* purchases belonging to a trip
-* purchases belonging to a project
-* expenses associated with particular people
-* recurring purchases
-* money borrowed/lent
-* subscriptions
-* purchases associated with college
-* expenses related to building a startup
-* gifts
-* events
-* reimbursements
+- purchases belonging to a trip
+- purchases belonging to a project
+- expenses associated with particular people
+- recurring purchases
+- money borrowed/lent
+- subscriptions
+- purchases associated with college
+- expenses related to building a startup
+- gifts
+- events
+- reimbursements
 
 Example:
 
@@ -347,21 +347,21 @@ AI should perform tasks such as:
 
 Understand:
 
-* amount
-* currency
-* date/time
-* merchant
-* category
-* type
-* people
-* event
-* project
-* tags/context
-* recurrence
-* income vs expense
-* transfer
-* money lent
-* money borrowed
+- amount
+- currency
+- date/time
+- merchant
+- category
+- type
+- people
+- event
+- project
+- tags/context
+- recurrence
+- income vs expense
+- transfer
+- money lent
+- money borrowed
 
 ## Normalization
 
@@ -379,10 +379,10 @@ But AI must not invent facts when uncertain.
 
 If confidence is low:
 
-* make the least destructive interpretation
-* preserve raw input
-* allow easy correction
-* optionally ask the user only when necessary
+- make the least destructive interpretation
+- preserve raw input
+- allow easy correction
+- optionally ask the user only when necessary
 
 Do not make every entry trigger clarification questions.
 
@@ -394,12 +394,12 @@ The app must remain fast.
 
 Avoid filling the UI with:
 
-* AI badges
-* sparkle icons everywhere
-* “Ask AI” inside every card
-* technical AI terminology
-* model names
-* prompt terminology
+- AI badges
+- sparkle icons everywhere
+- “Ask AI” inside every card
+- technical AI terminology
+- model names
+- prompt terminology
 
 AI should feel like:
 
@@ -430,7 +430,7 @@ Example questions:
 
 `How much have I spent building my app?`
 
-`How much money did I spend with Aswin this month?`
+`How much money did I spend with chris this month?`
 
 `What subscriptions am I currently paying for?`
 
@@ -448,23 +448,23 @@ It must never fabricate financial records.
 
 For numeric answers:
 
-* compute from structured data using deterministic SQL
-* cite or expose the relevant underlying entries
-* let users inspect what transactions contributed to the answer
-* show the interpreted date range and filters
-* allow the user to correct those filters without rewriting the query
+- compute from structured data using deterministic SQL
+- cite or expose the relevant underlying entries
+- let users inspect what transactions contributed to the answer
+- show the interpreted date range and filters
+- allow the user to correct those filters without rewriting the query
 
 Example:
 
-`How much did I spend on Uber with Aswin last month?`
+`How much did I spend on Uber with chris last month?`
 
 may be interpreted as:
 
-* date range: previous calendar month
-* merchant: Uber
-* person: Aswin
-* transaction type: expense
-* operation: sum
+- date range: previous calendar month
+- merchant: Uber
+- person: chris
+- transaction type: expense
+- operation: sum
 
 The model does not receive the user's complete journal, generate SQL directly,
 or calculate the total. The backend validates the structured filter plan, runs a
@@ -490,9 +490,9 @@ You spent ₹2,460 today.
 
 Most spending:
 
-* Food ₹920
-* Transport ₹540
-* Software ₹1,000
+- Food ₹920
+- Transport ₹540
+- Software ₹1,000
 
 ## This month
 
@@ -545,9 +545,9 @@ Total:
 
 Potential line items:
 
-* food
-* drinks
-* taxes
+- food
+- drinks
+- taxes
   etc.
 
 Then creates a journal entry.
@@ -582,11 +582,11 @@ etc.
 
 Individual entries should prioritize:
 
-* human-readable description
-* amount
-* subtle category/context
-* optional receipt/photo
-* minimal metadata
+- human-readable description
+- amount
+- subtle category/context
+- optional receipt/photo
+- minimal metadata
 
 Avoid turning every row into a dense banking transaction table.
 
@@ -600,15 +600,15 @@ Correction must therefore be effortless.
 
 The user should be able to:
 
-* change amount
-* change category
-* change date
-* change merchant
-* change associated event/project/person
-* split transactions
-* merge entries
-* edit original note
-* delete entry
+- change amount
+- change category
+- change date
+- change merchant
+- change associated event/project/person
+- split transactions
+- merge entries
+- edit original note
+- delete entry
 
 Corrections should feel lightweight.
 
@@ -630,9 +630,9 @@ Capture and browse financial memories.
 
 Simple views such as:
 
-* today
-* this week
-* this month
+- today
+- this week
+- this month
 
 Keep this lightweight.
 
@@ -670,17 +670,17 @@ Priority order:
 
 ### Later
 
-* advanced natural-language search
-* voice
-* recurring expense detection
-* subscriptions
-* people relationships
-* projects
-* trips
-* financial memories
-* smarter insights
-* imports/exports
-* widgets
+- advanced natural-language search
+- voice
+- recurring expense detection
+- subscriptions
+- people relationships
+- projects
+- trips
+- financial memories
+- smarter insights
+- imports/exports
+- widgets
 
 Do NOT overbuild before validating retention.
 
@@ -690,30 +690,30 @@ Do NOT overbuild before validating retention.
 
 Do NOT turn the MVP into:
 
-* YNAB
-* Monarch
-* Copilot Money
-* Money Manager
-* accounting software
-* investment portfolio tracker
-* banking super-app
+- YNAB
+- Monarch
+- Copilot Money
+- Money Manager
+- accounting software
+- investment portfolio tracker
+- banking super-app
 
 Do not add unless explicitly requested:
 
-* bank account linking
-* credit score
-* investment portfolios
-* stock tracking
-* loan calculators
-* SIP calculators
-* tax filing
-* complex budgets
-* financial news
-* net-worth dashboards
-* complex savings goals
-* dozens of charts
-* gamification
-* social feeds
+- bank account linking
+- credit score
+- investment portfolios
+- stock tracking
+- loan calculators
+- SIP calculators
+- tax filing
+- complex budgets
+- financial news
+- net-worth dashboards
+- complex savings goals
+- dozens of charts
+- gamification
+- social feeds
 
 If a proposed feature moves the product away from:
 
@@ -751,40 +751,40 @@ not:
 
 The interface should feel:
 
-* calm
-* premium
-* minimal
-* personal
-* conversational
-* fast
-* trustworthy
+- calm
+- premium
+- minimal
+- personal
+- conversational
+- fast
+- trustworthy
 
 Prefer:
 
-* typography
-* spacing
-* subtle hierarchy
-* beautiful transitions
-* restrained UI
+- typography
+- spacing
+- subtle hierarchy
+- beautiful transitions
+- restrained UI
 
 over:
 
-* colorful dashboards
-* dozens of cards
-* excessive gradients
-* fintech clichés
-* neon “AI” effects
-* cluttered charts
+- colorful dashboards
+- dozens of cards
+- excessive gradients
+- fintech clichés
+- neon “AI” effects
+- cluttered charts
 
 Apple Notes should be a major interaction inspiration, but do NOT directly clone Apple's proprietary visual assets or create a pixel-for-pixel copy.
 
 Take inspiration from its principles:
 
-* content first
-* low friction
-* understated controls
-* familiar writing experience
-* focus on the user's information
+- content first
+- low friction
+- understated controls
+- familiar writing experience
+- focus on the user's information
 
 The app should look like something users WANT to open every day.
 
@@ -798,7 +798,7 @@ Cursor is immediately ready.
 
 User types:
 
-`lunch with aswin 340 and uber to college 180`
+`lunch with chris 340 and uber to college 180`
 
 Presses send/enter.
 
@@ -812,8 +812,8 @@ Transport ₹180
 
 Context:
 
-* with Aswin
-* college
+- with chris
+- college
 
 Total:
 ₹520
@@ -874,15 +874,15 @@ Architect features with privacy in mind.
 
 Principles:
 
-* collect only what is required
-* do not expose financial data unnecessarily
-* clearly define what is sent to AI providers
-* minimize sending unrelated history to models
-* use scoped retrieval for Search
-* never train unrelated systems from private user financial history without explicit consent
-* allow users to delete their information
-* design toward exportability
-* preserve user ownership of data
+- collect only what is required
+- do not expose financial data unnecessarily
+- clearly define what is sent to AI providers
+- minimize sending unrelated history to models
+- use scoped retrieval for Search
+- never train unrelated systems from private user financial history without explicit consent
+- allow users to delete their information
+- design toward exportability
+- preserve user ownership of data
 
 Do not implement insecure shortcuts just because this is an MVP.
 
@@ -913,26 +913,26 @@ AND date within current month
 
 Use the LLM for:
 
-* understanding intent
-* interpreting context
-* choosing from an allowed category list when deterministic rules are uncertain
-* converting a later search query into a validated structured filter plan
-* generating short natural-language summaries when they add value
+- understanding intent
+- interpreting context
+- choosing from an allowed category list when deterministic rules are uncertain
+- converting a later search query into a validated structured filter plan
+- generating short natural-language summaries when they add value
 
 Use deterministic code/database operations for:
 
-* arithmetic
-* filtering
-* totals
-* dates
-* financial calculations
+- arithmetic
+- filtering
+- totals
+- dates
+- financial calculations
 
 This improves:
 
-* correctness
-* latency
-* cost
-* privacy
+- correctness
+- latency
+- cost
+- privacy
 
 For journal text capture, Gemini is the sole semantic interpreter. The client
 stores an unparsed pending note until the authenticated server response arrives.
@@ -964,55 +964,57 @@ Possible entities:
 
 ## JournalEntry
 
-* id
-* user_id
-* raw_text
-* created_at
-* effective_date
-* source_type
+- id
+- user_id
+- raw_text
+- created_at
+- effective_date
+- source_type
 
-  * text
-  * receipt
-  * voice
-* receipt_extraction
-* AI processing status
-* metadata/context
+  - text
+  - receipt
+  - voice
+
+- receipt_extraction
+- AI processing status
+- metadata/context
 
 ## Transaction
 
-* id
-* journal_entry_id
-* amount in integer minor units, nullable when not provided
-* currency
-* transaction_type
-* category
-* merchant
-* description
-* effective_date
-* confidence
-* amount_status
+- id
+- journal_entry_id
+- amount in integer minor units, nullable when not provided
+- currency
+- transaction_type
+- category
+- merchant
+- description
+- effective_date
+- confidence
+- amount_status
 
-  * confirmed
-  * missing
-  * estimated, only if a future explicitly labeled estimate feature exists
-* categorization_source
+  - confirmed
+  - missing
+  - estimated, only if a future explicitly labeled estimate feature exists
 
-  * user rule
-  * merchant rule
-  * keyword rule
-  * model fallback
-  * manual correction
+- categorization_source
+
+  - user rule
+  - merchant rule
+  - keyword rule
+  - model fallback
+  - manual correction
 
 ## ContextEntity
 
 Potentially later:
 
-* person
-* trip
-* project
-* event
-* place
-* subscription
+- person
+- trip
+- project
+- event
+- place
+- subscription
 
 Relations could connect transactions/journal entries to these entities.
 
@@ -1040,10 +1042,10 @@ The strongest signal is:
 
 Not:
 
-* number of AI features
-* number of dashboards
-* number of categories
-* number of charts
+- number of AI features
+- number of dashboards
+- number of categories
+- number of charts
 
 When implementing features, always ask:
 
@@ -1168,8 +1170,8 @@ Examples:
 
 → two expenses:
 
-* Lunch ₹340
-* Uber ₹180
+- Lunch ₹340
+- Uber ₹180
 
 `paid $12 for my domain`
 
@@ -1182,19 +1184,19 @@ Examples:
 
 The server-side money evidence validator should recognize representations such as:
 
-* 100
-* ₹100
-* $100
-* 100rs
-* Rs 100
-* 1k
-* 1.5k
-* 2,500
-* 2.5K
-* approximately 500
-* around 500
-* spent 500
-* paid 500
+- 100
+- ₹100
+- $100
+- 100rs
+- Rs 100
+- 1k
+- 1.5k
+- 2,500
+- 2.5K
+- approximately 500
+- around 500
+- spent 500
+- paid 500
 
 Gemini chooses which grounded evidence belongs to each transaction. Deterministic
 code converts that chosen evidence into integer minor units and checks arithmetic;
@@ -1208,10 +1210,10 @@ Example:
 
 should preserve:
 
-* merchant: Starbucks
-* category: Food & Drinks
-* quantity: 2
-* amount: missing
+- merchant: Starbucks
+- category: Food & Drinks
+- quantity: 2
+- amount: missing
 
 The entry may remain in the journal with a lightweight prompt to add the amount
 later. It must be excluded from confirmed totals until the user supplies an
@@ -1248,17 +1250,17 @@ Do NOT create dozens of highly specific categories.
 
 Start with a small understandable set such as:
 
-* Food & Drinks
-* Transport
-* Shopping
-* Entertainment
-* Bills
-* Subscriptions
-* Health
-* Education
-* Travel
-* Work / Projects
-* Other
+- Food & Drinks
+- Transport
+- Shopping
+- Entertainment
+- Bills
+- Subscriptions
+- Health
+- Education
+- Travel
+- Work / Projects
+- Other
 
 If the product design currently calls for a smaller initial category system, prefer simplicity over completeness.
 
@@ -1274,9 +1276,9 @@ Categorization should use the following order:
 
 Examples of normalized merchant rules:
 
-* `UBER *TRIP`, `Uber India`, and `uber` → Uber → Transport
-* `Swiggy`, `Zomato`, and `Starbucks` → Food & Drinks
-* `Netflix` and `Spotify` → Subscriptions
+- `UBER *TRIP`, `Uber India`, and `uber` → Uber → Transport
+- `Swiggy`, `Zomato`, and `Starbucks` → Food & Drinks
+- `Netflix` and `Spotify` → Subscriptions
 
 User-specific rules override global defaults. If a user repeatedly corrects
 `Figma` to `Work / Projects`, Finn should remember that preference for that user.
@@ -1313,15 +1315,15 @@ or:
 
 The application should preserve:
 
-* original amount
-* original currency
+- original amount
+- original currency
 
 and optionally store:
 
-* converted amount
-* base currency
-* exchange rate used
-* conversion timestamp
+- converted amount
+- base currency
+- exchange rate used
+- conversion timestamp
 
 Example:
 
@@ -1337,9 +1339,9 @@ Currency conversion should be treated as infrastructure rather than something th
 
 If exchange-rate data is unavailable:
 
-* preserve the original amount
-* do not block entry creation
-* convert later when connectivity returns
+- preserve the original amount
+- do not block entry creation
+- convert later when connectivity returns
 
 Currency preferences belong inside Settings.
 
@@ -1402,14 +1404,14 @@ The composer should allow the user to:
 
 The application should attempt to extract:
 
-* merchant
-* date
-* total
-* currency
-* taxes where useful
-* individual items where reasonably reliable
-* quantities where available
-* approximate categories
+- merchant
+- date
+- total
+- currency
+- taxes where useful
+- individual items where reasonably reliable
+- quantities where available
+- approximate categories
 
 Example:
 
@@ -1432,10 +1434,10 @@ and preserve the extracted receipt text and structured values.
 
 If extraction confidence is poor:
 
-* never fabricate details
-* preserve the locally queued image until retry or manual correction succeeds
-* extract only what is reasonably certain
-* make correction easy
+- never fabricate details
+- preserve the locally queued image until retry or manual correction succeeds
+- extract only what is reasonably certain
+- make correction easy
 
 Receipt scanning must feed into the same journal system as normal text input.
 
@@ -1492,10 +1494,10 @@ Do NOT make the user stare at a loading spinner before their note appears.
 
 The user's note must never disappear because:
 
-* AI API timed out
-* internet disappeared
-* rate limit occurred
-* backend temporarily failed
+- AI API timed out
+- internet disappeared
+- rate limit occurred
+- backend temporarily failed
 
 ---
 
@@ -1509,12 +1511,12 @@ Do NOT send requests unnecessarily.
 
 Use:
 
-* caching
-* deduplication
-* batching where appropriate
-* scoped context
-* request limits
-* graceful retries
+- caching
+- deduplication
+- batching where appropriate
+- scoped context
+- request limits
+- graceful retries
 
 Avoid repeatedly reprocessing the same journal entry.
 
@@ -1593,10 +1595,10 @@ The calendar exists primarily for answering:
 
 Users should be able to:
 
-* navigate to a date
-* see whether a date has journal activity
-* inspect entries for that date
-* jump between historical days
+- navigate to a date
+- see whether a date has journal activity
+- inspect entries for that date
+- jump between historical days
 
 Do NOT turn the calendar into a complicated financial-planning interface.
 
@@ -1631,48 +1633,32 @@ Do NOT ask users to configure their financial life before they can experience th
 
 The user should reach the core experience extremely quickly.
 
-Potential onboarding:
+The first-run experience is one continuous conversation with Finn. Seven short
+chapters alternate a centered paper-cut story page and a focused question page,
+so the questions feel like Finn responding to the user instead of
+a separate setup form. Finn introduces himself, recognizes the user's name,
+shares the worry of reconstructing a busy day, and then demonstrates the three
+core capabilities in context: organizing one fuzzy natural-language note,
+scanning and structuring a receipt, and answering a month-end question from the
+story behind the totals. The final question asks whether the user wants the same
+result.
 
-### Screen 1
+Only six useful answers are collected: preferred name, worry moment, main pain
+point, capture preference, default currency, and desired month-end answer. The
+flow does not ask users to configure a financial system before seeing the value.
+The existing-account sign-in escape is present only on the opening story page.
 
-# Your money.
-
-Like Notes.
-
-Write naturally.
-
-`coffee 180`
-
-and we'll organize the rest.
-
----
-
-### Screen 2
-
-# Say anything.
-
-`Lunch with friends 640 and Uber home 220`
-
-We understand:
-
-Food ₹640
-Transport ₹220
-
----
-
-### Screen 3
-
-# Remember everything.
-
-Search later:
-
-`How much did I spend eating out this month?`
-
----
-
-Then:
-
-**Start journaling**
+Each story page shows one muscular Finn paper-cut vignette and one short sentence.
+Characters materialize sequentially in place on the UI thread like ink being
+written, without pop-in translation; quoted statements use the handwritten
+Caveat face, and one or two meaningful words use Finn green. The persistent story
+action fills left-to-right during the writing and reading interval, then becomes
+tappable after a 1.4-second pause. Story props do not loop. Each of the six answer
+questions restores Finn's existing four-frame sprite in one fixed 180-point
+viewport above the copy; the container never wanders and only the internal paper
+contours change. The final invitation stays typographic. Reduced Motion keeps the
+same order, renders each story sentence complete, removes spatial entrances, and
+holds every question sprite on its first frame.
 
 The first actual interaction should ideally teach the product through use rather than additional explanation.
 
@@ -1690,13 +1676,13 @@ Give the user an opportunity to experience the core magic first.
 
 The exact monetization model can evolve, but possible premium capabilities include:
 
-* higher/unlimited AI processing
-* receipt scanning
-* advanced natural-language search
-* advanced summaries
-* longer financial-memory history
-* more presets
-* advanced contextual analysis
+- higher/unlimited AI processing
+- receipt scanning
+- advanced natural-language search
+- advanced summaries
+- longer financial-memory history
+- more presets
+- advanced contextual analysis
 
 Do NOT arbitrarily block basic access to someone's own financial journal.
 
@@ -1810,11 +1796,11 @@ Example:
 
 User writes:
 
-`bought 2 coffees for 360 with Aswin`
+`bought 2 coffees for 360 with chris`
 
 The UI immediately displays:
 
-> Coffee with Aswin
+> Coffee with chris
 > **₹360**
 >
 > Food & Drinks · 2 items
@@ -1850,33 +1836,33 @@ sometimes disappears.
 
 Before considering MVP V1 complete, verify:
 
-* [ ] Natural-language expense capture
-* [ ] Numeric/amount extraction
-* [ ] Multiple amounts from one note
-* [ ] Automatic categorization
-* [ ] Original note preservation
-* [ ] Currency selection in Settings
-* [ ] Multiple currency detection
-* [ ] Currency conversion
-* [ ] Quantity extraction
-* [ ] Receipt photo capture/transient parsing
-* [ ] Receipt information extraction
-* [ ] Local caching
-* [ ] Offline capture
-* [ ] Deferred AI processing
-* [ ] API/rate-limit failure handling
-* [ ] User-created presets
-* [ ] Calendar/history navigation
-* [ ] Daily totals
-* [ ] Weekly/monthly summaries
-* [ ] Top categories
-* [ ] Onboarding
-* [ ] Paywall/subscription foundation
-* [ ] Editing/correction
-* [ ] Delete entry
-* [ ] Missing-amount entries remain usable but are excluded from confirmed totals
-* [ ] Categorization source and confidence are stored
-* [ ] User category corrections can become personal rules
+- [ ] Natural-language expense capture
+- [ ] Numeric/amount extraction
+- [ ] Multiple amounts from one note
+- [ ] Automatic categorization
+- [ ] Original note preservation
+- [ ] Currency selection in Settings
+- [ ] Multiple currency detection
+- [ ] Currency conversion
+- [ ] Quantity extraction
+- [ ] Receipt photo capture/transient parsing
+- [ ] Receipt information extraction
+- [ ] Local caching
+- [ ] Offline capture
+- [ ] Deferred AI processing
+- [ ] API/rate-limit failure handling
+- [ ] User-created presets
+- [ ] Calendar/history navigation
+- [ ] Daily totals
+- [ ] Weekly/monthly summaries
+- [ ] Top categories
+- [ ] Onboarding
+- [ ] Paywall/subscription foundation
+- [ ] Editing/correction
+- [ ] Delete entry
+- [ ] Missing-amount entries remain usable but are excluded from confirmed totals
+- [ ] Categorization source and confidence are stored
+- [ ] User category corrections can become personal rules
 
 ---
 
@@ -1950,22 +1936,22 @@ scope must remain visible and editable.
 
 Example:
 
-`uber with Aswin`
+`uber with chris`
 
 may resolve to:
 
-* selected month: September 2026
-* merchant: Uber
-* person: Aswin
-* type: expense
+- selected month: September 2026
+- merchant: Uber
+- person: chris
+- type: expense
 
 The result should contain:
 
-* the deterministic total
-* number of matching transactions
-* the active date range and filters
-* optional category or merchant breakdowns
-* the exact journal entries that contributed to the result
+- the deterministic total
+- number of matching transactions
+- the active date range and filters
+- optional category or merchant breakdowns
+- the exact journal entries that contributed to the result
 
 The user should be able to remove or change a filter directly. Search is an
 answerable, inspectable query experience, not a conversation the user must manage.
@@ -2000,11 +1986,11 @@ deterministic result plus matching source entries
 
 The model must not:
 
-* receive the user's complete journal by default
-* write or execute arbitrary SQL
-* perform financial arithmetic
-* invent merchants, people, contexts, or records
-* answer from model memory when user data has no matching evidence
+- receive the user's complete journal by default
+- write or execute arbitrary SQL
+- perform financial arithmetic
+- invent merchants, people, contexts, or records
+- answer from model memory when user data has no matching evidence
 
 If no records match, return an honest empty result and offer filter adjustments.
 
@@ -2014,17 +2000,17 @@ If no records match, return an honest empty result and offer filter adjustments.
 
 The backend should preserve and index enough structure to support:
 
-* date ranges
-* transaction direction or type
-* confirmed amount in integer minor units
-* original currency and normalized/base currency where available
-* category
-* normalized merchant and merchant aliases
-* people
-* contexts such as projects, trips, events, and places
-* recurrence or subscription status when implemented
-* lending, borrowing, reimbursement, and repayment relationships
-* the original journal text
+- date ranges
+- transaction direction or type
+- confirmed amount in integer minor units
+- original currency and normalized/base currency where available
+- category
+- normalized merchant and merchant aliases
+- people
+- contexts such as projects, trips, events, and places
+- recurrence or subscription status when implemented
+- lending, borrowing, reimbursement, and repayment relationships
+- the original journal text
 
 The search document may combine raw text with normalized names for PostgreSQL
 full-text search. Relational fields remain authoritative for filters and totals.
@@ -2040,18 +2026,18 @@ row-level security boundary as the underlying data.
 
 The first supported operations should be intentionally narrow:
 
-* list matching entries
-* sum spending or income
-* count transactions
-* group by category or merchant
-* compare two explicit periods
-* find the largest transaction, day, or week
+- list matching entries
+- sum spending or income
+- count transactions
+- group by category or merchant
+- compare two explicit periods
+- find the largest transaction, day, or week
 
 Examples:
 
 `food this month`
 
-`Uber with Aswin in August`
+`Uber with chris in August`
 
 `how much did the Bangalore trip cost?`
 
@@ -2087,18 +2073,18 @@ financial result.
 
 Before considering V2 advanced search complete, verify:
 
-* [ ] Current-month context is the visible default
-* [ ] Users can select another month or custom date range
-* [ ] Obvious queries work without a model call
-* [ ] Ambiguous queries resolve to schema-validated filters
-* [ ] Generated filters are visible and editable
-* [ ] SQL is parameterized and scoped to the authenticated user
-* [ ] Totals use confirmed structured amounts only
-* [ ] Missing and estimated amounts are identified separately
-* [ ] Results expose their contributing journal entries
-* [ ] Empty results do not fabricate an answer
-* [ ] Full-text search covers raw notes and normalized entity names
-* [ ] Search respects offline and degraded-network behavior where feasible
-* [ ] Query parsing is cached and rate-limited
-* [ ] Search cost, latency, and failure rates are observable
-* [ ] RLS and cross-user isolation tests pass
+- [ ] Current-month context is the visible default
+- [ ] Users can select another month or custom date range
+- [ ] Obvious queries work without a model call
+- [ ] Ambiguous queries resolve to schema-validated filters
+- [ ] Generated filters are visible and editable
+- [ ] SQL is parameterized and scoped to the authenticated user
+- [ ] Totals use confirmed structured amounts only
+- [ ] Missing and estimated amounts are identified separately
+- [ ] Results expose their contributing journal entries
+- [ ] Empty results do not fabricate an answer
+- [ ] Full-text search covers raw notes and normalized entity names
+- [ ] Search respects offline and degraded-network behavior where feasible
+- [ ] Query parsing is cached and rate-limited
+- [ ] Search cost, latency, and failure rates are observable
+- [ ] RLS and cross-user isolation tests pass

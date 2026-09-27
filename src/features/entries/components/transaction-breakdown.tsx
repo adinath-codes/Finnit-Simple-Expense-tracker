@@ -290,7 +290,7 @@ export function TransactionBreakdown({
                               ? [...entry.items, updated]
                               : entry.items.map((current) => current.id === item.id ? updated : current),
                             thought:
-                              "You updated this entry. The total now reflects your line amounts; your original note is preserved.",
+                              "Got it—this spending now reflects your updated items, and I’ve kept your original note.",
                           });
                         } catch { return; }
                         if (pendingItem?.id === item.id) setPendingItem(null);

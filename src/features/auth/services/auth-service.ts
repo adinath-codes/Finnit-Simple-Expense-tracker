@@ -158,6 +158,31 @@ export async function signInWithEmail(email: string, password: string) {
   return data.session;
 }
 
+export async function requestEmailOtp(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const { error } = await requireBackend().auth.signInWithOtp({
+    email: normalizedEmail,
+    options: {
+      shouldCreateUser: true,
+    },
+  });
+  if (error) throw error;
+  return normalizedEmail;
+}
+
+export async function verifyEmailOtp(email: string, token: string) {
+  const { data, error } = await requireBackend().auth.verifyOtp({
+    email: email.trim().toLowerCase(),
+    token: token.trim(),
+    type: "email",
+  });
+  if (error) throw error;
+  if (!data.session) {
+    throw new Error("Finn couldn’t create a secure session from that code.");
+  }
+  return data.session;
+}
+
 export async function createAccountWithEmail(
   email: string,
   password: string,

@@ -20,7 +20,7 @@ import {
 export function AskMoneyAmount({
   accessible = true,
   currency,
-  displayCurrency = currency,
+  displayCurrency: _displayCurrency = currency,
   minor,
   style,
 }: {
@@ -30,7 +30,9 @@ export function AskMoneyAmount({
   minor: string;
   style?: StyleProp<TextStyle>;
 }) {
-  const amount = exactMoneyParts(minor, currency, displayCurrency);
+  // Stored currencies are never relabeled as the user's preferred currency;
+  // Finn has no FX conversion rate in the journal.
+  const amount = exactMoneyParts(minor, currency);
   return (
     <Text
       accessibilityLabel={amount.label}
@@ -58,7 +60,7 @@ export function SourceTransactionRow({
   const amountNeedsReview = item.metric_confirmed === false || item.metric_minor == null;
   const amountLabel = amountNeedsReview
     ? "Needs review"
-    : exactMoney(item.metric_minor!, item.currency, displayCurrency);
+    : exactMoney(item.metric_minor!, item.currency);
 
   const openJournalDay = () => {
     setSelectedDate(item.occurred_on);

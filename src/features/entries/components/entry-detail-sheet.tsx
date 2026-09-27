@@ -566,19 +566,19 @@ export default function EntryDetailSheet() {
         </ContentFade>}
 
       <SectionLabel style={styles.sectionLabel}>
-        Finn’s thought process
+        Finn’s take
       </SectionLabel>
       {isFinnCorrectionPending
         ? <LoadingState
           announce={false}
-          label="Finn is updating the explanation."
+          label="I’m updating my take on this spending."
           variant="explanation"
         />
         : amountPreview
         ? <LoadingState
           active={!entry.syncError}
           announce={false}
-          label="Finn explanation is still processing."
+          label="I’m still putting together my take on this spending."
           variant="explanation"
         />
         : <ContentFade>
@@ -586,7 +586,7 @@ export default function EntryDetailSheet() {
             <Image
               accessibilityLabel="Finn working on a laptop"
               contentFit="contain"
-              source={require("../../../../assets/images/character/onboarding/future-question-base.png")}
+              source={require("../../../../assets/images/character/onboarding/future-question-base.webp")}
               style={styles.thoughtIllustration}
             />
             <Text style={styles.thoughtText}>{entry.thought}</Text>

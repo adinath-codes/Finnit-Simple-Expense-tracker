@@ -1,12 +1,43 @@
-import {
-  CURRENCIES,
-  DIRECTIONS,
-  type Catalog,
-  type SearchPlan,
-} from "./contracts.ts";
-import { date, currency, object, text, ApiError } from "./validation.ts";
+import { type Catalog, CURRENCIES, DIRECTIONS, type SearchPlan } from "./contracts.ts";
+import { ApiError, currency, date, object, text } from "./validation.ts";
 import { monthStart, shiftDay } from "./dates.ts";
 import { contains, normalize } from "./text.ts";
+
+const OPERATIONS = ["sum", "list", "count", "average", "rank", "breakdown", "compare"] as const;
+const METRICS = [
+  "stated_amount",
+  "user_share",
+  "group_total",
+  "paid_by_user",
+  "owed_to_user",
+  "user_owes",
+  "reimbursed",
+  "gross_spend",
+] as const;
+const GROUPINGS = [
+  "entry",
+  "day",
+  "week",
+  "month",
+  "category",
+  "merchant",
+  "context",
+  "participant",
+] as const;
+
+function unique<T>(items: T[]) {
+  return [...new Set(items)];
+}
+
+function stringArray(value: unknown, limit: number, code: string) {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) || value.length > limit || value.some((item) => typeof item !== "string")
+  ) {
+    throw new ApiError(400, code);
+  }
+  return unique(value as string[]);
+}
 
 export function validatePlan(value: unknown, catalog: Catalog): SearchPlan {
   const p = object(value);
@@ -17,100 +48,202 @@ export function validatePlan(value: unknown, catalog: Catalog): SearchPlan {
     "end_date",
     "merchant_id",
     "category_id",
+    "merchant_ids",
+    "exclude_merchant_ids",
+    "category_ids",
+    "exclude_category_ids",
     "person",
     "context",
+    "people",
+    "contexts",
+    "people_match",
+    "contexts_match",
     "text",
     "currency",
     "metric",
     "group_by",
+    "sort_direction",
+    "result_limit",
+    "comparison_start_date",
+    "comparison_end_date",
     "participant_scope",
     "split_view",
     "include_sources",
     "review_policy",
   ];
-  if (Object.keys(p).some((key) => !allowed.includes(key)))
+  if (Object.keys(p).some((key) => !allowed.includes(key))) {
     throw new ApiError(400, "unsupported_filter");
+  }
   if (
-    !["sum", "list"].includes(p.operation as string) ||
+    !OPERATIONS.includes(p.operation as never) ||
     (p.direction !== null && !DIRECTIONS.includes(p.direction as never))
-  )
+  ) {
     throw new ApiError(400, "invalid_operation");
-  const start = date(p.start_date),
-    end = date(p.end_date);
-  if (end <= start || Date.parse(end) - Date.parse(start) > 3660 * 86400000)
+  }
+
+  const start = date(p.start_date), end = date(p.end_date);
+  if (end <= start || Date.parse(end) - Date.parse(start) > 3660 * 86400000) {
     throw new ApiError(400, "invalid_range");
+  }
+
+  const merchantIds = unique([
+    ...(p.merchant_id === null || p.merchant_id === undefined ? [] : [String(p.merchant_id)]),
+    ...stringArray(p.merchant_ids, 20, "invalid_merchant"),
+  ]);
+  const excludedMerchantIds = stringArray(p.exclude_merchant_ids, 20, "invalid_merchant");
   if (
-    p.merchant_id !== null &&
-    !catalog.merchants.some((m) => m.id === p.merchant_id)
-  )
+    [...merchantIds, ...excludedMerchantIds].some((id) =>
+      !catalog.merchants.some((m) => m.id === id)
+    )
+  ) {
     throw new ApiError(400, "invalid_merchant");
+  }
+
+  const categoryIds = unique([
+    ...(p.category_id === null || p.category_id === undefined ? [] : [String(p.category_id)]),
+    ...stringArray(p.category_ids, 20, "invalid_category"),
+  ]);
+  const excludedCategoryIds = stringArray(p.exclude_category_ids, 20, "invalid_category");
   if (
-    p.category_id !== null &&
-    !catalog.categories.some((c) => c.id === p.category_id)
-  )
+    [...categoryIds, ...excludedCategoryIds].some((id) =>
+      !catalog.categories.some((c) => c.id === id)
+    )
+  ) {
     throw new ApiError(400, "invalid_category");
-  const person = p.person === null ? null : text(p.person, 100),
-    context = p.context === null ? null : text(p.context, 100);
+  }
+
+  const people = unique([
+    ...(p.person === null || p.person === undefined ? [] : [text(p.person, 100)]),
+    ...stringArray(p.people, 20, "unknown_person").map((item) => text(item, 100)),
+  ]);
+  const contexts = unique([
+    ...(p.context === null || p.context === undefined ? [] : [text(p.context, 100)]),
+    ...stringArray(p.contexts, 20, "unknown_context").map((item) => text(item, 100)),
+  ]);
   if (
-    person &&
-    !catalog.people.some((n) => normalize(n.name) === normalize(person))
-  )
+    people.some((name) =>
+      !catalog.people.some((candidate) => normalize(candidate.name) === normalize(name))
+    )
+  ) {
     throw new ApiError(400, "unknown_person");
+  }
   if (
-    context &&
-    !catalog.contexts.some((n) => normalize(n.name) === normalize(context))
-  )
+    contexts.some((name) =>
+      !catalog.contexts.some((candidate) => normalize(candidate.name) === normalize(name))
+    )
+  ) {
     throw new ApiError(400, "unknown_context");
-  const metrics = [
-    "stated_amount",
-    "user_share",
-    "group_total",
-    "paid_by_user",
-    "owed_to_user",
-    "user_owes",
-    "reimbursed",
-    "gross_spend",
-  ] as const;
-  const groupings = [
-    "entry", "day", "week", "month", "category", "merchant", "context", "participant",
-  ] as const;
-  const metric = p.metric === undefined ? "user_share" : p.metric;
-  if (!metrics.includes(metric as never)) throw new ApiError(400, "invalid_metric");
+  }
+
   const groupBy = p.group_by === undefined ? [] : p.group_by;
   if (
-    !Array.isArray(groupBy) || groupBy.length > 8 ||
-    groupBy.some((item) => !groupings.includes(item as never))
-  ) throw new ApiError(400, "invalid_grouping");
+    !Array.isArray(groupBy) || groupBy.length > 1 ||
+    groupBy.some((item) => !GROUPINGS.includes(item as never))
+  ) {
+    throw new ApiError(400, "invalid_grouping");
+  }
+  const operation = p.operation as SearchPlan["operation"];
+  const sortDirection = p.sort_direction ?? "desc";
+  if (!["asc", "desc"].includes(sortDirection as string)) {
+    throw new ApiError(400, "invalid_sort_direction");
+  }
+  const resultLimit = p.result_limit ?? (operation === "rank" ? 1 : 5);
+  if (!Number.isInteger(resultLimit) || Number(resultLimit) < 1 || Number(resultLimit) > 20) {
+    throw new ApiError(400, "invalid_result_limit");
+  }
+
+  let comparisonStart: string | null = null, comparisonEnd: string | null = null;
+  if (operation === "compare" || p.comparison_start_date != null || p.comparison_end_date != null) {
+    if (p.comparison_start_date == null || p.comparison_end_date == null) {
+      throw new ApiError(400, "invalid_comparison_range");
+    }
+    comparisonStart = date(p.comparison_start_date);
+    comparisonEnd = date(p.comparison_end_date);
+    if (
+      comparisonEnd <= comparisonStart ||
+      Date.parse(comparisonEnd) - Date.parse(comparisonStart) > 3660 * 86400000
+    ) {
+      throw new ApiError(400, "invalid_comparison_range");
+    }
+  }
+  const peopleMatch = p.people_match ?? "any";
+  const contextsMatch = p.contexts_match ?? "any";
+  if (
+    !["any", "all"].includes(peopleMatch as string) ||
+    !["any", "all"].includes(contextsMatch as string)
+  ) {
+    throw new ApiError(400, "invalid_entity_match");
+  }
+  const metric = p.metric === undefined ? "user_share" : p.metric;
+  if (!METRICS.includes(metric as never)) throw new ApiError(400, "invalid_metric");
   const participantScope = p.participant_scope ?? "any";
-  if (!["any", "self_only", "with_others"].includes(participantScope as string))
+  if (!["any", "self_only", "with_others"].includes(participantScope as string)) {
     throw new ApiError(400, "invalid_participant_scope");
+  }
   const splitView = p.split_view ?? "none";
-  if (!["none", "self_vs_others", "by_participant"].includes(splitView as string))
+  if (!["none", "self_vs_others", "by_participant"].includes(splitView as string)) {
     throw new ApiError(400, "invalid_split_view");
+  }
   const reviewPolicy = p.review_policy ?? "exclude_unconfirmed";
-  if (!["exclude_unconfirmed", "include_review_rows"].includes(reviewPolicy as string))
+  if (!["exclude_unconfirmed", "include_review_rows"].includes(reviewPolicy as string)) {
     throw new ApiError(400, "invalid_review_policy");
-  if (p.include_sources !== undefined && typeof p.include_sources !== "boolean")
+  }
+  if (p.include_sources !== undefined && typeof p.include_sources !== "boolean") {
     throw new ApiError(400, "invalid_include_sources");
+  }
+
   return {
-    operation: p.operation as SearchPlan["operation"],
+    operation,
     direction: p.direction as SearchPlan["direction"],
     start_date: start,
     end_date: end,
-    merchant_id: p.merchant_id as string | null,
-    category_id: p.category_id as string | null,
-    person,
-    context,
-    text: p.text === null ? null : text(p.text, 500),
-    currency: p.currency === null ? null : currency(p.currency),
+    merchant_id: merchantIds[0] ?? null,
+    category_id: categoryIds[0] ?? null,
+    merchant_ids: merchantIds,
+    exclude_merchant_ids: excludedMerchantIds,
+    category_ids: categoryIds,
+    exclude_category_ids: excludedCategoryIds,
+    person: people[0] ?? null,
+    context: contexts[0] ?? null,
+    people,
+    contexts,
+    people_match: peopleMatch as SearchPlan["people_match"],
+    contexts_match: contextsMatch as SearchPlan["contexts_match"],
+    text: p.text === null || p.text === undefined ? null : text(p.text, 500),
+    currency: p.currency === null || p.currency === undefined ? null : currency(p.currency),
     metric: metric as SearchPlan["metric"],
-    group_by: groupBy as SearchPlan["group_by"],
+    group_by: (operation === "rank" && groupBy.length === 0 ? ["entry"] : groupBy) as SearchPlan[
+      "group_by"
+    ],
+    sort_direction: sortDirection as SearchPlan["sort_direction"],
+    result_limit: Number(resultLimit),
+    comparison_start_date: comparisonStart,
+    comparison_end_date: comparisonEnd,
     participant_scope: participantScope as SearchPlan["participant_scope"],
     split_view: splitView as SearchPlan["split_view"],
     include_sources: p.include_sources === true,
     review_policy: reviewPolicy as SearchPlan["review_policy"],
   };
 }
+
+function priorEqualRange(start: string, end: string) {
+  const days = Math.round(
+    (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000,
+  );
+  return { start: shiftDay(start, -days), end: start };
+}
+
+function explicitlyExcluded(query: string, names: string[]) {
+  return names.some((name) =>
+    new RegExp(
+      `\\b(?:except|excluding|without|but\\s+not)\\b[^,.?]{0,32}\\b${
+        name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      }\\b`,
+      "i",
+    ).test(query)
+  );
+}
+
 export function parseSearch(
   query: string,
   reference: string,
@@ -118,10 +251,14 @@ export function parseSearch(
   selectedRange?: { start_date: string; end_date: string },
 ) {
   let remainder = query;
-  let start = selectedRange?.start_date ?? monthStart(reference),
-    end = selectedRange?.end_date ?? monthStart(reference, 1);
-  const remove = (s: string) => {
-    remainder = remainder.replaceAll(s, " ");
+  let start = selectedRange?.start_date ?? monthStart(reference);
+  let end = selectedRange?.end_date ?? monthStart(reference, 1);
+  const comparing = /\b(compare|versus|vs\.?|compared\s+(?:with|to)|change(?:d)?\s+from)\b/i.test(
+    query,
+  );
+  let comparison: { start: string; end: string } | null = null;
+  const remove = (value: string) => {
+    remainder = remainder.replaceAll(value, " ");
   };
   const time = query.match(
     /\b(last month|previous month|this month|last week|this week|yesterday|today)\b/i,
@@ -129,156 +266,213 @@ export function parseSearch(
   if (time) {
     const lower = time.toLowerCase();
     remove(time);
+    let recognizedStart: string, recognizedEnd: string;
     if (lower === "last month" || lower === "previous month") {
-      start = monthStart(reference, -1);
-      end = monthStart(reference);
+      recognizedStart = monthStart(reference, -1);
+      recognizedEnd = monthStart(reference);
     } else if (lower === "this month") {
-      start = monthStart(reference);
-      end = monthStart(reference, 1);
+      recognizedStart = monthStart(reference);
+      recognizedEnd = monthStart(reference, 1);
     } else if (lower === "today" || lower === "yesterday") {
-      start = shiftDay(reference, lower === "today" ? 0 : -1);
-      end = shiftDay(start, 1);
+      recognizedStart = shiftDay(reference, lower === "today" ? 0 : -1);
+      recognizedEnd = shiftDay(recognizedStart, 1);
     } else {
       const weekday = new Date(`${reference}T12:00:00Z`).getUTCDay();
-      start = shiftDay(
-        reference,
-        -((weekday + 6) % 7) - (lower === "last week" ? 7 : 0),
-      );
-      end = shiftDay(start, 7);
+      recognizedStart = shiftDay(reference, -((weekday + 6) % 7) - (lower === "last week" ? 7 : 0));
+      recognizedEnd = shiftDay(recognizedStart, 7);
+    }
+    if (comparing && /last|previous/.test(lower)) {
+      comparison = { start: recognizedStart, end: recognizedEnd };
+    } else {
+      start = recognizedStart;
+      end = recognizedEnd;
     }
   }
-  const merchant = [...catalog.merchants]
-    .sort(
-      (a, b) =>
-        Number(!!b.user_id) - Number(!!a.user_id) ||
-        b.canonical_name.length - a.canonical_name.length,
+  if (comparing && !comparison) comparison = priorEqualRange(start, end);
+
+  const matchedMerchants = [...catalog.merchants]
+    .filter((m) =>
+      contains(query, m.canonical_name) ||
+      catalog.aliases.some((a) => a.merchant_id === m.id && contains(query, a.alias))
     )
-    .find(
-      (m) =>
-        contains(query, m.canonical_name) ||
-        catalog.aliases.some(
-          (a) => a.merchant_id === m.id && contains(query, a.alias),
+    .sort((a, b) =>
+      Number(!!b.user_id) - Number(!!a.user_id) || b.canonical_name.length - a.canonical_name.length
+    );
+  const categoryMatchStrength = (candidate: Catalog["categories"][number]) =>
+    contains(query, candidate.name) ? 2 : contains(query, candidate.id) ? 1 : 0;
+  const matchedCategories = catalog.categories
+    .filter((candidate) => categoryMatchStrength(candidate) > 0)
+    .filter((candidate, _index, matches) =>
+      !matches.some((specific) =>
+        specific.id !== candidate.id && categoryMatchStrength(specific) === 2 &&
+        (contains(specific.name, candidate.name) || contains(specific.name, candidate.id))
+      )
+    )
+    .sort((a, b) =>
+      categoryMatchStrength(b) - categoryMatchStrength(a) ||
+      Math.max(b.name.length, b.id.length) - Math.max(a.name.length, a.id.length)
+    );
+  const matchedPeople = catalog.people.filter((p) => contains(query, p.name));
+  const matchedContexts = catalog.contexts.filter((c) => contains(query, c.name));
+  const excludedMerchants = matchedMerchants.filter((merchant) =>
+    explicitlyExcluded(
+      query,
+      [
+        merchant.canonical_name,
+        ...catalog.aliases.filter((alias) => alias.merchant_id === merchant.id).map((alias) =>
+          alias.alias
         ),
-    );
-  if (merchant) {
-    remainder = remainder.replace(
-      new RegExp(
-        merchant.canonical_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        "ig",
-      ),
-      " ",
-    );
-    for (const alias of catalog.aliases.filter(
-      (a) => a.merchant_id === merchant.id,
-    ))
-      if (contains(remainder, alias.alias))
-        remainder = remainder.replace(
-          new RegExp(alias.alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"),
-          " ",
-        );
-  }
-  const category = catalog.categories.find(
-    (c) => contains(query, c.name) || contains(query, c.id),
-  );
-  if (category)
-    remainder = remainder
-      .replace(new RegExp(`\\b${category.id}\\b`, "ig"), " ")
-      .replace(
-        new RegExp(category.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"),
-        " ",
-      );
-  const person = catalog.people.find((p) => contains(query, p.name));
-  const context = catalog.contexts.find((c) => contains(query, c.name));
-  for (const entity of [person, context])
-    if (entity)
-      remainder = remainder.replace(
-        new RegExp(entity.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"),
-        " ",
-      );
-  const directions = DIRECTIONS.filter((d) => contains(query, d));
-  const direction = directions[0] ?? "expense";
-  const currencies = Object.keys(CURRENCIES).filter((code) =>
-    contains(query, code),
-  );
-  for (const code of currencies)
-    remainder = remainder.replace(new RegExp(`\\b${code}\\b`, "gi"), " ");
-  remainder = remainder
-    .replace(
-      /\b(how much|what is|what was|what are|did i|have i|do i|i|spent|spend|spending|cost|show|list|my|on|at|with|in|for|the|this|and|total|group|gross|share|split|pay|paid|owe|owed|owes|reimbursements?|reimbursed|of|expense|expenses|income|transfer|lent|borrowed|repayment)\b/gi,
-      " ",
+      ],
     )
-    .replace(/[?!.]/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-  const plan: SearchPlan = {
-    operation: /\b(show|list)\b/i.test(query) ? "list" : "sum",
-    direction,
-    start_date: start,
-    end_date: end,
-    merchant_id: merchant?.id ?? null,
-    category_id: category?.id ?? null,
-    person: person?.name ?? null,
-    context: context?.name ?? null,
-    text: remainder || null,
-    currency: currencies[0] ?? null,
-    metric: /\bgroup\s+total|total\s+(?:cost|bill)\b/i.test(query)
+  );
+  const includedMerchants = matchedMerchants.filter((merchant) =>
+    !excludedMerchants.includes(merchant)
+  );
+  const excludedCategories = matchedCategories.filter((category) =>
+    explicitlyExcluded(query, [category.id, category.name])
+  );
+  const includedCategories = matchedCategories.filter((category) =>
+    !excludedCategories.includes(category)
+  );
+  for (const merchant of matchedMerchants) {
+    for (
+      const name of [
+        merchant.canonical_name,
+        ...catalog.aliases.filter((a) => a.merchant_id === merchant.id).map((a) => a.alias),
+      ]
+    ) {
+      remainder = remainder.replace(
+        new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"),
+        " ",
+      );
+    }
+  }
+  for (const category of matchedCategories) {
+    for (const name of [category.name, category.id]) {
+      remainder = remainder.replace(
+        new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"),
+        " ",
+      );
+    }
+  }
+  for (const entity of [...matchedPeople, ...matchedContexts]) {
+    remainder = remainder.replace(
+      new RegExp(entity.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"),
+      " ",
+    );
+  }
+
+  const directions = DIRECTIONS.filter((direction) => contains(query, direction));
+  const currencies = Object.keys(CURRENCIES).filter((code) => contains(query, code));
+  for (const code of currencies) {
+    remainder = remainder.replace(new RegExp(`\\b${code}\\b`, "gi"), " ");
+  }
+
+  const metric: NonNullable<SearchPlan["metric"]> =
+    /\bgroup\s+total|total\s+(?:cost|bill)\b/i.test(query)
       ? "group_total"
       : /\b(?:did\s+i|i)\s+pay|paid\s+by\s+me\b/i.test(query)
-        ? "paid_by_user"
-        : /\b(?:owed?\s+to\s+me|owes?\s+me)\b/i.test(query)
-          ? "owed_to_user"
-          : /\b(?:do\s+i\s+owe|i\s+owe)\b/i.test(query)
-            ? "user_owes"
-            : /\breimburs/i.test(query)
-              ? "reimbursed"
-              : /\bgross\s+spend\b/i.test(query)
-                ? "gross_spend"
-                : "user_share",
-    group_by: /\b(?:breakdown|split)\b/i.test(query) ? ["entry"] : [],
-    participant_scope: /\bwith\s+(?:friends?|family|others?|people|[A-Z][\p{L}-]+)\b/iu.test(query)
+      ? "paid_by_user"
+      : /\b(?:owed?\s+to\s+me|owes?\s+me)\b/i.test(query)
+      ? "owed_to_user"
+      : /\b(?:do\s+i\s+owe|i\s+owe)\b/i.test(query)
+      ? "user_owes"
+      : /\breimburs/i.test(query)
+      ? "reimbursed"
+      : /\bgross\s+spend\b/i.test(query)
+      ? "gross_spend"
+      : "user_share";
+  const debtMetric = ["owed_to_user", "user_owes", "reimbursed"].includes(metric);
+  const operation: SearchPlan["operation"] = comparing
+    ? "compare"
+    : debtMetric && /\bwho\b/i.test(query)
+    ? "breakdown"
+    : /\b(how many|number of|count)\b/i.test(query)
+    ? "count"
+    : /\b(average|avg|mean)\b/i.test(query)
+    ? "average"
+    : /\b(most|least|highest|lowest|largest|smallest|biggest|cheapest|expensive|top)\b/i.test(query)
+    ? "rank"
+    : /\b(breakdown|by category|by merchant|by person|by participant|by context|where did i spend|where.*money)\b/i
+        .test(query)
+    ? "breakdown"
+    : /\b(show|list|which purchases?|what purchases?)\b/i.test(query)
+    ? "list"
+    : "sum";
+  let groupBy: NonNullable<SearchPlan["group_by"]> = [];
+  if (/\bweek\b/i.test(query) && ["rank", "breakdown"].includes(operation)) groupBy = ["week"];
+  else if (/\bday\b/i.test(query) && ["rank", "breakdown"].includes(operation)) groupBy = ["day"];
+  else if (
+    /\bmonth\b/i.test(query) && /\bmost|least|highest|lowest|breakdown|by\b/i.test(query) && !time
+  ) groupBy = ["month"];
+  else if (/\bcategory|where did i spend|where.*money\b/i.test(query)) groupBy = ["category"];
+  else if (/\bmerchant|store|shop|restaurant\b/i.test(query)) groupBy = ["merchant"];
+  else if (/\bcontext|trip|project|event\b/i.test(query) && operation !== "sum") {
+    groupBy = ["context"];
+  } else if (/\bwho|person|people|participant\b/i.test(query) || debtMetric) {
+    groupBy = ["participant"];
+  } else if (operation === "rank") groupBy = ["entry"];
+  if (operation === "breakdown" && groupBy.length === 0) groupBy = ["category"];
+
+  remainder = remainder
+    .replace(
+      /\b(compare|versus|vs|compared|with|to|change|changed|from|except|excluding|without|but not|single|how much|how many|number of|count|average|avg|mean|most|least|highest|lowest|largest|smallest|biggest|cheapest|expensive|top|what is|what was|what are|which|did i|have i|do i|i|me|spent|spend|spending|purchases?|transactions?|cost|show|list|my|on|at|in|for|the|this|and|total|group|gross|share|split|pay|paid|owe|owed|owes|reimbursements?|reimbursed|of|expense|expenses|income|transfer|lent|borrowed|repayment|category|merchant|store|shop|restaurant|week|day|month|where|money|breakdown|by|person|people|participant|who|context)\b/gi,
+      " ",
+    )
+    .replace(/[?!.]/g, " ").trim().replace(/\s+/g, " ");
+
+  const plan: SearchPlan = {
+    operation,
+    direction: debtMetric ? null : directions[0] ?? "expense",
+    start_date: start,
+    end_date: end,
+    merchant_id: includedMerchants[0]?.id ?? null,
+    category_id: includedCategories[0]?.id ?? null,
+    merchant_ids: includedMerchants.map((item) => item.id),
+    exclude_merchant_ids: excludedMerchants.map((item) => item.id),
+    category_ids: includedCategories.map((item) => item.id),
+    exclude_category_ids: excludedCategories.map((item) => item.id),
+    person: matchedPeople[0]?.name ?? null,
+    context: matchedContexts[0]?.name ?? null,
+    people: matchedPeople.map((item) => item.name),
+    contexts: matchedContexts.map((item) => item.name),
+    people_match: /\b(all of|both)\b/i.test(query) ? "all" : "any",
+    contexts_match: /\b(all of|both)\b/i.test(query) ? "all" : "any",
+    text: remainder || null,
+    currency: currencies[0] ?? null,
+    metric,
+    group_by: groupBy,
+    sort_direction: /\b(least|lowest|smallest|cheapest)\b/i.test(query) ? "asc" : "desc",
+    result_limit: operation === "rank" ? 1 : 5,
+    comparison_start_date: comparison?.start ?? null,
+    comparison_end_date: comparison?.end ?? null,
+    participant_scope: /\bwith\s+(?:friends?|family|others?|people)\b/iu.test(query)
       ? "with_others"
       : "any",
     split_view: /\b(?:show\s+the\s+)?split\b/i.test(query) ? "self_vs_others" : "none",
-    include_sources: /\b(?:show|list|source|breakdown)\b/i.test(query),
+    include_sources: true,
     review_policy: "exclude_unconfirmed",
   };
-  const unsupportedOrComplex =
-    /\b(compare|most|least|owes|subscriptions|semester|between|except|excluding|or|before|after|since|until|january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(
-      query,
-    );
-  const matchedMerchants = catalog.merchants.filter(
-    (m) =>
-      contains(query, m.canonical_name) ||
-      catalog.aliases.some(
-        (a) => a.merchant_id === m.id && contains(query, a.alias),
-      ),
-  );
-  const distinctMerchantNames = new Set(
-    matchedMerchants.map((m) => normalize(m.canonical_name)),
-  );
-  // The plan supports one value per entity, never a silently narrowed union.
-  const unsupported =
-    /\b(compare|most|least|subscriptions|except|excluding|not|without|over|under|more than|less than|at least|at most|greater than)\b/i.test(
-      query,
-    ) ||
-    directions.length > 1 ||
-    currencies.length > 1 ||
-    distinctMerchantNames.size > 1 ||
-    catalog.people.filter((p) => contains(query, p.name)).length > 1 ||
-    catalog.contexts.filter((c) => contains(query, c.name)).length > 1 ||
-    catalog.categories.filter(
-      (c) => contains(query, c.name) || contains(query, c.id),
-    ).length > 1;
-  // Simple residual keywords use indexed full-text search without an AI call.
+
+  const unsupportedReason =
+    /\b(currently active|active subscriptions?|which subscriptions? (?:are|is) active|cancel(?:led)? subscriptions?)\b/i
+        .test(query)
+      ? "recurrence_status"
+      : /\b(predict|forecast|will i|next month|next year|future)\b/i.test(query)
+      ? "prediction"
+      : /\b(why|reason|cause|because)\b/i.test(query)
+      ? "causal_inference"
+      : /\b(exchange rate|convert|converted|inflation|stock|weather|market price)\b/i.test(query)
+      ? "external_data"
+      : /\bmissing amount|unknown amount|guess|estimate the missing\b/i.test(query)
+      ? "missing_values"
+      : null;
+  const unsupported = currencies.length > 1 || directions.length > 1;
   return {
     plan,
     unsupported,
-    complex:
-      unsupportedOrComplex ||
-      /\b(last|previous|next|recent|latest|all time|year|days|weeks|months|earned|received|paid back)\b|[0-9₹$€£¥]/i.test(
-        remainder,
-      ) ||
-      (!!remainder && /\b(how|what|which|why)\b/i.test(remainder)),
+    unsupportedReason,
+    complex: !unsupportedReason && !unsupported && !!remainder,
     periodRecognized: !!time,
     directionRecognized: directions.length > 0,
   };

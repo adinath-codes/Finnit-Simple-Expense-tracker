@@ -10,7 +10,7 @@ export type AskCacheRecord<T> = {
   lastAccessedAt: number;
 };
 
-const storageKey = (userId: string) => `finn.ask-cache.v1.${userId}`;
+const storageKey = (userId: string) => `finn.ask-cache.v4.${userId}`;
 
 export async function askCacheKey(value: unknown) {
   return Crypto.digestStringAsync(

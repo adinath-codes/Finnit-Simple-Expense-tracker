@@ -3,7 +3,7 @@ import { BackendError } from "@/lib/ai/api";
 import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
 import type { SearchPlan } from "@/lib/supabase/database.types";
 import { changeJournalCache, readJournalCache } from "@/lib/offline/database";
-import { explainSearch, recentSearchContexts, searchJournal, searchWithSql, sqlSourcePage } from "../services/ask-service";
+import { explainSearch, recentSearchContexts, searchJournal, sqlSourcePage } from "../services/ask-service";
 import type { ContextResult, SearchResult } from "../types/ask.types";
 import {
   askCacheKey,
@@ -13,6 +13,7 @@ import {
 import { currentJournalRevision } from "../services/journal-revision-service";
 import { recordCacheMetric } from "@/lib/offline/cache-metrics";
 import { canReuseAskResult, canStoreAskResult } from "../services/ask-cache-policy";
+import { searchError } from "../services/ask-error";
 import {
   ANALYTICS_EVENTS,
   captureAnalytics,
@@ -27,16 +28,8 @@ function referenceDay(timezone: string) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-export function searchError(error: unknown) {
-  if (error instanceof BackendError) {
-    if (error.status === 401) return "Sign in to search your synced journal.";
-    if (error.status === 429)
-      return "Search is busy right now. Please try again shortly.";
-  }
-  return "Couldn’t reach your journal. Check your connection and try again.";
-}
 type SearchInput =
-  | { query: string; range: { start_date: string; end_date: string } }
+  | { query: string; range: { start_date: string; end_date: string }; currency: string }
   | { filters: SearchPlan };
 export function useSearch() {
   const [contexts, setContexts] = useState<ContextResult | null>(null);
@@ -248,7 +241,7 @@ export function useSearch() {
           timezone,
           reference_day: referenceDay(timezone),
           local_content_version: localCache.metadata.contentVersion,
-          version: 1,
+          version: 4,
         });
         lastCacheKey.current = cacheKey;
         let cached: SearchResult | null = null;
@@ -287,22 +280,11 @@ export function useSearch() {
                 query: input.query,
                 timezone,
                 selected_range: input.range,
+                default_currency: input.currency,
               },
           controller.signal,
           userId,
         );
-        if (data.needs_filters && data.reason === "query_needs_explicit_filters" && "query" in input) {
-          try {
-            data = await searchWithSql({
-              query: input.query,
-              timezone,
-              selected_range: input.range,
-            }, controller.signal, userId);
-          } catch {
-            // A failed or rejected SQL plan cannot produce a partial answer.
-            data = { needs_filters: true, reason: "advanced_search_unavailable" };
-          }
-        }
         if (version === generation.current && !controller.signal.aborted) {
           recordCacheMetric(userId, "ask_result", {
             hit: false, durationMs: Date.now() - startedAt,

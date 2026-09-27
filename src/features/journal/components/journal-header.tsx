@@ -11,7 +11,7 @@ import { useJournalData } from "@/providers/app-providers";
 import { dayLabel } from "@/utils/dates";
 
 const ASK_GRADIENT_ID = "ask-finn-blue";
-const HEADER_CHARACTER = require("../../../../assets/images/character/header/finn-laptop-wordmark-v2.png");
+const HEADER_CHARACTER = require("../../../../assets/images/character/header/finn-laptop-wordmark-v2.webp");
 
 function AskFinnLabel() {
      const label = (

@@ -352,7 +352,7 @@ function PermissionState({
           ? "Finn is checking camera permission."
           : canAskAgain
             ? "Photograph a receipt without leaving your journal. Finn only uses the camera while this panel is open."
-            : "Camera access is blocked. Android requires you to enable it in Settings before Finn can show the camera."}
+            : "Camera access is blocked. Enable it in Settings before Finn can show the camera."}
       </Text>
       {!!error && <Text style={styles.permissionError}>{error}</Text>}
       {!loading && (

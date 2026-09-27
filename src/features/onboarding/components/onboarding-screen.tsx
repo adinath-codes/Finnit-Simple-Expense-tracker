@@ -1,7 +1,32 @@
 import { LoadingState } from "@/components/common/loading-state";
-import { ContentFade } from "@/components/ui/motion";
 import { CharSpriteAnim } from "@/components/character/char-sprite-anim";
+import { Icon } from "@/components/ui/icon";
+import { ContentFade } from "@/components/ui/motion";
+import { Finn, JournalType } from "@/constants/theme";
 import { InitialStoryScreen } from "@/features/onboarding/components/initial-story-screen";
+import {
+  ONBOARDING_CHAPTER_COUNT,
+  onboardingSteps,
+} from "@/features/onboarding/data/onboarding-steps";
+import {
+  completeOnboarding,
+  restoreOnboarding,
+  saveOnboardingProgress,
+  skipOnboardingForExistingAccount,
+} from "@/features/onboarding/services/onboarding-service";
+import { sanitizeOnboardingName } from "@/features/onboarding/services/onboarding-validation";
+import {
+  FINN_ONBOARDING_FLOW_VERSION,
+  type InviteStep,
+  type OnboardingAnswers,
+  type OnboardingOption,
+  type QuestionStep,
+} from "@/features/onboarding/types/onboarding.types";
+import { useSession } from "@/features/auth/providers/session-provider";
+import { ANALYTICS_EVENTS, captureAnalytics } from "@/lib/analytics/analytics";
+import { useMotionPreference } from "@/hooks/use-motion-preference";
+import { useJournalActions } from "@/providers/app-providers";
+import { currencySymbol } from "@/utils/currency";
 import * as Haptics from "expo-haptics";
 import { type Href, router, useIsFocused } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -27,8 +52,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, {
+  cancelAnimation,
   Easing,
-  Extrapolation,
   FadeIn,
   FadeInDown,
   FadeInLeft,
@@ -37,42 +62,13 @@ import Animated, {
   FadeOutLeft,
   FadeOutRight,
   ReduceMotion,
-  interpolate,
   interpolateColor,
-  type SharedValue,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import { Icon } from "@/components/ui/icon";
-import { Finn, JournalType } from "@/constants/theme";
-import {
-  onboardingSteps,
-  progressStepIds,
-} from "@/features/onboarding/data/onboarding-steps";
-import {
-  completeOnboarding,
-  restoreOnboarding,
-  saveOnboardingProgress,
-  skipOnboardingForExistingAccount,
-} from "@/features/onboarding/services/onboarding-service";
-import type {
-  ConversationStep,
-  EducationStep,
-  OnboardingAnswers,
-  OnboardingOption,
-  QuestionStep,
-} from "@/features/onboarding/types/onboarding.types";
-import { FINN_ONBOARDING_FLOW_VERSION } from "@/features/onboarding/types/onboarding.types";
-import {
-  ANALYTICS_EVENTS,
-  captureAnalytics,
-} from "@/lib/analytics/analytics";
-import { useJournalActions } from "@/providers/app-providers";
-import { useSession } from "@/features/auth/providers/session-provider";
-import { currencySymbol } from "@/utils/currency";
 import {
   getCurrency,
   searchCurrencies,
@@ -81,7 +77,6 @@ import {
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const QUICK_CURRENCY_CODES = new Set(["USD", "EUR", "CAD", "INR"]);
-const INITIAL_STORY_COUNT = onboardingSteps.filter((step) => step.kind === "story").length;
 
 export default function OnboardingScreen() {
   const { updateSettings } = useJournalActions();
@@ -94,6 +89,18 @@ export default function OnboardingScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currencySearchOpen, setCurrencySearchOpen] = useState(false);
+  const [storyReady, setStoryReady] = useState(false);
+  const [storyReadyDelay, setStoryReadyDelay] = useState(0);
+  const [storyReadyCycle, setStoryReadyCycle] = useState(0);
+
+  const handleStoryReadyChange = useCallback(
+    (nextReady: boolean, delayMs: number) => {
+      setStoryReady(nextReady);
+      setStoryReadyDelay(delayMs);
+      if (!nextReady) setStoryReadyCycle((cycle) => cycle + 1);
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -115,7 +122,9 @@ export default function OnboardingScreen() {
       })
       .catch(() => {
         if (!active) return;
-        setError("Finn could not restore your setup. You can still start again.");
+        setError(
+          "Finn could not restore your setup. You can still start again.",
+        );
         setReady(true);
       });
     return () => {
@@ -141,52 +150,79 @@ export default function OnboardingScreen() {
   }, [currentStep.id, currentStep.kind, ready, stepIndex]);
 
   const goBack = useCallback(() => {
-    if (currencySearchOpen && currentStep.kind === "question" && currentStep.questionId === "currency") {
+    if (
+      currencySearchOpen &&
+      currentStep.kind === "question" &&
+      currentStep.questionId === "currency"
+    ) {
       Keyboard.dismiss();
       setCurrencySearchOpen(false);
       return;
     }
     if (stepIndex === 0 || saving) return;
+    Keyboard.dismiss();
     setError(null);
     setDirection(-1);
     const nextIndex = stepIndex - 1;
+    if (onboardingSteps[nextIndex]?.kind === "story") setStoryReady(false);
     setStepIndex(nextIndex);
     void saveOnboardingProgress(nextIndex, answers).catch(() => undefined);
   }, [answers, currencySearchOpen, currentStep, saving, stepIndex]);
 
   useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (stepIndex === 0) return false;
-      goBack();
-      return true;
-    });
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (stepIndex === 0) return false;
+        goBack();
+        return true;
+      },
+    );
     return () => subscription.remove();
   }, [goBack, stepIndex]);
 
   const goForward = async () => {
     if (saving) return;
-    if (currentStep.kind === "question" && !selected) {
-      void Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Warning,
-      );
-      setError("Choose one option to continue.");
-      return;
+
+    let nextAnswers = answers;
+    if (currentStep.kind === "question") {
+      if (currentStep.responseType === "name") {
+        const name = sanitizeOnboardingName(selected);
+        if (!name) {
+          void Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Warning,
+          );
+          setError("Tell Finn what you would like to be called.");
+          return;
+        }
+        nextAnswers = { ...answers, name };
+        setAnswers(nextAnswers);
+      } else if (!selected) {
+        void Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Warning,
+        );
+        setError("Choose one answer to continue.");
+        return;
+      }
     }
 
     setSaving(true);
     setError(null);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Keyboard.dismiss();
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const isLast = stepIndex === onboardingSteps.length - 1;
       if (isLast) {
-        if (answers.currency) {
-          await updateSettings({ currency: answers.currency });
+        if (nextAnswers.currency) {
+          await updateSettings({ currency: nextAnswers.currency });
         }
-        await completeOnboarding(answers);
+        await completeOnboarding(nextAnswers);
         captureAnalytics(ANALYTICS_EVENTS.onboardingCompleted, {
           flow_version: FINN_ONBOARDING_FLOW_VERSION,
-          answered_questions: Object.keys(answers).length,
-          total_questions: onboardingSteps.filter((step) => step.kind === "question").length,
+          answered_questions: Object.keys(nextAnswers).length,
+          total_questions: onboardingSteps.filter(
+            (step) => step.kind === "question",
+          ).length,
         });
         setOnboardingComplete(true);
         router.replace((session ? "/" : "/sign-in") as Href);
@@ -194,7 +230,7 @@ export default function OnboardingScreen() {
       }
 
       const nextIndex = stepIndex + 1;
-      await saveOnboardingProgress(nextIndex, answers);
+      await saveOnboardingProgress(nextIndex, nextAnswers);
       captureAnalytics(ANALYTICS_EVENTS.onboardingStepCompleted, {
         flow_version: FINN_ONBOARDING_FLOW_VERSION,
         step_id: currentStep.id,
@@ -202,6 +238,7 @@ export default function OnboardingScreen() {
         step_index: stepIndex,
       });
       setDirection(1);
+      if (onboardingSteps[nextIndex]?.kind === "story") setStoryReady(false);
       setStepIndex(nextIndex);
     } catch {
       setError("Finn could not save that yet. Please try once more.");
@@ -246,6 +283,11 @@ export default function OnboardingScreen() {
     void Haptics.selectionAsync();
   };
 
+  const updateName = (name: string) => {
+    setError(null);
+    setAnswers((current) => ({ ...current, name }));
+  };
+
   const transition = useMemo(() => {
     if (reduceMotion) {
       return {
@@ -255,60 +297,52 @@ export default function OnboardingScreen() {
     }
     return direction === 1
       ? {
-          entering: FadeInRight.duration(320).easing(EASE_OUT),
-          exiting: FadeOutLeft.duration(220).easing(EASE_OUT),
+          entering: FadeInRight.duration(300).easing(EASE_OUT),
+          exiting: FadeOutLeft.duration(200).easing(EASE_OUT),
         }
       : {
-          entering: FadeInLeft.duration(320).easing(EASE_OUT),
-          exiting: FadeOutRight.duration(220).easing(EASE_OUT),
+          entering: FadeInLeft.duration(300).easing(EASE_OUT),
+          exiting: FadeOutRight.duration(200).easing(EASE_OUT),
         };
   }, [direction, reduceMotion]);
 
-  if (!ready) return <LoadingState variant="onboarding" label="Getting Finn ready…" />;
+  if (!ready) {
+    return <LoadingState variant="onboarding" label="Getting Finn ready…" />;
+  }
 
-  const progressIndex = progressStepIds.indexOf(currentStep.id);
-  const showQuestionChrome =
-    currentStep.kind === "question" || currentStep.kind === "education";
-  const showStoryFooter = currentStep.kind === "story";
-  const isQuestionStep = currentStep.kind === "question";
+  const questionLike =
+    currentStep.kind === "question" || currentStep.kind === "invite";
+  const canContinueQuestion =
+    currentStep.kind !== "question" ||
+    (currentStep.responseType === "name"
+      ? !!sanitizeOnboardingName(selected)
+      : !!selected);
 
   return (
-    <ContentFade
-      style={[styles.root, isQuestionStep && styles.questionCanvas]}
-    >
+    <ContentFade style={[styles.root, questionLike && styles.questionCanvas]}>
       <StatusBar style="dark" />
       <Animated.View
         key={currentStep.id}
         entering={transition.entering}
         exiting={transition.exiting}
-        style={[StyleSheet.absoluteFill, isQuestionStep && styles.questionCanvas]}
+        style={[StyleSheet.absoluteFill, questionLike && styles.questionCanvas]}
       >
         <SafeAreaView
-          style={[styles.safeArea, isQuestionStep && styles.questionCanvas]}
+          style={[styles.safeArea, questionLike && styles.questionCanvas]}
         >
           {currentStep.kind === "story" ? (
             <InitialStoryScreen
+              answers={answers}
               step={currentStep}
-              onBack={stepIndex > 0 ? goBack : undefined}
-              storyIndex={stepIndex}
-              storyCount={INITIAL_STORY_COUNT}
-            />
-          ) : currentStep.kind === "welcome" ? (
-            <WelcomeStep />
-          ) : currentStep.kind === "conversation" ? (
-            <ConversationContent
-              step={currentStep}
-              saving={saving}
-              error={error}
-              onBack={goBack}
-              onContinue={goForward}
+              onReadyChange={handleStoryReadyChange}
             />
           ) : currentStep.kind === "question" ? (
             <QuestionContent
-              step={currentStep}
-              selected={selected}
               currencySearchOpen={currencySearchOpen}
+              selected={selected}
+              step={currentStep}
               onCurrencySearchChange={setCurrencySearchOpen}
+              onNameChange={updateName}
               onSelect={(id) => {
                 chooseOption(currentStep.questionId, id);
                 if (currentStep.questionId === "currency") {
@@ -316,281 +350,47 @@ export default function OnboardingScreen() {
                   setCurrencySearchOpen(false);
                 }
               }}
+              onSubmitName={goForward}
             />
           ) : (
-            <EducationContent step={currentStep} goal={answers.desiredOutcome} />
+            <InviteContent step={currentStep} />
           )}
         </SafeAreaView>
       </Animated.View>
 
-      {showQuestionChrome ? (
-        <SafeAreaView pointerEvents="box-none" style={styles.chromeOverlay}>
-          <QuestionHeader
-            activeIndex={progressIndex}
-            showBack={stepIndex > 0}
-            onBack={goBack}
+      <SafeAreaView pointerEvents="box-none" style={styles.chromeOverlay}>
+        <ConversationHeader
+          chapter={currentStep.chapter}
+          showBack={stepIndex > 0}
+          onBack={goBack}
+        />
+        <View style={styles.chromeSpacer} />
+        {currentStep.kind === "story" ? (
+          <StoryFooter
+            buttonLabel={currentStep.continueLabel}
+            error={error}
+            progressKey={`${currentStep.id}:${storyReadyCycle}`}
+            ready={storyReady}
+            readyDelay={storyReadyDelay}
+            saving={saving}
+            showSignIn={stepIndex === 0}
+            onContinue={goForward}
+            onSignIn={goToSignIn}
           />
-          <View style={styles.chromeSpacer} />
+        ) : (
           <Footer
+            disabled={saving || currencySearchOpen || !canContinueQuestion}
+            error={error}
             label={
-              currentStep.kind === "education"
+              currentStep.kind === "invite"
                 ? currentStep.continueLabel
                 : "Continue"
             }
-            disabled={
-              saving ||
-              currencySearchOpen ||
-              (currentStep.kind === "question" && !selected)
-            }
             onContinue={goForward}
-            error={error}
-            whiteBackground={isQuestionStep}
           />
-        </SafeAreaView>
-      ) : showStoryFooter ? (
-        <SafeAreaView edges={["bottom"]} style={styles.welcomeFooter}>
-          <PrimaryButton
-            label={currentStep.continueLabel}
-            disabled={saving}
-            onPress={goForward}
-          />
-          {stepIndex === 0 ? (
-            <ScalePressable
-              accessibilityLabel="Already have an account? Sign in"
-              disabled={saving}
-              onPress={goToSignIn}
-            >
-              <Text style={styles.existingAccountText}>
-                Already have an account?{" "}
-                <Text style={styles.existingAccountLink}>Sign in</Text>
-              </Text>
-            </ScalePressable>
-          ) : null}
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        </SafeAreaView>
-      ) : currentStep.kind === "conversation" ? null : (
-        <SafeAreaView edges={["bottom"]} style={styles.welcomeFooter}>
-          <PrimaryButton
-            label={currentStep.continueLabel}
-            disabled={saving}
-            onPress={goForward}
-          />
-          <ScalePressable
-            accessibilityLabel="Already have an account? Sign in"
-            disabled={saving}
-            onPress={goToSignIn}
-          >
-            <Text style={styles.existingAccountText}>
-              Already have an account?{" "}
-              <Text style={styles.existingAccountLink}>Sign in</Text>
-            </Text>
-          </ScalePressable>
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        </SafeAreaView>
-      )}
-    </ContentFade>
-  );
-}
-
-function ConversationContent({
-  step,
-  saving,
-  error,
-  onBack,
-  onContinue,
-}: {
-  step: ConversationStep;
-  saving: boolean;
-  error: string | null;
-  onBack: () => void;
-  onContinue: () => void;
-}) {
-  const reduceMotion = useReducedMotion();
-  const [readyToContinue, setReadyToContinue] = useState(reduceMotion);
-  const activeLine = useSharedValue(reduceMotion ? step.lines.length - 1 : 0);
-
-  useEffect(() => {
-    if (reduceMotion) {
-      activeLine.set(step.lines.length - 1);
-      setReadyToContinue(true);
-      return;
-    }
-
-    activeLine.set(0);
-    setReadyToContinue(false);
-    const secondLineTimeout = setTimeout(() => {
-      activeLine.set(withTiming(1, { duration: 520, easing: EASE_OUT }));
-    }, 1250);
-    const thirdLineTimeout = setTimeout(() => {
-      activeLine.set(withTiming(2, { duration: 520, easing: EASE_OUT }));
-    }, 2500);
-    const continueTimeout = setTimeout(() => setReadyToContinue(true), 3200);
-
-    return () => {
-      clearTimeout(secondLineTimeout);
-      clearTimeout(thirdLineTimeout);
-      clearTimeout(continueTimeout);
-    };
-  }, [activeLine, reduceMotion, step.lines.length]);
-
-  return (
-    <View style={styles.conversationContent}>
-      <View style={styles.conversationBack}>
-        <BackButton onPress={onBack} />
-      </View>
-
-      <View style={styles.conversationCopy}>
-        {reduceMotion ? (
-          <View style={styles.conversationStaticCopy}>
-            {step.lines.map((line, index) => (
-              <Text
-                key={line}
-                style={[
-                  styles.conversationLine,
-                  index === step.lines.length - 1 && styles.conversationFinalLine,
-                ]}
-              >
-                {line}
-              </Text>
-            ))}
-          </View>
-        ) : (
-          step.lines.map((line, index) => (
-            <ConversationLine
-              key={line}
-              line={line}
-              index={index}
-              activeLine={activeLine}
-            />
-          ))
         )}
-      </View>
-
-      <Animated.View
-        entering={
-          reduceMotion
-            ? undefined
-            : FadeIn.duration(260).delay(3100).easing(EASE_OUT)
-        }
-        style={styles.conversationFooter}
-      >
-        <PrimaryButton
-          label={step.continueLabel}
-          disabled={saving || !readyToContinue}
-          onPress={onContinue}
-        />
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      </Animated.View>
-    </View>
-  );
-}
-
-function ConversationLine({
-  line,
-  index,
-  activeLine,
-}: {
-  line: string;
-  index: number;
-  activeLine: SharedValue<number>;
-}) {
-  const frameStyle = useAnimatedStyle(() => {
-    const distance = Math.abs(index - activeLine.get());
-    return {
-      opacity: interpolate(
-        distance,
-        [0, 1, 2],
-        [1, 0.38, 0.12],
-        Extrapolation.CLAMP,
-      ),
-      transform: [
-        { translateY: (index - activeLine.get()) * 108 },
-        {
-          scale: interpolate(
-            distance,
-            [0, 1],
-            [1, 0.94],
-            Extrapolation.CLAMP,
-          ),
-        },
-      ],
-    };
-  });
-  const textStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(
-      Math.min(Math.abs(index - activeLine.get()), 1),
-      [0, 1],
-      [Finn.ink, Finn.secondary],
-    ),
-  }));
-
-  return (
-    <Animated.View style={[styles.lyricLineFrame, frameStyle]}>
-      <Animated.Text style={[styles.conversationLine, textStyle]}>
-        {line}
-      </Animated.Text>
-    </Animated.View>
-  );
-}
-
-function WelcomeStep() {
-  return (
-    <ScrollView
-      contentContainerStyle={styles.welcomeContent}
-      showsVerticalScrollIndicator={false}
-    >
-      <Animated.View entering={FadeIn.duration(260)} style={styles.brandPill}>
-        <View style={styles.brandMark}>
-          <Icon name="wallet" size={18} color={Finn.primary} animation={false} />
-        </View>
-        <Text style={styles.brandText}>FINN</Text>
-      </Animated.View>
-
-      <Animated.View
-        entering={FadeInDown.duration(360)
-          .delay(50)
-          .easing(EASE_OUT)
-          .reduceMotion(ReduceMotion.System)}
-        style={styles.welcomePreview}
-      >
-        <View style={styles.mockupPlaceholder}>
-          <Text style={styles.mockupPlaceholderText}>APP MOCKUP</Text>
-        </View>
-      </Animated.View>
-
-      <Animated.View
-        entering={FadeInDown.duration(360)
-          .delay(120)
-          .easing(EASE_OUT)
-          .reduceMotion(ReduceMotion.System)}
-        style={styles.welcomeCopy}
-      >
-        <Text style={styles.welcomeTitle}>Your money,{"\n"}made simple.</Text>
-        <Text style={styles.welcomeSubtitle}>
-          Like Notes, but it remembers the numbers.
-        </Text>
-      </Animated.View>
-    </ScrollView>
-  );
-}
-
-function PreviewResult({
-  icon,
-  label,
-  amount,
-}: {
-  icon: "food" | "car";
-  label: string;
-  amount: string;
-}) {
-  return (
-    <View style={styles.previewResult}>
-      <View style={styles.previewResultIcon}>
-        <Icon name={icon} size={16} color={Finn.primary} animation={false} />
-      </View>
-      <Text style={styles.previewResultLabel}>{label}</Text>
-      <Text style={styles.previewResultAmount}>{amount}</Text>
-    </View>
+      </SafeAreaView>
+    </ContentFade>
   );
 }
 
@@ -599,23 +399,39 @@ function QuestionContent({
   selected,
   currencySearchOpen,
   onCurrencySearchChange,
+  onNameChange,
   onSelect,
+  onSubmitName,
 }: {
   step: QuestionStep;
   selected?: string;
   currencySearchOpen: boolean;
   onCurrencySearchChange: (open: boolean) => void;
+  onNameChange: (name: string) => void;
   onSelect: (id: string) => void;
+  onSubmitName: () => void;
 }) {
   const focused = useIsFocused();
 
-  if (step.questionId === "currency") {
+  if (step.responseType === "name") {
+    return (
+      <NameQuestionContent
+        active={focused}
+        step={step}
+        value={selected ?? ""}
+        onChange={onNameChange}
+        onSubmit={onSubmitName}
+      />
+    );
+  }
+
+  if (step.responseType === "currency") {
     return (
       <CurrencyQuestionContent
-        step={step}
-        selected={selected}
-        searchOpen={currencySearchOpen}
         active={focused}
+        searchOpen={currencySearchOpen}
+        selected={selected}
+        step={step}
         onSearchOpen={() => onCurrencySearchChange(true)}
         onSelect={onSelect}
       />
@@ -629,16 +445,13 @@ function QuestionContent({
       showsVerticalScrollIndicator={false}
     >
       <CharSpriteAnim animType={step.animType} active={focused} size={180} />
-      <View style={styles.questionCopy}>
-        <Text style={styles.questionTitle}>{step.title}</Text>
-        <Text style={styles.questionSubtitle}>{step.subtitle}</Text>
-      </View>
+      <QuestionCopy step={step} />
       <View style={styles.optionsContent}>
         {step.options.map((option, index) => (
           <Animated.View
             key={option.id}
-            entering={FadeInDown.duration(260)
-              .delay(35 + index * 45)
+            entering={FadeInDown.duration(230)
+              .delay(30 + index * 35)
               .easing(EASE_OUT)
               .reduceMotion(ReduceMotion.System)}
           >
@@ -654,18 +467,96 @@ function QuestionContent({
   );
 }
 
+function NameQuestionContent({
+  active,
+  step,
+  value,
+  onChange,
+  onSubmit,
+}: {
+  active: boolean;
+  step: QuestionStep;
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.nameFrame}
+    >
+      <ScrollView
+        contentContainerStyle={styles.nameContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <CharSpriteAnim animType={step.animType} active={active} size={180} />
+        <QuestionCopy step={step} centered />
+        <View style={styles.nameInputShell}>
+          <TextInput
+            accessibilityLabel="Your name"
+            autoCapitalize="words"
+            autoCorrect={false}
+            autoFocus
+            maxLength={40}
+            placeholder="Type your name"
+            placeholderTextColor={Finn.muted}
+            returnKeyType="done"
+            style={styles.nameInput}
+            value={value}
+            onChangeText={onChange}
+            onSubmitEditing={onSubmit}
+          />
+          {value ? (
+            <Icon
+              name="sparkle"
+              size={20}
+              color={Finn.primary}
+              animation={false}
+            />
+          ) : null}
+        </View>
+        <Text style={styles.namePrivacy}>
+          Used only to make Finn feel personal.
+        </Text>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function QuestionCopy({
+  step,
+  centered = false,
+}: {
+  step: QuestionStep;
+  centered?: boolean;
+}) {
+  return (
+    <View
+      style={[styles.questionCopy, centered && styles.questionCopyCentered]}
+    >
+      <Text style={[styles.questionTitle, centered && styles.centeredText]}>
+        {step.title}
+      </Text>
+      <Text style={[styles.questionSubtitle, centered && styles.centeredText]}>
+        {step.subtitle}
+      </Text>
+    </View>
+  );
+}
+
 function CurrencyQuestionContent({
+  active,
   step,
   selected,
   searchOpen,
-  active,
   onSearchOpen,
   onSelect,
 }: {
+  active: boolean;
   step: QuestionStep;
   selected?: string;
   searchOpen: boolean;
-  active: boolean;
   onSearchOpen: () => void;
   onSelect: (id: string) => void;
 }) {
@@ -743,7 +634,9 @@ function CurrencyQuestionContent({
               No currencies found.
             </Text>
           }
-          ItemSeparatorComponent={() => <View style={styles.currencyResultGap} />}
+          ItemSeparatorComponent={() => (
+            <View style={styles.currencyResultGap} />
+          )}
           renderItem={({ item }) => (
             <CurrencyResultRow
               currency={item}
@@ -763,26 +656,24 @@ function CurrencyQuestionContent({
       showsVerticalScrollIndicator={false}
     >
       <CharSpriteAnim animType={step.animType} active={active} size={180} />
-      <View style={styles.questionCopy}>
-        <Text style={styles.questionTitle}>{step.title}</Text>
-        <Text style={styles.questionSubtitle}>{step.subtitle}</Text>
-      </View>
+      <QuestionCopy step={step} />
       <View style={styles.optionsContent}>
         {step.options.map((option, index) => {
           const other = option.id === "other";
           const searchedCurrencySelected =
             other && !!selected && !QUICK_CURRENCY_CODES.has(selected);
-          const visibleOption = searchedCurrencySelected && selectedCurrency
-            ? {
-                ...option,
-                description: `${selectedCurrency.name} · ${selectedCurrency.code} · ${currencySymbol(selectedCurrency.code)}`,
-              }
-            : option;
+          const visibleOption =
+            searchedCurrencySelected && selectedCurrency
+              ? {
+                  ...option,
+                  description: `${selectedCurrency.name} · ${selectedCurrency.code} · ${currencySymbol(selectedCurrency.code)}`,
+                }
+              : option;
           return (
             <Animated.View
               key={option.id}
-              entering={FadeInDown.duration(260)
-                .delay(35 + index * 45)
+              entering={FadeInDown.duration(230)
+                .delay(30 + index * 35)
                 .easing(EASE_OUT)
                 .reduceMotion(ReduceMotion.System)}
             >
@@ -852,6 +743,11 @@ function OptionRow({
       [0, 1],
       [Finn.line, Finn.primary],
     ),
+    backgroundColor: interpolateColor(
+      progress.get(),
+      [0, 1],
+      [Finn.surface, Finn.primarySoft],
+    ),
     transform: [{ scale: scale.get() }],
   }));
 
@@ -908,111 +804,183 @@ function OptionRow({
   );
 }
 
-function EducationContent({
-  step,
-  goal,
-}: {
-  step: EducationStep;
-  goal?: string;
-}) {
-  const tailoredLine =
-    goal === "patterns"
-      ? "The pattern is calculated from your entries—not guessed by AI."
-      : goal === "context"
-        ? "Finn keeps the people, places and reasons beside the numbers."
-        : goal === "effortless"
-          ? "One sentence is enough. Structure happens quietly afterward."
-          : "The original note stays with every organized entry.";
-
+function InviteContent({ step }: { step: InviteStep }) {
   return (
-    <ScrollView
-      contentContainerStyle={styles.educationContent}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.educationCopy}>
-        <Text style={styles.eyebrow}>{step.eyebrow}</Text>
-        <Text style={styles.educationTitle}>{step.title}</Text>
-        <Text style={styles.educationSubtitle}>{step.subtitle}</Text>
+    <View style={styles.inviteContent}>
+      <Text style={styles.inviteTitle}>{step.title}</Text>
+      <Text style={styles.inviteSubtitle}>{step.subtitle}</Text>
+      <View style={styles.outcomeRow}>
+        {[
+          ["sparkle", "Calm"],
+          ["note", "Context"],
+          ["bookmark", "Memory"],
+        ].map(([icon, label]) => (
+          <View key={label} style={styles.outcomePill}>
+            <Icon
+              name={icon as OnboardingOption["icon"]}
+              size={16}
+              color={Finn.primary}
+              animation={false}
+            />
+            <Text style={styles.outcomeLabel}>{label}</Text>
+          </View>
+        ))}
       </View>
-
-      {step.variant === "capture" ? (
-        <View style={styles.educationCard}>
-          <View style={styles.educationCardHeader}>
-            <View style={styles.miniMark}>
-              <Icon name="note" size={18} color={Finn.primary} animation={false} />
-            </View>
-            <Text style={styles.educationCardLabel}>A note becomes memory</Text>
-          </View>
-          <View style={styles.noteBubble}>
-            <Text style={styles.noteBubbleText}>
-              Lunch with Aswin 340 and Uber back home 280
-            </Text>
-          </View>
-          <View style={styles.understoodLabelRow}>
-            <Icon name="sparkle" size={15} color={Finn.primary} animation={false} />
-            <Text style={styles.understoodLabel}>FINN UNDERSTOOD</Text>
-          </View>
-          <PreviewResult icon="food" label="Food & drinks" amount="₹340" />
-          <PreviewResult icon="car" label="Transport" amount="₹280" />
-          <Text style={styles.tailoredLine}>{tailoredLine}</Text>
-        </View>
-      ) : (
-        <View style={styles.educationCard}>
-          <View style={styles.searchPrompt}>
-            <Icon name="search" size={19} color={Finn.secondary} animation={false} />
-            <Text style={styles.searchPromptText}>
-              How much did I spend eating out this month?
-            </Text>
-          </View>
-          <View style={styles.answerBlock}>
-            <Text style={styles.answerEyebrow}>THIS MONTH · FOOD & DRINKS</Text>
-            <Text style={styles.answerAmount}>₹6,240</Text>
-            <Text style={styles.answerDetail}>
-              14 entries · exact source notes attached
-            </Text>
-          </View>
-          <View style={styles.trustRow}>
-            <Icon name="bookmark" size={17} color={Finn.primary} animation={false} />
-            <Text style={styles.trustText}>
-              Your notes stay yours. Totals come from structured records.
-            </Text>
-          </View>
-        </View>
-      )}
-    </ScrollView>
+    </View>
   );
 }
 
-function QuestionHeader({
-  activeIndex,
+function ConversationHeader({
+  chapter,
   showBack,
   onBack,
 }: {
-  activeIndex: number;
+  chapter: number;
   showBack: boolean;
   onBack: () => void;
 }) {
-  const current = Math.min(
-    progressStepIds.length,
-    Math.max(1, activeIndex + 1),
-  );
-  const progressWidth = `${(current / progressStepIds.length) * 100}%` as const;
-
+  const progressWidth =
+    `${(chapter / ONBOARDING_CHAPTER_COUNT) * 100}%` as const;
   return (
     <View style={styles.questionHeader}>
-      {showBack ? <BackButton onPress={onBack} /> : <View style={styles.backSpacer} />}
-      <View
-        style={styles.progressTrack}
-        accessibilityRole="progressbar"
-        accessibilityValue={{
-          min: 1,
-          max: progressStepIds.length,
-          now: current,
-        }}
-      >
-        <View style={[styles.progressFill, { width: progressWidth }]} />
+      {showBack ? (
+        <BackButton onPress={onBack} />
+      ) : (
+        <View style={styles.backSpacer} />
+      )}
+      <View style={styles.headerMiddle}>
+        <View
+          style={styles.progressTrack}
+          accessibilityRole="progressbar"
+          accessibilityValue={{
+            min: 1,
+            max: ONBOARDING_CHAPTER_COUNT,
+            now: chapter,
+          }}
+        >
+          <View style={[styles.progressFill, { width: progressWidth }]} />
+        </View>
       </View>
     </View>
+  );
+}
+
+function StoryFooter({
+  buttonLabel,
+  error,
+  progressKey,
+  ready,
+  readyDelay,
+  saving,
+  showSignIn,
+  onContinue,
+  onSignIn,
+}: {
+  buttonLabel: string;
+  error: string | null;
+  progressKey: string;
+  ready: boolean;
+  readyDelay: number;
+  saving: boolean;
+  showSignIn: boolean;
+  onContinue: () => void;
+  onSignIn: () => void;
+}) {
+  return (
+    <View style={styles.storyFooter}>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <StoryProgressButton
+        disabled={saving || !ready}
+        durationMs={readyDelay}
+        label={buttonLabel}
+        progressKey={progressKey}
+        ready={ready}
+        onPress={onContinue}
+      />
+      {showSignIn ? (
+        <ScalePressable
+          accessibilityLabel="Already have an account? Sign in"
+          disabled={saving}
+          onPress={onSignIn}
+        >
+          <Text style={styles.existingAccountText}>
+            Already have an account?{" "}
+            <Text style={styles.existingAccountLink}>Sign in</Text>
+          </Text>
+        </ScalePressable>
+      ) : null}
+    </View>
+  );
+}
+
+function StoryProgressButton({
+  disabled,
+  durationMs,
+  label,
+  progressKey,
+  ready,
+  onPress,
+}: {
+  disabled: boolean;
+  durationMs: number;
+  label: string;
+  progressKey: string;
+  ready: boolean;
+  onPress: () => void;
+}) {
+  const reduced = useMotionPreference();
+  const buttonWidth = useSharedValue(0);
+  const fillProgress = useSharedValue(0);
+
+  useEffect(() => {
+    cancelAnimation(fillProgress);
+    fillProgress.set(0);
+    if (!reduced && durationMs > 0) {
+      fillProgress.set(
+        withTiming(1, {
+          duration: durationMs,
+          easing: Easing.linear,
+        }),
+      );
+    }
+  }, [durationMs, fillProgress, progressKey, reduced]);
+
+  useEffect(() => {
+    if (!ready) return;
+    cancelAnimation(fillProgress);
+    fillProgress.set(
+      withTiming(1, {
+        duration: 150,
+        easing: EASE_OUT,
+        reduceMotion: ReduceMotion.System,
+      }),
+    );
+  }, [fillProgress, ready]);
+
+  const fillStyle = useAnimatedStyle(() => ({
+    width: buttonWidth.get() * fillProgress.get(),
+  }));
+
+  return (
+    <ScalePressable
+      accessibilityLabel={ready ? label : `${label}. Getting ready`}
+      disabled={disabled}
+      onPress={onPress}
+    >
+      <View
+        style={styles.storyProgressButton}
+        onLayout={(event) => buttonWidth.set(event.nativeEvent.layout.width)}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.storyProgressFill, fillStyle]}
+        />
+        <View pointerEvents="none" style={styles.storyProgressContent}>
+          <Text style={styles.storyProgressText}>{label}</Text>
+          <Icon name="chevron" size={18} color={Finn.ink} animation={false} />
+        </View>
+      </View>
+    </ScalePressable>
   );
 }
 
@@ -1021,25 +989,21 @@ function Footer({
   disabled,
   onContinue,
   error,
-  whiteBackground = false,
 }: {
   label: string;
   disabled: boolean;
   onContinue: () => void;
   error: string | null;
-  whiteBackground?: boolean;
 }) {
   return (
-    <View style={[styles.footer, whiteBackground && styles.questionCanvas]}>
+    <View style={styles.footer}>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      <View style={styles.primaryButtonGrow}>
-        <PrimaryButton
-          label={label}
-          disabled={disabled}
-          onPress={onContinue}
-          compact
-        />
-      </View>
+      <PrimaryButton
+        label={label}
+        disabled={disabled}
+        onPress={onContinue}
+        compact
+      />
     </View>
   );
 }
@@ -1085,14 +1049,7 @@ function PrimaryButton({
           disabled && styles.primaryButtonDisabled,
         ]}
       >
-        <Text
-          style={[
-            styles.primaryButtonText,
-            compact && styles.questionPrimaryButtonText,
-          ]}
-        >
-          {label}
-        </Text>
+        <Text style={styles.primaryButtonText}>{label}</Text>
         {!compact ? (
           <Icon name="chevron" size={18} color="#FFFFFF" animation={false} />
         ) : null}
@@ -1152,206 +1109,8 @@ function ScalePressable({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Finn.canvas, overflow: "hidden" },
-  loadingCanvas: { flex: 1, backgroundColor: Finn.canvas },
   safeArea: { flex: 1, backgroundColor: Finn.canvas },
   questionCanvas: { backgroundColor: "#FFFFFF" },
-  conversationContent: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 14,
-  },
-  conversationBack: { alignSelf: "flex-start" },
-  conversationCopy: {
-    flex: 1,
-    width: "100%",
-    maxWidth: 460,
-    alignSelf: "center",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    overflow: "hidden",
-  },
-  conversationStaticCopy: { alignItems: "center", gap: 24 },
-  conversationLine: {
-    maxWidth: 390,
-    color: Finn.secondary,
-    fontFamily: JournalType.bold,
-    fontSize: 29,
-    lineHeight: 35,
-    letterSpacing: -0.65,
-    textAlign: "center",
-  },
-  lyricLineFrame: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
-  },
-  conversationFinalLine: { color: Finn.ink },
-  conversationFooter: { width: "100%" },
-  welcomeContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 18,
-    paddingBottom: 126,
-    justifyContent: "center",
-  },
-  brandPill: {
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    marginBottom: 20,
-  },
-  brandMark: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: Finn.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandText: {
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 14,
-    letterSpacing: 2.4,
-  },
-  welcomePreview: {
-    width: "100%",
-    maxWidth: 390,
-    alignSelf: "center",
-    backgroundColor: Finn.surface,
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: Finn.line,
-    padding: 12,
-    ...Finn.shadow,
-  },
-  mockupPlaceholder: {
-    minHeight: 330,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: Finn.line,
-    backgroundColor: Finn.wash,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mockupPlaceholderText: {
-    color: Finn.muted,
-    fontFamily: JournalType.medium,
-    fontSize: 11,
-    letterSpacing: 1.5,
-  },
-  previewTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 18,
-  },
-  previewDate: {
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 15,
-  },
-  previewStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: Finn.primarySoft,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  previewStatusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Finn.primary,
-  },
-  previewStatusText: {
-    color: Finn.ink,
-    fontFamily: JournalType.medium,
-    fontSize: 11,
-  },
-  previewNote: {
-    color: Finn.ink,
-    fontFamily: JournalType.regular,
-    fontSize: 19,
-    lineHeight: 27,
-  },
-  previewDivider: { height: 1, backgroundColor: Finn.line, marginVertical: 18 },
-  previewResult: {
-    minHeight: 42,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  previewResultIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Finn.primarySoft,
-  },
-  previewResultLabel: {
-    flex: 1,
-    color: Finn.ink,
-    fontFamily: JournalType.medium,
-    fontSize: 14,
-  },
-  previewResultAmount: {
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 14,
-  },
-  welcomeCopy: { alignItems: "center", marginTop: 26, paddingHorizontal: 8 },
-  welcomeTitle: {
-    maxWidth: 430,
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 42,
-    lineHeight: 45,
-    letterSpacing: -1.4,
-    textAlign: "center",
-  },
-  welcomeSubtitle: {
-    marginTop: 10,
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 17,
-    lineHeight: 24,
-    textAlign: "center",
-  },
-  welcomeFooter: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: Finn.canvas,
-  },
-  existingAccountText: {
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    lineHeight: 20,
-    textAlign: "center",
-    paddingVertical: 4,
-  },
-  existingAccountLink: {
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-  },
   chromeOverlay: {
     ...StyleSheet.absoluteFill,
     zIndex: 5,
@@ -1366,9 +1125,10 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 10,
   },
+  headerMiddle: { flex: 1 },
   progressTrack: {
-    flex: 1,
-    height: 4,
+    width: "100%",
+    height: 3,
     overflow: "hidden",
     borderRadius: 2,
     backgroundColor: "#E4DEDA",
@@ -1376,16 +1136,9 @@ const styles = StyleSheet.create({
   progressFill: {
     height: "100%",
     borderRadius: 2,
-    backgroundColor: Finn.ink,
+    backgroundColor: Finn.primary,
   },
   chromeSpacer: { flex: 1 },
-  footer: {
-    alignItems: "stretch",
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: Finn.canvas,
-  },
   backSpacer: { width: 34, height: 34 },
   backButton: {
     width: 34,
@@ -1398,7 +1151,48 @@ const styles = StyleSheet.create({
     borderColor: Finn.line,
     boxShadow: "0px 2px 8px rgba(104, 92, 84, 0.08)",
   },
-  primaryButtonGrow: { width: "100%" },
+  storyFooter: {
+    alignItems: "stretch",
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 12,
+    backgroundColor: Finn.canvas,
+  },
+  storyProgressButton: {
+    minHeight: 56,
+    overflow: "hidden",
+    borderRadius: 28,
+    backgroundColor: Finn.primarySoft,
+    borderWidth: 1,
+    borderColor: "rgba(32, 200, 120, 0.24)",
+  },
+  storyProgressFill: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: Finn.primary,
+  },
+  storyProgressContent: {
+    minHeight: 54,
+    paddingHorizontal: 22,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+  },
+  storyProgressText: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 16,
+  },
+  footer: {
+    alignItems: "stretch",
+    paddingHorizontal: 24,
+    paddingTop: 10,
+    paddingBottom: 14,
+    backgroundColor: "#FFFFFF",
+  },
   primaryButton: {
     minHeight: 56,
     borderRadius: 28,
@@ -1415,9 +1209,17 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: "#FFFFFF",
     fontFamily: JournalType.bold,
-    fontSize: 17,
+    fontSize: 16,
   },
-  questionPrimaryButtonText: { fontSize: 15 },
+  existingAccountText: {
+    color: Finn.secondary,
+    fontFamily: JournalType.regular,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: "center",
+    paddingVertical: 4,
+  },
+  existingAccountLink: { color: Finn.ink, fontFamily: JournalType.bold },
   errorText: {
     color: Finn.danger,
     fontFamily: JournalType.medium,
@@ -1427,12 +1229,114 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingBottom: 8,
   },
-  questionScroll: { flex: 1, marginTop: 54, marginBottom: 82 },
-  currencySearchFrame: {
-    flex: 1,
-    marginTop: 54,
-    marginBottom: 82,
+  questionScroll: { flex: 1, marginTop: 54, marginBottom: 78 },
+  stepContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingTop: 18,
+    paddingBottom: 22,
   },
+  questionCopy: { paddingHorizontal: 24, paddingBottom: 4 },
+  questionCopyCentered: { alignItems: "center" },
+  questionTitle: {
+    maxWidth: 460,
+    color: Finn.ink,
+    fontFamily: JournalType.black,
+    fontSize: 27,
+    lineHeight: 32,
+    letterSpacing: -0.65,
+  },
+  questionSubtitle: {
+    maxWidth: 450,
+    marginTop: 8,
+    color: Finn.secondary,
+    fontFamily: JournalType.medium,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  centeredText: { textAlign: "center" },
+  optionsContent: {
+    paddingHorizontal: 24,
+    paddingTop: 18,
+    paddingBottom: 18,
+    gap: 10,
+  },
+  optionRow: {
+    minHeight: 68,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderRadius: 19,
+  },
+  optionIcon: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  optionCopy: { flex: 1, gap: 3 },
+  optionLabel: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 15,
+    lineHeight: 19,
+  },
+  optionDescription: {
+    color: Finn.secondary,
+    fontFamily: JournalType.medium,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  optionIndicator: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Finn.primary,
+  },
+  optionIndicatorSpacer: { width: 18, height: 18 },
+  nameFrame: { flex: 1, marginTop: 54, marginBottom: 78 },
+  nameContent: {
+    flexGrow: 1,
+    justifyContent: "flex-start",
+    paddingHorizontal: 24,
+    paddingTop: 44,
+    paddingBottom: 32,
+  },
+  nameInputShell: {
+    width: "100%",
+    maxWidth: 430,
+    minHeight: 68,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 28,
+    paddingHorizontal: 20,
+    borderWidth: 1.5,
+    borderColor: Finn.primary,
+    borderRadius: 22,
+    backgroundColor: Finn.primarySoft,
+  },
+  nameInput: {
+    flex: 1,
+    minWidth: 0,
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 23,
+  },
+  namePrivacy: {
+    marginTop: 10,
+    color: Finn.muted,
+    fontFamily: JournalType.medium,
+    fontSize: 11,
+    textAlign: "center",
+  },
+  currencySearchFrame: { flex: 1, marginTop: 54, marginBottom: 78 },
   currencySearchList: { flex: 1 },
   currencySearchContent: {
     flexGrow: 1,
@@ -1475,215 +1379,51 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "center",
   },
-  stepContent: { flexGrow: 1, paddingTop: 6, paddingBottom: 20 },
-  questionCopy: { paddingHorizontal: 24, paddingTop: 12 },
-  eyebrow: {
-    color: Finn.primary,
-    fontFamily: JournalType.bold,
-    fontSize: 11,
-    lineHeight: 16,
-    letterSpacing: 1.25,
-    marginBottom: 9,
+  inviteContent: {
+    flex: 1,
+    maxWidth: 480,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    paddingTop: 54,
+    paddingBottom: 86,
   },
-  questionTitle: {
-    maxWidth: 450,
+  inviteTitle: {
     color: Finn.ink,
     fontFamily: JournalType.black,
-    fontSize: 22,
-    lineHeight: 27,
-    letterSpacing: -0.35,
+    fontSize: 38,
+    lineHeight: 42,
+    letterSpacing: -1.2,
+    textAlign: "center",
   },
-  questionSubtitle: {
-    maxWidth: 450,
-    marginTop: 6,
+  inviteSubtitle: {
+    marginTop: 16,
     color: Finn.secondary,
-    fontFamily: JournalType.medium,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  optionsContent: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 20,
-    gap: 10,
-  },
-  optionRow: {
-    minHeight: 66,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderRadius: 18,
-    backgroundColor: Finn.surface,
-  },
-  optionIcon: {
-    width: 24,
-    height: 24,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  optionCopy: { flex: 1, gap: 2 },
-  optionLabel: {
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 15,
-    lineHeight: 18,
-  },
-  optionDescription: {
-    color: Finn.secondary,
-    fontFamily: JournalType.medium,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  optionIndicator: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Finn.primary,
-  },
-  optionIndicatorSpacer: { width: 18, height: 18 },
-  educationContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 62,
-    paddingBottom: 104,
-    justifyContent: "center",
-  },
-  educationCopy: { marginBottom: 24 },
-  educationTitle: {
-    maxWidth: 460,
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 33,
-    lineHeight: 38,
-    letterSpacing: -0.9,
-  },
-  educationSubtitle: {
-    maxWidth: 460,
-    marginTop: 9,
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  educationCard: {
-    width: "100%",
-    maxWidth: 440,
-    alignSelf: "center",
-    padding: 20,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: Finn.line,
-    backgroundColor: Finn.surface,
-    ...Finn.shadow,
-  },
-  educationCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 14,
-  },
-  miniMark: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: Finn.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  educationCardLabel: {
-    color: Finn.ink,
-    fontFamily: JournalType.bold,
-    fontSize: 15,
-  },
-  noteBubble: {
-    padding: 15,
-    borderRadius: 17,
-    backgroundColor: Finn.wash,
-  },
-  noteBubbleText: {
-    color: Finn.ink,
-    fontFamily: JournalType.regular,
-    fontSize: 17,
-    lineHeight: 24,
-  },
-  understoodLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    marginTop: 18,
-    marginBottom: 5,
-  },
-  understoodLabel: {
-    color: Finn.primary,
-    fontFamily: JournalType.bold,
-    fontSize: 10,
-    letterSpacing: 1.05,
-  },
-  tailoredLine: {
-    marginTop: 13,
-    paddingTop: 13,
-    borderTopWidth: 1,
-    borderTopColor: Finn.line,
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  searchPrompt: {
-    minHeight: 70,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderRadius: 18,
-    backgroundColor: Finn.wash,
-  },
-  searchPromptText: {
-    flex: 1,
-    color: Finn.ink,
     fontFamily: JournalType.medium,
     fontSize: 16,
-    lineHeight: 22,
+    lineHeight: 23,
+    textAlign: "center",
   },
-  answerBlock: { paddingVertical: 23, alignItems: "center" },
-  answerEyebrow: {
-    color: Finn.secondary,
-    fontFamily: JournalType.bold,
-    fontSize: 10,
-    letterSpacing: 0.9,
+  outcomeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 28,
   },
-  answerAmount: {
-    marginTop: 6,
+  outcomePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: Finn.primarySoft,
+  },
+  outcomeLabel: {
     color: Finn.ink,
     fontFamily: JournalType.bold,
-    fontSize: 38,
-    letterSpacing: -1,
-  },
-  answerDetail: {
-    marginTop: 4,
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-  },
-  trustRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 9,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: Finn.line,
-  },
-  trustText: {
-    flex: 1,
-    color: Finn.secondary,
-    fontFamily: JournalType.regular,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
   },
 });

@@ -1,8 +1,8 @@
+import { useRotatingPlaceholder } from "@/components/ui/use-rotating-placeholder";
+import { Finn, JournalType } from "@/constants/theme";
+import { currencySymbol } from "@/utils/currency";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text } from "react-native";
-import { Finn, JournalType } from "@/constants/theme";
-import { useRotatingPlaceholder } from "@/components/ui/use-rotating-placeholder";
-import { currencySymbol } from "@/utils/currency";
 
 export function JournalEmptyPrompt({
   currency,
@@ -15,7 +15,7 @@ export function JournalEmptyPrompt({
   const phrases = useMemo(() => [
     "Write what you spent…",
     `2 coffees from Starbucks, ${symbol}360`,
-    `Uber back home, split ${symbol}432 with Aswin`,
+    `Uber back home, split ${symbol}432 with chris`,
   ], [symbol]);
   const visibleText = useRotatingPlaceholder(phrases);
 

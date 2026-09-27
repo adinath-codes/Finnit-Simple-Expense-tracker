@@ -5,7 +5,8 @@ export function canStoreAskResult(
   result: SearchResult,
 ): result is SearchResult & { revision: string } {
   return typeof result.revision === "string" && /^\d{1,19}$/.test(result.revision) &&
-    !result.stale && !result.needs_filters &&
+    !result.stale && !result.needs_filters && !result.needs_clarification &&
+    !result.unsupported_question &&
     (!!result.applied_filters || !!result.sql_session_id);
 }
 

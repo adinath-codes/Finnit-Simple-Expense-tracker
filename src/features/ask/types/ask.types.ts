@@ -55,8 +55,18 @@ export type SearchItem = {
 };
 export type SearchResult = {
   reason?: string;
+  needs_clarification?: boolean;
+  clarification_reason?: "conflicting_filters" | "ambiguous_period" | "ambiguous_entity";
+  unsupported_question?: boolean;
+  unsupported_reason?:
+    | "recurrence_status"
+    | "prediction"
+    | "external_data"
+    | "missing_values"
+    | "causal_inference"
+    | "unsupported_calculation";
   advanced_answer?: {
-    kind: "amount" | "date" | "count" | "comparison" | "list";
+    kind: "amount" | "date" | "count" | "comparison" | "list" | "sum" | "average" | "rank" | "breakdown";
     label: string;
     rows: {
       value_minor?: string;
@@ -64,6 +74,15 @@ export type SearchResult = {
       value_count?: string;
       currency?: string;
       label?: string;
+      primary_minor?: string;
+      comparison_minor?: string;
+      delta_minor?: string;
+      change_percent?: number | null;
+      start_date?: string;
+      end_date?: string;
+      comparison_start_date?: string;
+      comparison_end_date?: string;
+      rounded?: boolean;
     }[];
     start_date: string;
     end_date: string;
@@ -75,6 +94,7 @@ export type SearchResult = {
   applied_filters?: SearchPlan;
   totals?: MoneyTotal[];
   matching_count?: number;
+  evidence_count?: number;
   known_split_count?: number;
   unknown_split_count?: number;
   metric?: SearchPlan["metric"];
@@ -85,12 +105,18 @@ export type SearchResult = {
     merchant_id: string | null;
     total_minor: string;
   }[];
-  filter_labels?: { merchant: string | null; category: string | null };
+  filter_labels?: {
+    merchant: string | null;
+    category: string | null;
+    merchants?: { id: string; label: string }[];
+    categories?: { id: string; label: string }[];
+  };
   interpretation?:
     | "deterministic"
     | "structured_model"
     | "cached_model"
-    | "explicit_filters";
+    | "explicit_filters"
+    | "guarded_sql";
   next_cursor?: SearchCursor | null;
   has_more?: boolean;
   revision?: string;
@@ -113,6 +139,7 @@ export type SearchRequest = (
   | {
       query: string;
       timezone: string;
+      default_currency?: string;
       selected_range?: { start_date: string; end_date: string };
     }
   | { filters: SearchPlan }

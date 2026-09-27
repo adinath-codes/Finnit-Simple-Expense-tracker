@@ -1,7 +1,7 @@
 /** Bundled, transparent atlases. Frames are numbered left-to-right, top-to-bottom. */
 export const characterAnimations = {
   desiredOutcome: {
-    source: require("@/assets/images/character/onboarding/desired-outcome-sprite.png"),
+    source: require("@/assets/images/character/onboarding/desired-outcome-sprite.webp"),
     columns: 2,
     rows: 2,
     sequence: [
@@ -12,7 +12,7 @@ export const characterAnimations = {
     ],
   },
   blindSpot: {
-    source: require("@/assets/images/character/onboarding/blind-spot-sprite.png"),
+    source: require("@/assets/images/character/onboarding/blind-spot-sprite.webp"),
     columns: 2,
     rows: 2,
     sequence: [
@@ -23,7 +23,7 @@ export const characterAnimations = {
     ],
   },
   futureQuestion: {
-    source: require("@/assets/images/character/onboarding/future-question-sprite.png"),
+    source: require("@/assets/images/character/onboarding/future-question-sprite.webp"),
     columns: 2,
     rows: 2,
     sequence: [
@@ -34,7 +34,7 @@ export const characterAnimations = {
     ],
   },
   memoryContext: {
-    source: require("@/assets/images/character/onboarding/memory-context-sprite.png"),
+    source: require("@/assets/images/character/onboarding/memory-context-sprite.webp"),
     columns: 2,
     rows: 2,
     sequence: [
@@ -45,7 +45,7 @@ export const characterAnimations = {
     ],
   },
   captureStyle: {
-    source: require("@/assets/images/character/onboarding/capture-style-sprite.png"),
+    source: require("@/assets/images/character/onboarding/capture-style-sprite.webp"),
     columns: 2,
     rows: 2,
     sequence: [
@@ -56,7 +56,7 @@ export const characterAnimations = {
     ],
   },
   currency: {
-    source: require("@/assets/images/character/onboarding/currency-sprite.png"),
+    source: require("@/assets/images/character/onboarding/currency-sprite.webp"),
     columns: 2,
     rows: 2,
     sequence: [

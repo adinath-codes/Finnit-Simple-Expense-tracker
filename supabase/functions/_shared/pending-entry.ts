@@ -37,7 +37,7 @@ export function pendingExtraction(input: CaptureInput): Extraction {
     contexts: [],
     unresolved: ["gemini_pending"],
     schema_version: 2,
-    interpretation_summary: "Finn is waiting to understand this note.",
+    interpretation_summary: "I’m taking a look at this spending note.",
     participants: [],
     transaction_contexts: [],
     allocations: [],

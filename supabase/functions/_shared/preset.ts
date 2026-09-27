@@ -67,7 +67,7 @@ export function presetExtraction(
     contexts: [],
     unresolved: [],
     schema_version: 3,
-    interpretation_summary: "Added from a user-approved saved entry.",
+    interpretation_summary: "This spending came from one of your saved entries.",
     participants: [],
     transaction_contexts: [],
     allocations: [],

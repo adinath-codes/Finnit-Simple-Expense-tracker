@@ -53,6 +53,7 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@expo-google-fonts/caveat@0.4.2",
         "npm:@expo/ui@~57.0.20",
         "npm:@posthog/react-native-plugin@^2.9.4",
         "npm:@react-native-async-storage/async-storage@2.2.0",

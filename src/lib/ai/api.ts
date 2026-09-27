@@ -21,7 +21,6 @@ type BackendEndpoint =
   | "ask-money"
   | "ask-sql"
   | "refresh-entitlement"
-  | "redeem-testing-code"
   | "request-quota-review";
 
 async function callBackendRequest<T>(

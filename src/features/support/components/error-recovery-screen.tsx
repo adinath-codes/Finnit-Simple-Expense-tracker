@@ -118,7 +118,7 @@ export function ErrorRecoveryScreen({
         >
           <View style={styles.greenWash} />
           <Image
-            source={require("@/assets/images/character/error/recovery.png")}
+            source={require("@/assets/images/character/error/recovery.webp")}
             contentFit="contain"
             style={{
               width: artworkWidth,

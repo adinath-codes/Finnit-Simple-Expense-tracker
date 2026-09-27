@@ -18,15 +18,15 @@ export type CustomToastProps = {
 
 const presentation = {
   error: {
-    image: require("@/assets/images/character/toast/error.png"),
+    image: require("@/assets/images/character/toast/error.webp"),
     color: Finn.danger,
   },
   warning: {
-    image: require("@/assets/images/character/toast/warning.png"),
+    image: require("@/assets/images/character/toast/warning.webp"),
     color: "#A66A16",
   },
   info: {
-    image: require("@/assets/images/character/toast/info.png"),
+    image: require("@/assets/images/character/toast/info.webp"),
     color: Finn.blue,
   },
 } as const;

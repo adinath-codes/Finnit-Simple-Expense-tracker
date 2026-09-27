@@ -1,8 +1,8 @@
 # Finn character sprites
 
 `onboarding/` contains a distinct illustration for every onboarding question.
-Each `*-sprite.png` is a transparent 1254 × 1254 atlas with four registered
-627 × 627 cells, numbered left-to-right and top-to-bottom. Each matching
+Each `*-sprite.webp` is a transparent 1080 × 1080 atlas with four registered
+540 × 540 cells, numbered left-to-right and top-to-bottom. Each matching
 `*-base.png` is the complete generated source scene used to build that atlas.
 
 | Animation | Question scene |
@@ -27,16 +27,16 @@ movement at each deformation region's center and edge, then varies the green
 hatching independently. Shade fragments appear or disappear, use uneven density,
 and sit slightly higher or lower per frame. The character and props remain
 registered; the app never translates, bobs, rotates, or crossfades the scene.
+The Linux build step uses ImageMagick to resize the generated 2 × 2 atlas and
+encode transparent WebP at quality 95 with full-quality alpha.
 
 ```bash
 npm run build:character-sprites
 ```
 
-The older `thinking*.png` files remain as unused development history.
-
 ## Sign-in edge characters
 
-`../auth/finn-peek-left.png` and `../auth/finn-peek-right.png` are transparent
+`../auth/finn-peek-left.webp` and `../auth/finn-peek-right.webp` are transparent
 sign-in decorations generated with the built-in image tool on September 20,
 2026. The existing `desired-outcome-base.png` and `capture-style-base.png` scenes
 were strict identity and drawing-style references. One pose peeks around the
@@ -46,23 +46,20 @@ interiors, and sparse `#20C878` pencil hatching. They contain no text or logos.
 
 ## Journal header characters
 
-`header/` contains three transparent, monochrome Finn cutouts for the journal
-header: sitting cross-legged with a laptop, lying on the floor doing paperwork,
-and using a calculator. The header chooses one once when the app's JavaScript
-bundle starts, so the character stays stable during the session and changes on
-a later app launch.
+`header/` contains the active transparent monochrome Finn cutouts for the
+journal, Ask Finn, and notification surfaces.
 
 `finn-laptop-finn-it.png` is the first approval prototype with the handwritten
 phrase “Finn it!” curved over Finn's upper body. The journal header temporarily
 uses only this prototype while the other two poses remain unchanged pending user
 approval.
 
-`finn-laptop-wordmark-v2.png` is the revised approval prototype. Its flat
+`finn-laptop-wordmark-v2.webp` is the revised approval prototype. Its flat
 `#20C878` handwritten glyphs use the full seated Finn as a shared visual
 replacement for both lowercase `i` letters: `F` and `nn` occupy the upper
 reading line, while `t!` sits at the lower right. The character remains strictly
 black and white on genuine transparency. The journal header currently uses this
-revision; the paperwork and calculator treatments still await approval.
+revision. The paperwork PNG stays in its notification-compatible format.
 
 The built-in image generation tool created the cutouts from the established Finn
 identity references. The final prompts required only black and white, genuine
@@ -79,7 +76,7 @@ gradients, shadows, extra characters, and watermarks were explicitly excluded.
 
 ## Toast reactions
 
-`toast/error.png`, `toast/warning.png`, and `toast/info.png` are three transparent
+`toast/error.webp`, `toast/warning.webp`, and `toast/info.webp` are three transparent
 black-and-white Finn bust portraits generated with the built-in image tool on
 September 21, 2026. The existing sign-in peek illustration was used as the
 strict identity and ink-style reference. Error is concerned with a hand near his
@@ -88,7 +85,7 @@ toast component supplies state color in text rather than in the character art.
 
 ## Recovery screen
 
-`error/recovery.png` is the transparent recovery-screen cutout generated with
+`error/recovery.webp` is the transparent recovery-screen cutout generated with
 the built-in image tool on September 22, 2026. Finn sits calmly and repairs a
 cracked piggy bank with a dollar-green bandage, turning a failure state into a
 small, manageable detour. The established thinking, toast-error, and onboarding
@@ -118,79 +115,3 @@ update React state on every frame. Every loop uses slightly uneven holds.
 Playback pauses while loading, inactive, or backgrounded; reduced motion removes
 the animation and displays the first pose. The illustration is decorative and
 hidden from accessibility navigation.
-
-## Legacy thinking-scene generation prompt
-
-Built-in image generation, using the user's hand-drawn sleeping-cat screenshot
-for line/texture style and `thinking-green.png` for human character identity.
-Generate four complete scenes in an exact invisible 2 × 2 atlas. Preserve the
-quiff, rectangular sunglasses, long angular face/neck, hand-on-chin pose and
-crossed arm. Regenerate all artwork with slightly wobbly black contours, varying
-pressure/width, occasional doubled contour fragments, dry-pencil breaks and
-grain only inside the marks. White interiors, dollar-green #20C878 hatching on
-the neck, hair underside, shoulders and arms. Irregular short scribbles and
-crosshatching with varied angles, spacing and ragged boundaries, not polished
-vector lines or evenly ruled shading.
-
-Above-left: prominent rough green question mark with a hatched offset shadow.
-Upper-right: small black-outlined lightbulb with green scribbled fill and short
-idea rays. Near the left shoulder: tiny thought spiral. Add a few sparse small
-green circles, asterisks and uneven dots. Keep the doodles relevant to thinking,
-clearly visible at phone size and spaced around the figure. No cat, sleep Zs,
-purple palette, video controls, captions, or finance dashboard.
-
-Four copies of one held pose and composition; only hatching/grain and a few tiny
-accent strokes or bulb-ray lengths change. Imperfect contours remain visually
-registered. Complete character and doodles in every square cell, identical scale
-and baseline, transparent padding, no cell overlap. Real transparent alpha,
-opaque white interiors, no paper rectangle, grid, border, logo or watermark.
-Requested 1536 × 1536; returned 1254 × 1254 and consumed proportionally.
-
-## Previous green character generation prompt (unused asset)
-
-Create a complete character sprite sheet: four full finished drawings, with the
-supplied storyboard used for identity only. Young man with a sculptural swept-up
-quiff, black rectangular sunglasses, angular face and long neck, short-sleeve
-t-shirt, confident thoughtful expression. Redesign in sparse Procreate pencil and
-ink using black outlines, white interiors, and dollar-green #20C878 colored-pencil
-shadows. Thinking hand-on-chin pose with one arm folded across the torso.
-
-Design one character and copy the same pose and outline into four cells. No head
-tilt, breathing, bobbing, rotation, expression changes, or silhouette drift. Only
-scribbled green hatching and shadow density vary slightly in anchored regions.
-Allow a few shade strokes to spill beyond one elbow like handmade offset print.
-Keep white skin and hair, black sunglasses, a mainly white shirt with black ink
-outlines and small black underarm shadows. Green crosshatching belongs on the
-shoulders, side of neck, beneath the quiff and lower crossed forearm. No gradients,
-gloss, green face, detached blobs, or separate art layers.
-
-Exact invisible 2 × 2 grid, complete waist-up character in each equal square cell,
-identical scale and baseline, generous transparent padding, complete hair and
-elbows. Genuine alpha outside the drawings; opaque white interiors. No paper,
-borders, words, numbers, logos, watermark, thought bubbles or captions. Four
-versions of the shading over the same held pose. Requested 1536 × 1536; built-in
-image generation returned 1254 × 1254, handled by proportional atlas playback.
-
-## Original monochrome generation prompt (unused asset)
-
-Use case: illustration-story. Production sprite sheet for an Expo onboarding
-character: four hand-drawn frames of one subtle looping thinking animation.
-Use the supplied storyboard only for character identity and monochrome drawing
-style, especially its second thinking panel. Do not reproduce storyboard text,
-panels or multiple actions. Request a square PNG in an exact 2 × 2 invisible grid.
-Each cell contains the same waist-up young man: swept white quiff outlined in
-black, small black rectangular sunglasses, angular face and long neck, solid
-black short-sleeve t-shirt, one forearm folded and the other hand touching his
-chin. Minimal organic black ink outlines; opaque white skin and hair. Friendly,
-thoughtful, confident. No shading, paper grain, shadows or color.
-
-Reading order: neutral thinking; tiny upward head tilt and quiff shift; tiny
-opposite tilt and chin-finger shift; back toward neutral. Subtle changes with
-hand-drawn line boil. Same body scale, shoulder position and baseline throughout,
-complete elbows, generous transparent gutters. Genuine transparent alpha outside
-the character with clean antialiased edges; preserve opaque white interiors.
-No baked-in checkerboard, text, captions, numbers, borders, props or watermark.
-The output is an atlas for hard-cut frame playback, not a comic.
-
-The tool returned 1254 × 1254 rather than the requested 1024 × 1024. Playback uses
-the grid proportions and is independent of the source pixel size.

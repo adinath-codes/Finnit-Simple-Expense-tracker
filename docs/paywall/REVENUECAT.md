@@ -28,9 +28,11 @@ EXPO_PUBLIC_REVENUECAT_OFFERING_ID=default
 
 RevenueCat platform SDK keys are public app configuration, not secrets. Never
 put a RevenueCat secret API key in an `EXPO_PUBLIC_` variable.
-Debug builds prefer the Test Store key. Release builds ignore it and reject any
-platform variable that still contains a `test_` key, preventing synthetic
-billing from reaching an App Store or Google Play release.
+iOS native builds, including development builds, use the Apple public SDK key
+so StoreKit can load the real App Store products, trial eligibility, purchases,
+and restores in Sandbox. Android and non-iOS debug builds keep the existing Test
+Store-first behavior. Release builds reject a Test Store key, preventing
+synthetic billing from reaching an App Store or Google Play release.
 
 Set the following only in the ignored `.env.server` and in Supabase Edge
 Function secrets:
@@ -43,9 +45,9 @@ REVENUECAT_ENTITLEMENT_RESOURCE_ID=entl...
 REVENUECAT_WEBHOOK_AUTHORIZATION=Bearer your-random-webhook-secret
 ```
 
-Generate the secret as a RevenueCat API v2 key. Grant **Customer information →
-Customers → Read & write** so the tester-code endpoint can create a promotional
-entitlement; all unrelated permissions can remain **No access**.
+Generate the secret as a RevenueCat API v2 key. Grant only the read access
+required for active-entitlement reconciliation; all unrelated permissions can
+remain **No access**.
 `REVENUECAT_ENTITLEMENT_ID` is the public lookup key (`finn_it_pro`),
 while `REVENUECAT_ENTITLEMENT_RESOURCE_ID` is RevenueCat's internal `entl...`
 resource ID. A legacy v1 key cannot call the v2 active-entitlements endpoint.
@@ -54,7 +56,8 @@ Deploy the Edge secrets before deploying the gated functions:
 
 ```bash
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review scan-receipt delete-account refresh-entitlement redeem-testing-code revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review scan-receipt delete-account refresh-entitlement revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions delete redeem-testing-code --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 `delete-account` deliberately authenticates the user without requiring Premium.
@@ -82,30 +85,20 @@ npx supabase functions deploy parse-entry correct-entry apply-preset ask-money a
 
 RevenueCat Test Store is useful for purchase success, failure, cancellation,
 restore, renewal, expiry, and entitlement tests, but it does not simulate store
-introductory offers. Verify the three-day trial itself with a fresh Apple
-Sandbox account and a Google Play license tester on an Internal Testing build.
+introductory offers. Verify the three-day iOS trial itself with a fresh Apple
+Sandbox account in a native development or TestFlight build. Android remains on
+its existing development/test path until its store rollout is configured.
 
-## Tester codes
+## Test access and offer codes
 
-“Have a code?” opens Finn's cross-platform code-entry modal. The authenticated
-`redeem-testing-code` function hashes the normalized input, atomically reserves
-one of the code record's `max_redemptions`, grants the configured RevenueCat
-entitlement until `premium_days` elapse, and refreshes both the server snapshot
-and SDK customer cache. Premium therefore unlocks without a store purchase.
+Custom tester codes are not supported. Test subscription access with StoreKit
+Sandbox or TestFlight. Store-managed promotions use the “Redeem offer code”
+link, which opens Apple's native redemption sheet through RevenueCat.
 
-The initial `early-testers-2026` record allows 25 unique Supabase accounts and
-grants 30 days. Only its SHA-256 digest and final-four hint are committed; keep
-the supplied raw code in the team's secret manager. Change capacity or duration
-by editing that private row. Disable it with `enabled = false`. To add a code,
-normalize it by uppercasing and removing spaces/hyphens, SHA-256 that value, and
-insert the digest, a non-secret hint, `max_redemptions`, and `premium_days` into
-`finn_private.testing_access_codes` through an administrator-only SQL session.
-
-Code tables, reservation functions, and redemption history are private and have
-RLS enabled; `anon` and `authenticated` receive no table or RPC grants. Pending
-reservations expire from capacity calculations after 15 minutes so a RevenueCat
-outage cannot permanently consume a slot. The iOS modal retains a secondary
-link to Apple's native offer-code sheet for store-managed promotions.
+The revocation migration disables every legacy tester code and drops its
+reservation/completion RPCs while retaining private redemption records for
+audit. Delete any previously deployed `redeem-testing-code` Edge Function with
+the cleanup command above so older app builds cannot call the retired endpoint.
 
 ## App Store paywall checklist
 

@@ -7,7 +7,7 @@ deployed in the ordered release below. Ambiguous records deliberately require re
 The journal starts empty; no example transactions, presets, goals, or profile data are bundled.
 The search page at `/search` and the journal use the same account-scoped durable
 cache/outbox. Onboarding now leads into
-the Supabase-backed sign-in screen, with email/password, Google OAuth, and Apple
+the Supabase-backed sign-in screen, with email OTP, Google OAuth, and Apple
 OAuth options. Search requires an existing Supabase session; it never treats
 the preview entries as synced financial records. In particular, do not feed the backend's mixed-currency records into
 the preview's INR-only arithmetic or multiply transaction totals by quantity.
@@ -95,7 +95,8 @@ npx supabase login
 npx supabase link --project-ref YOUR_FINN_PROJECT_REF
 npx supabase db push
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review delete-account scan-receipt refresh-entitlement redeem-testing-code revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review delete-account scan-receipt refresh-entitlement revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions delete redeem-testing-code --project-ref YOUR_FINN_PROJECT_REF
 ```
 
 Apply all migrations in filename order:
@@ -117,7 +118,12 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260922130000_revision_aware_caching.sql`: adds the revision change log and paged journal sync RPC, bounded private Ask/catalog caches, cache metrics, and realtime revision invalidation.
 - `supabase/migrations/20260922165037_account_deletion_grace_period.sql`: adds private 30-day account-deletion requests, recovery cancellation, and the bounded hourly `pg_cron` purge.
 - `supabase/migrations/20260925100000_revenuecat_entitlement_cache.sql`: adds the private webhook/reconciliation-backed entitlement snapshot used by latency-sensitive APIs.
-- `supabase/migrations/20260926042659_tester_access_codes.sql`: adds hashed, capacity-limited tester codes, private redemption history, atomic reservation/completion RPCs, and the initial 25-account/30-day tester cohort.
+- `supabase/migrations/20260926042659_tester_access_codes.sql`: retained as an empty migration-history placeholder after the non-IAP tester unlock was removed.
+- `supabase/migrations/20260927090000_revoke_tester_access_codes.sql`: disables any legacy tester codes and removes their callable reservation/completion RPCs while preserving private audit records.
+- `supabase/migrations/20260927100000_ask_finn_full_journal_analytics.sql`: adds the security-invoker deterministic Ask Finn v3 RPC for totals, lists, counts, averages, rankings, breakdowns, comparisons, and revision-safe evidence paging.
+- `supabase/migrations/20260927101000_ask_finn_v3_variable_scope.sql`: repairs the deployed v3 procedure's PL/pgSQL variable scope without weakening RLS.
+- `supabase/migrations/20260927102000_ask_finn_v3_confirmed_evidence.sql`: restricts monetary answers and ranked evidence to confirmed contributing values.
+- `supabase/migrations/20260927103000_ask_finn_v3_evidence_count.sql`: exposes the exact contributor count shown above the evidence list.
 
 The caching migration was applied to the linked Finn project on September 22,
 2026. The RevenueCat entitlement-cache migration, existing-customer backfill,
@@ -125,6 +131,8 @@ webhook integration, and all dependent Edge Function bundles were deployed on
 September 25, 2026. The public
 schema types in `src/lib/supabase/generated.types.ts` were generated from that
 deployed schema. No native client release is implied by these server steps.
+The Ask Finn v3 migration chain and the `ask-money` then `ask-sql` Edge Function
+bundles were deployed to the linked production project on September 27, 2026.
 
 Premium functions read the private local entitlement snapshot and never call
 RevenueCat on the capture path. `refresh-entitlement` securely reconciles the
@@ -133,9 +141,8 @@ redemption. Configure RevenueCat's project webhook to POST all environments to
 `https://YOUR_FINN_PROJECT_REF.supabase.co/functions/v1/revenuecat-webhook` and
 send the exact `REVENUECAT_WEBHOOK_AUTHORIZATION` value as its Authorization
 header. Both the RevenueCat secret key and webhook secret remain server-only.
-The RevenueCat secret must be an API v2 key with **Customer information →
-Customers → Read & write** permission because tester redemption grants a
-promotional entitlement. `REVENUECAT_PROJECT_ID` is the `proj...`
+The RevenueCat secret must be an API v2 key with only the read access required
+for active-entitlement reconciliation. `REVENUECAT_PROJECT_ID` is the `proj...`
 resource ID and `REVENUECAT_ENTITLEMENT_RESOURCE_ID` is the `entl...` resource
 ID; the human-facing entitlement lookup key remains
 `REVENUECAT_ENTITLEMENT_ID`. A v1-only key will fail reconciliation before any
@@ -148,10 +155,9 @@ function are deployed on the linked project. The function intentionally remains
 available without Premium so subscription state can never prevent account
 deletion.
 
-The tester-code migration and `redeem-testing-code` function are repository
-changes only until the database push and function deployment above are run.
-The client never receives the RevenueCat secret or direct access to the private
-code and redemption tables.
+The revocation migration and Edge Function deletion command retire the legacy
+non-IAP tester unlock for both current and older client builds. Private legacy
+redemption rows remain server-only for audit purposes.
 
 No separate seed step is needed. If the base backend is already deployed, push
 the currency migration first, then redeploy `parse-entry`, `correct-entry`,
@@ -169,10 +175,13 @@ requires a bearer session token and validates it with `auth.getUser()` before an
 privileged database operation. Normal reads and SQL search use the caller's RLS
 client. Admin-only mutation RPCs receive the verified user's ID, never a body ID.
 
-Email/password authentication is enabled by the app. In Supabase Authentication,
-enable email signups, configure production SMTP and decide whether confirmation
-is required. Add `finn://auth/callback` and `finn://reset-password` to the Auth
-redirect allow list (plus the production HTTPS equivalents for web).
+Passwordless email OTP authentication is enabled by the app. In Supabase
+Authentication, enable email signups, configure production SMTP, and make the
+Magic Link email template contain `{{ .Token }}` instead of a confirmation URL.
+The OTP request automatically creates a new account when needed, but no app
+session exists until the code is verified. Add `finn://auth/callback` and
+`finn://reset-password` to the Auth redirect allow list (plus the production
+HTTPS equivalents for web).
 
 Enable Google and Apple in Supabase Authentication > Sign In / Providers. Google
 requires a web OAuth client ID and secret whose authorized callback is the
@@ -250,7 +259,7 @@ The client helper `callBackend` supplies them and refreshes expiring sessions.
 ```json
 {
   "id": "74996398-bc0c-40e8-8ed0-a2aa8cb8bb4e",
-  "raw_text": "lunch with Aswin 340 and Uber 280 yesterday",
+  "raw_text": "lunch with chris 340 and Uber 280 yesterday",
   "captured_at": "2026-09-19T10:00:00+05:30",
   "timezone": "Asia/Kolkata",
   "currency": "INR",
@@ -375,8 +384,9 @@ removes any remaining local image; there is no backend image cleanup job.
 
 ```json
 {
-  "query": "how much did I spend on Uber with Aswin last month?",
+  "query": "how much did I spend on Uber with chris last month?",
   "timezone": "Asia/Kolkata",
+  "default_currency": "INR",
   "selected_range": { "start_date": "2026-09-01", "end_date": "2026-10-01" },
   "limit": 5
 }
@@ -388,13 +398,23 @@ the selected range/current calendar month. All ranges have an exclusive end.
 means the latest such date on or before the reference day. Ambiguous dates are
 marked for review, not guessed.
 
+The updated client always sends the currency selected in Settings as
+`default_currency`; the server applies it as a database filter. Values are never
+converted or relabeled, so the answer and evidence contain only that stored
+currency.
+
 The first response returns `applied_filters`, the selected `metric`, filter labels,
-per-currency totals, known/unknown counts, and bounded transaction-level sources,
+typed answer rows, known/unknown counts, and bounded transaction-level sources,
 participants, contexts, splits, and amount components. Supported metrics are
 `stated_amount`, `user_share`, `group_total`, `paid_by_user`, `owed_to_user`,
 `user_owes`, `reimbursed`, and `gross_spend`. Totals are SQL sums across **all**
 matches, never just the returned page. Unknown or review-required values remain
 inspectable but are excluded from the requested metric. No implicit FX occurs.
+Supported operations are `sum`, `list`, `count`, `average`, `rank`, `breakdown`,
+and `compare`; grouping supports transaction, day, week, month, category,
+merchant, context, and participant. Parent-category filters include descendants.
+Comparison rows return exact primary, comparison, and delta values, with a
+percentage only when the comparison baseline is nonzero.
 
 Editable filter requests can send `filters` instead of `query`:
 
@@ -425,8 +445,9 @@ totals describe that same window, not a guessed lifetime trip cost. A context
 links to a search with its exact name and range; an all-review currency shows
 “Needs review” rather than zero spending.
 
-The page submits only on a search action, never on each keystroke. Simple queries
-use deterministic filters; complex supported queries use Gemini's structured
+The page submits only on a search action, never on each keystroke. Common
+analytical queries use deterministic filters and `finn_analyze_money_v3`;
+ambiguous supported queries use Gemini's structured
 plan. Valid model interpretations are cached per user for 24 hours (up to 30
 plans), keyed by question hash, day, selected range and the relevant catalog.
 Pages and filter changes never call Gemini. Catalog payloads include only up to
@@ -434,7 +455,9 @@ Pages and filter changes never call Gemini. Catalog payloads include only up to
 history is sent to the model. Source items arrive in pages of five and are displayed
 in a virtualized list with an explicit Show more button.
 
-An unsupported fixed-plan question is offered to `ask-sql`. Gemini receives the
+An uncommon journal-answerable fixed-plan question is offered internally to the
+guarded SQL engine by `ask-money`; updated clients do not orchestrate a second
+endpoint. Gemini receives the
 curated `ask_read.transactions` contract and returns two PostgreSQL SELECTs: one
 matching transaction IDs and one calculating the typed answer from that cohort.
 Both statements must pass the PostgreSQL 17 AST allowlist before execution. The
@@ -443,6 +466,18 @@ dedicated `finn_ask_reader` login with a five-second statement timeout. RLS, the
 view, and transaction-local settings independently enforce the verified user and
 a date window of at most ten years. The role has no table writes or callable
 public functions.
+
+One repair attempt may follow an AST rejection and receives only the sanitized
+`ast_allowlist` rejection category. A second rejection returns
+`unsupported_question`; no partial or guessed answer is returned. `ask-sql`
+remains deployed for compatibility with older clients.
+
+Run deterministic parser/client coverage with `npm run test:search`, the SQL
+allowlist coverage with
+`npx deno test --allow-env --allow-read supabase/tests/ask-sql-guard.test.ts`,
+and the rollback-safe database fixture with
+`npx supabase test db --linked supabase/tests/ask_finn_v3_test.sql`. The latter
+requires Docker or Podman because the Supabase CLI runs pgTAP in its test image.
 
 Validated cohort SQL and its journal revision live for 15 minutes in a private
 session. Pages fetch five source transactions without another SQL-generation

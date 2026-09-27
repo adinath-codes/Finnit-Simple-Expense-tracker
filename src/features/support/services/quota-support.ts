@@ -1,7 +1,19 @@
 import * as Linking from "expo-linking";
 import { callBackend } from "@/lib/ai/api";
 
-const SUPPORT_EMAIL = "adinath.codes.alot@gmail.com";
+export const SUPPORT_EMAIL = "adinath.codes.alot@gmail.com";
+
+export async function openSupportEmail({
+  subject = "Finn support",
+  body = "Hi Finn support,\n\n",
+}: {
+  subject?: string;
+  body?: string;
+} = {}) {
+  await Linking.openURL(
+    `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+  );
+}
 
 export async function requestQuotaReview() {
   await callBackend<{ requested: true; request_id: string }>(
@@ -11,11 +23,8 @@ export async function requestQuotaReview() {
 }
 
 export async function openQuotaSupportEmail() {
-  const subject = encodeURIComponent("Finn usage review");
-  const body = encodeURIComponent(
-    "Hi Finn support,\n\nPlease review the AI usage limit on my account.\n\nThank you.",
-  );
-  await Linking.openURL(
-    `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`,
-  );
+  await openSupportEmail({
+    subject: "Finn usage review",
+    body: "Hi Finn support,\n\nPlease review the AI usage limit on my account.\n\nThank you.",
+  });
 }

@@ -1,10 +1,5 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@1.0.14";
 import { revenueCatEntitlementSnapshot } from "../functions/_shared/revenuecat.ts";
-import {
-  normalizeTestingAccessCode,
-  parseTestingAccessReservation,
-  testingAccessCodeHash,
-} from "../functions/_shared/testing-access.ts";
 
 const ENTITLEMENT = "entl_finn";
 const NOW = 1_790_000_000_000;
@@ -79,43 +74,5 @@ Deno.test("RevenueCat malformed and expired entitlement data never grants access
       ENTITLEMENT,
       NOW,
     )
-  );
-});
-
-Deno.test("tester codes normalize formatting before hashing", async () => {
-  assertEquals(
-    normalizeTestingAccessCode("  finn-test-6d1773036ecd "),
-    "FINNTEST6D1773036ECD",
-  );
-  assertEquals(
-    await testingAccessCodeHash("finn test 6d1773036ecd"),
-    "4f547e1d4c31d63082cb49a2eb584868398a9d9d84085214d192a4b45fb5fa6a",
-  );
-  assertThrows(() => normalizeTestingAccessCode("short"));
-  assertThrows(() => normalizeTestingAccessCode("FINN_TEST_NOT_ALLOWED"));
-});
-
-Deno.test("tester-code reservation responses are parsed defensively", () => {
-  assertEquals(parseTestingAccessReservation({ result: "invalid" }), {
-    result: "invalid",
-  });
-  assertEquals(
-    parseTestingAccessReservation({
-      result: "reserved",
-      code_id: "early-testers-2026",
-      premium_days: 30,
-    }),
-    {
-      result: "reserved",
-      codeId: "early-testers-2026",
-      premiumDays: 30,
-    },
-  );
-  assertThrows(() =>
-    parseTestingAccessReservation({
-      result: "reserved",
-      code_id: "EARLY TESTERS",
-      premium_days: 30,
-    })
   );
 });

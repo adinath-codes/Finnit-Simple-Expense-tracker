@@ -68,7 +68,30 @@ test("onboarding shows the four quick currencies followed by Other", () => {
     currencyStep.options.map(({ id }) => id),
     ["USD", "EUR", "CAD", "INR", "other"],
   );
-  assert.equal(FINN_ONBOARDING_FLOW_VERSION, "2026-09-20.4");
+  assert.equal(FINN_ONBOARDING_FLOW_VERSION, "2026-09-26.5");
+  assert.equal(
+    onboardingSteps.filter((step) => step.kind === "story").length,
+    7,
+  );
+  assert.deepEqual(
+    onboardingSteps.map(({ kind }) => kind),
+    [
+      "story",
+      "question",
+      "story",
+      "question",
+      "story",
+      "question",
+      "story",
+      "question",
+      "story",
+      "question",
+      "story",
+      "question",
+      "story",
+      "invite",
+    ],
+  );
 });
 
 test("onboarding accepts every catalog currency and rejects action or unknown ids", () => {
@@ -77,6 +100,28 @@ test("onboarding accepts every catalog currency and rejects action or unknown id
   }
   assert.equal(sanitizeOnboardingAnswers({ currency: "other" }).currency, undefined);
   assert.equal(sanitizeOnboardingAnswers({ currency: "ZZZ" }).currency, undefined);
+});
+
+test("onboarding keeps a bounded conversational name and rejects legacy answers", () => {
+  assert.equal(
+    sanitizeOnboardingAnswers({ name: "  Ada   Lovelace  " }).name,
+    "Ada Lovelace",
+  );
+  assert.equal(
+    sanitizeOnboardingAnswers({ name: "A".repeat(60) }).name?.length,
+    40,
+  );
+  assert.deepEqual(
+    sanitizeOnboardingAnswers({ painPoint: "not-an-option" }),
+    {
+      name: undefined,
+      worryTiming: undefined,
+      painPoint: undefined,
+      captureStyle: undefined,
+      currency: undefined,
+      futureQuestion: undefined,
+    },
+  );
 });
 
 test("new zero-, two-, and three-decimal currencies parse exactly", () => {

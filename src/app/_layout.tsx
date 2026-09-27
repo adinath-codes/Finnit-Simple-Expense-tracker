@@ -15,6 +15,7 @@ import { Finn } from "@/constants/theme";
 import { useEffect } from "react";
 import { Platform } from "react-native";
 import { useFonts } from "expo-font";
+import { Caveat_600SemiBold } from "@expo-google-fonts/caveat";
 import * as SplashScreen from "expo-splash-screen";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { QuotaReachedModalHost } from "@/features/support/components/quota-reached-modal";
@@ -72,16 +73,17 @@ function RootLayout() {
 
 function RootApplication() {
      const reduced = useMotionPreference();
-     const [fontsLoaded, fontError] = useFonts(
-          Platform.OS === "ios"
+     const [fontsLoaded, fontError] = useFonts({
+          Caveat_600SemiBold,
+          ...(Platform.OS === "ios"
                ? {}
                : {
                       "SFProDisplay-Regular": require("../../assets/sf-pro-display/SFPRODISPLAYREGULAR.OTF"),
                       "SFProDisplay-Medium": require("../../assets/sf-pro-display/SFPRODISPLAYMEDIUM.OTF"),
                       "SFProDisplay-Bold": require("../../assets/sf-pro-display/SFPRODISPLAYBOLD.OTF"),
                       "SFProDisplay-Black": require("../../assets/sf-pro-display/SF-Pro-Display-Black.otf"),
-                 },
-     );
+                 }),
+     });
      if (fontError) throw fontError;
      if (!fontsLoaded) return null;
      return (
