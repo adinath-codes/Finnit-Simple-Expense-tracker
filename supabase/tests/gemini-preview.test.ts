@@ -3,7 +3,9 @@ import {
   correctionEntryContext,
   deriveAmountPreview,
   reconcileAnonymousParticipantCount,
+  reconcileParticipantSplitMethods,
   reconcileSingleAmountToken,
+  reconcileSplitSemantics,
   resolveRelativeAmountCorrection,
 } from "../functions/_shared/gemini.ts";
 import type { CaptureInput, Extraction } from "../functions/_shared/contracts.ts";
@@ -119,6 +121,100 @@ Deno.test("quantity, components and equal split use exact server arithmetic", ()
       participant_count: 3,
     }),
   ], input("Dinner 1200 split equally with 3 people"))?.amount_minor, "40000");
+});
+
+Deno.test("ordinary shared wording is reconciled to deterministic inferred splits", () => {
+  for (const wording of [
+    "split it with Chris",
+    "slitted it with chris",
+    "shared with my cofounder",
+  ]) {
+    const note = `Took an Uber for 100 and ${wording}`;
+    const reconciled = reconcileSplitSemantics(plan({
+      description: note,
+      amount_role: "group_total",
+      group_total_token: 0,
+      split_method: "equal",
+      split_evidence: wording,
+      participant_count: 2,
+    }), note);
+    assertEquals(reconciled.split_method, "unknown");
+    assertEquals(reconciled.split_evidence, null);
+    assertEquals(deriveAmountPreview([reconciled], input(note))?.amount_minor, "5000");
+    assertEquals(deriveAmountPreview([reconciled], input(note))?.scope, "user_share");
+  }
+});
+
+Deno.test("explicit equal language remains grounded, including two-person halves", () => {
+  for (const wording of ["split equally", "split evenly", "half with Chris", "50/50"]) {
+    const note = `Dinner 101 ${wording}`;
+    const reconciled = reconcileSplitSemantics(plan({
+      description: note,
+      amount_role: "group_total",
+      group_total_token: 0,
+      split_method: "unknown",
+      split_evidence: wording,
+      participant_count: 2,
+    }), note);
+    assertEquals(reconciled.split_method, "equal");
+    assertEquals(reconciled.split_evidence, wording);
+  }
+});
+
+Deno.test("explicit unequal and ratio language can never become an inferred equal split", () => {
+  for (const wording of ["split unevenly", "different shares", "split 70/30"]) {
+    const note = `Dinner 100 ${wording}`;
+    const reconciled = reconcileSplitSemantics(plan({
+      description: note,
+      amount_role: "group_total",
+      group_total_token: 0,
+      split_method: "equal",
+      split_evidence: wording,
+      participant_count: 2,
+    }), note);
+    assertEquals(reconciled.split_method, "weighted");
+    assertEquals(reconciled.split_evidence, wording);
+  }
+});
+
+Deno.test("explicit unequal plans cannot retain contradictory equal participant rows", () => {
+  const rows = [{
+    transaction_ordinal: 0,
+    party_kind: "known_person",
+    split_method: "equal",
+    uncertain: false,
+  }, {
+    transaction_ordinal: 1,
+    party_kind: "self",
+    split_method: "equal",
+    uncertain: false,
+  }];
+  assertEquals(reconcileParticipantSplitMethods(rows, {
+    transaction_ordinal: 0,
+    split_method: "weighted",
+  }), [{
+    ...rows[0],
+    split_method: "weighted",
+    uncertain: true,
+  }, rows[1]]);
+});
+
+Deno.test("split reconciliation does not repair ungrounded or non-group claims", () => {
+  const ungrounded = plan({
+    amount_role: "group_total",
+    group_total_token: 0,
+    split_method: "equal",
+    split_evidence: "equally",
+    participant_count: 2,
+  });
+  assertEquals(reconcileSplitSemantics(ungrounded, "Coffee 120"), ungrounded);
+
+  const personal = plan({
+    split_method: "equal",
+    split_evidence: "with Chris",
+    participant_count: 2,
+  });
+  assertEquals(reconcileSplitSemantics(personal, "Coffee 120 with Chris"), personal);
 });
 
 Deno.test("group-only plans are labeled and unsafe combinations stay hidden", () => {

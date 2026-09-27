@@ -302,11 +302,10 @@ export function receiptJournalEntry(
 export function journalEntriesFromCache(cache: JournalCache) {
   return [
     ...Object.values(cache.entries)
-      .filter((entry) =>
-        !entry.deleted || cache.jobs.some(
-          (job) => job.entryId === entry.input.id && job.state === "blocked",
-        ),
-      )
+      // A delete intent is authoritative for the journal UI. Keep any
+      // uncertain job durably in the outbox for remote cleanup, but never
+      // resurrect its local tombstone as a retry/error row.
+      .filter((entry) => !entry.deleted)
       .map((entry) => ({
         capturedAt: entry.input.captured_at,
         entry: (() => {
@@ -315,11 +314,7 @@ export function journalEntriesFromCache(cache: JournalCache) {
         })(),
       })),
     ...Object.values(cache.receipts)
-      .filter((entry) =>
-        !entry.deleted || cache.jobs.some(
-          (job) => job.entryId === entry.request.entry_id && job.state === "blocked",
-        ),
-      )
+      .filter((entry) => !entry.deleted)
       .map((entry) => ({
         capturedAt: entry.request.captured_at,
         entry: (() => {

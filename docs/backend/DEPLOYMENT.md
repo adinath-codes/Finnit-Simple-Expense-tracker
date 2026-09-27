@@ -124,6 +124,8 @@ Apply all migrations in filename order:
 - `supabase/migrations/20260927101000_ask_finn_v3_variable_scope.sql`: repairs the deployed v3 procedure's PL/pgSQL variable scope without weakening RLS.
 - `supabase/migrations/20260927102000_ask_finn_v3_confirmed_evidence.sql`: restricts monetary answers and ranked evidence to confirmed contributing values.
 - `supabase/migrations/20260927103000_ask_finn_v3_evidence_count.sql`: exposes the exact contributor count shown above the evidence list.
+- `supabase/migrations/20260927120500_retry_failed_ai_operations_after_upgrade.sql`: permits failed operations with the same immutable task and input to retry after parser metadata upgrades without weakening completed or in-flight idempotency.
+- `supabase/migrations/20260927121500_clear_stale_ungrounded_split_failures.sql`: removes only uncommitted extraction claims rejected by the former equal-split validator so existing offline retries can use the repaired parser.
 
 The caching migration was applied to the linked Finn project on September 22,
 2026. The RevenueCat entitlement-cache migration, existing-customer backfill,

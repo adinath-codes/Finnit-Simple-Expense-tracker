@@ -24,7 +24,9 @@ import {
 import type { CachedEntry, JournalCache } from "../../src/types/sync.ts";
 import { targetedCacheCopy } from "../../src/lib/offline/cache-mutation.ts";
 import {
+  applyJournalEntryDeletion,
   classifyJournalEdit,
+  followDeletedEntryAfterSync,
   planEntryTextSave,
 } from "../../src/features/journal/services/journal-edit-flow.ts";
 
@@ -76,6 +78,110 @@ test("preserved text edits retain extraction while recalculation omits it", () =
   const recalculated = planEntryTextSave(cachedEntry, "Coffee with Sam 140", "recalculate");
   assert.equal(recalculated.input.raw_text, "Coffee with Sam 140");
   assert.equal(recalculated.extraction, undefined);
+});
+
+test("deleting a retry-queued local entry hides it and preserves only uncertain work", () => {
+  const id = cachedEntry.input.id;
+  const cache = normalizeJournalCache({
+    version: 3,
+    entries: { [id]: { ...cachedEntry } },
+    jobs: [{
+      id,
+      userId: "account-a",
+      entryId: id,
+      endpoint: "parse-entry",
+      payload: cachedEntry.input,
+      state: "pending",
+      attempts: 2,
+      nextAttemptAt: Date.now() + 30_000,
+    }],
+  });
+
+  applyJournalEntryDeletion(cache, id, "account-a", "delete-operation");
+
+  assert.equal(cache.entries[id].deleted, true);
+  assert.equal(journalEntriesFromCache(cache).length, 0);
+  assert.equal(cache.jobs.length, 1);
+  assert.equal(cache.jobs[0].endpoint, "parse-entry");
+});
+
+test("a legacy deleted tombstone stays hidden even when its old job is blocked", () => {
+  const id = cachedEntry.input.id;
+  const cache = normalizeJournalCache({
+    version: 3,
+    entries: { [id]: { ...cachedEntry, deleted: true, sync: "blocked" } },
+    jobs: [{
+      id,
+      userId: "account-a",
+      entryId: id,
+      endpoint: "parse-entry",
+      payload: cachedEntry.input,
+      state: "blocked",
+      attempts: 4,
+      nextAttemptAt: 0,
+      error: "ungrounded_equal_split",
+    }],
+  });
+
+  assert.equal(journalEntriesFromCache(cache).length, 0);
+  assert.equal(cache.jobs.length, 1);
+});
+
+test("deleting an unsent local entry cancels its work and removes it", () => {
+  const id = cachedEntry.input.id;
+  const cache = normalizeJournalCache({
+    version: 3,
+    entries: { [id]: { ...cachedEntry } },
+    jobs: [{
+      id,
+      userId: "account-a",
+      entryId: id,
+      endpoint: "parse-entry",
+      payload: cachedEntry.input,
+      state: "pending",
+      attempts: 0,
+      nextAttemptAt: 0,
+    }],
+  });
+
+  applyJournalEntryDeletion(cache, id, "account-a", "delete-operation");
+
+  assert.equal(cache.entries[id], undefined);
+  assert.equal(cache.jobs.length, 0);
+});
+
+test("a deleted retry queues the remote delete after its in-flight result lands", () => {
+  const id = cachedEntry.input.id;
+  const cache = normalizeJournalCache({
+    version: 3,
+    entries: { [id]: { ...cachedEntry, deleted: true } },
+    jobs: [],
+  });
+  const remote = {
+    id,
+    raw_text: cachedEntry.input.raw_text,
+    original_text: cachedEntry.input.raw_text,
+    captured_at: cachedEntry.input.captured_at,
+    occurred_on: cachedEntry.input.selected_date,
+    timezone: cachedEntry.input.timezone,
+    currency: cachedEntry.input.currency,
+    revision: 4,
+    extraction: cachedEntry.extraction,
+    deleted_at: null,
+    capture_request: cachedEntry.input,
+  };
+
+  assert.equal(followDeletedEntryAfterSync(
+    cache,
+    id,
+    "account-a",
+    remote,
+    "delete-operation",
+  ), true);
+  assert.equal(cache.entries[id].deleted, true);
+  assert.equal(cache.jobs.length, 1);
+  assert.equal(cache.jobs[0].payload.action, "delete");
+  assert.equal(cache.jobs[0].payload.expected_revision, 4);
 });
 
 test("targeted cache copies preserve untouched entity references", () => {
@@ -416,7 +522,7 @@ test("hierarchical categories retain their top-level journal presentation", () =
   assert.equal(entry.items[0].categoryId, "transport.ride_hailing");
 });
 
-test("journal adapter classifies revision conflicts and keeps blocked deletions visible", () => {
+test("journal adapter never resurrects a blocked delete as a visible entry", () => {
   const cache = normalizeJournalCache({
     version: 2,
     entries: {
@@ -441,9 +547,9 @@ test("journal adapter classifies revision conflicts and keeps blocked deletions 
   });
 
   const entries = journalEntriesFromCache(cache);
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0].syncState, "blocked");
-  assert.equal(entries[0].syncIssue, "conflict");
+  assert.equal(entries.length, 0);
+  assert.equal(cache.jobs.length, 1);
+  assert.equal(cache.jobs[0].error, "revision_or_idempotency_conflict");
 });
 
 test("amount breakdown uses only literal multiplication and addition", () => {

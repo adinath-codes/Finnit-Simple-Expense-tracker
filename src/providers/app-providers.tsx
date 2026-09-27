@@ -345,9 +345,6 @@ function useJournalState() {
       if (!hasPremiumAccess) throw new Error("Finn Premium is required to remove entries.");
       const currentCache = await readJournalCache(session.user.id);
       if (currentCache.receipts[id]) return deleteReceipt(id);
-      if (!currentCache.entries[id]?.remote) {
-        throw new Error("This note is saved. Let its first sync finish before removing it.");
-      }
       await deleteJournalEntry(id);
   }), [hasPremiumAccess, runMutation, session]);
 

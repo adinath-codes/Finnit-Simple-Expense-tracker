@@ -39,6 +39,7 @@ import {
   ANALYTICS_EVENTS,
   captureAnalytics,
 } from "@/lib/analytics/analytics";
+import { followDeletedEntryAfterSync } from "@/features/journal/services/journal-edit-flow";
 
 type SyncLane = "text" | "receipt" | "account";
 const SYNC_LANES: SyncLane[] = ["text", "receipt", "account"];
@@ -446,8 +447,15 @@ async function runLane(userId: string, lane: SyncLane) {
           const local = state.entries[job.entryId];
           if (local) {
             local.remote = entry;
+            const deleteQueued = followDeletedEntryAfterSync(
+              state,
+              job.entryId,
+              userId,
+              entry,
+              randomUUID(),
+            );
             // Do not replace a newer optimistic edit with an older response.
-            if (!state.jobs.some((j) => j.entryId === job.entryId)) {
+            if (!deleteQueued && !state.jobs.some((j) => j.entryId === job.entryId)) {
               local.extraction = entry.extraction;
               local.sync = "synced";
               local.deleted = !!entry.deleted_at;

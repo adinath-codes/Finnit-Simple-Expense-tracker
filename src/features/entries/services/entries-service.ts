@@ -7,11 +7,11 @@ import type { CaptureInput, Extraction } from "@/lib/supabase/database.types";
 import type {
   AIEntryCorrectionInput,
   CorrectionInput,
-  DeleteInput,
   ReparseInput,
 } from "@/types/sync";
 import { capture } from "../../../../supabase/functions/_shared/validation";
 import { pendingExtraction } from "../../../../supabase/functions/_shared/pending-entry";
+import { applyJournalEntryDeletion } from "@/features/journal/services/journal-edit-flow";
 
 /** Explicit edits use an immutable request ID and a known remote revision. A
  * conflict is kept in the outbox for review, never silently force-overwritten. */
@@ -126,28 +126,7 @@ export async function correctJournalEntryWithFinn(id: string, value: string) {
 export async function deleteJournalEntry(id: string) {
   const userId = await currentUserId();
   await changeJournalCache(userId, (cache) => {
-    const entry = cache.entries[id];
-    if (!entry?.remote || cache.jobs.some((j) => j.entryId === id))
-      throw new Error("Wait for this note to sync before deleting it.");
-    const operationId = randomUUID();
-    const payload: DeleteInput = {
-      action: "delete",
-      operation_id: operationId,
-      id,
-      expected_revision: entry.remote.revision,
-    };
-    entry.deleted = true;
-    entry.sync = "pending";
-    cache.jobs.push({
-      id: operationId,
-      userId,
-      entryId: id,
-      endpoint: "correct-entry",
-      payload,
-      state: "pending",
-      attempts: 0,
-      nextAttemptAt: 0,
-    });
+    applyJournalEntryDeletion(cache, id, userId, randomUUID());
   });
   void syncJournal(userId).catch(() => undefined);
 }

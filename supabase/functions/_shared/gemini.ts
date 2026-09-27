@@ -172,6 +172,72 @@ export function reconcileSingleAmountToken(
   };
 }
 
+const EXPLICIT_EQUAL_SPLIT =
+  /\b(?:equal(?:ly)?|same\s+share|split\s+evenly|each)\b/i;
+const EXPLICIT_UNEQUAL_SPLIT =
+  /\b(?:unequal(?:ly)?|uneven(?:ly)?|different\s+shares?|not\s+(?:an?\s+)?equal|weighted)\b/i;
+const EXPLICIT_RATIO_SPLIT =
+  /(?:\b\d{1,3}\s*(?:%|percent)\b|\b\d{1,3}\s*[/:-]\s*\d{1,3}\b)/i;
+
+function explicitlyEqualSplit(evidence: string, participantCount: number | null) {
+  return EXPLICIT_EQUAL_SPLIT.test(evidence) ||
+    (participantCount === 2 &&
+      /(?:\bhalf\b|\bhalves\b|\b50\s*[/:-]\s*50\b|\bfifty[-\s]fifty\b)/i.test(evidence));
+}
+
+/**
+ * Reconcile safe split semantics at the model boundary. Gemini sometimes
+ * labels ordinary "split/shared with …" wording as explicitly equal even
+ * though the note only grounds a group total and headcount. That is an
+ * inferred split: normalize it to unknown so deterministic server arithmetic
+ * can apply the product rule. Explicit unequal/ratio language is preserved as
+ * weighted so it can never fall through to equal-share inference.
+ */
+export function reconcileSplitSemantics(
+  plan: Record<string, unknown>,
+  rawText: string,
+) {
+  const method = String(plan.split_method);
+  if (method !== "equal" && method !== "unknown") return plan;
+  const evidence = plan.split_evidence === null
+    ? null
+    : typeof plan.split_evidence === "string"
+      ? plan.split_evidence
+      : null;
+  // Ungrounded claims must still fail closed in the authoritative validator.
+  if (evidence !== null && !rawText.includes(evidence)) return plan;
+  const participantCount = plan.participant_count === null
+    ? null
+    : Number(plan.participant_count);
+  const groundedGroup =
+    participantCount !== null && participantCount > 1 &&
+    (plan.amount_role === "group_total" || Number.isInteger(plan.group_total_token));
+  if (!groundedGroup) return plan;
+
+  if (evidence && explicitlyEqualSplit(evidence, participantCount)) {
+    return method === "equal" ? plan : { ...plan, split_method: "equal" };
+  }
+  if (evidence &&
+      (EXPLICIT_UNEQUAL_SPLIT.test(evidence) || EXPLICIT_RATIO_SPLIT.test(evidence))) {
+    return { ...plan, split_method: "weighted" };
+  }
+  return { ...plan, split_method: "unknown", split_evidence: null };
+}
+
+/** Keep participant rows from contradicting an explicitly non-equal plan. */
+export function reconcileParticipantSplitMethods(
+  participants: Record<string, unknown>[],
+  plan: Record<string, unknown>,
+) {
+  if (plan.split_method !== "weighted") return participants;
+  return participants.map((participant) =>
+    Number(participant.transaction_ordinal) === Number(plan.transaction_ordinal) &&
+      participant.split_method === "equal"
+      ? { ...participant, split_method: "weighted", uncertain: true }
+      : participant
+  );
+}
+
 /** A compact, page-shaped snapshot of the authoritative saved interpretation.
  * Gemini corrections use this as their baseline instead of reinterpreting only
  * the original note and accidentally preserving stale structured values. */
@@ -453,7 +519,7 @@ export function deriveAmountPreview(
     };
 
     for (const raw of rawPlans) {
-      const plan = object(raw);
+      const plan = reconcileSplitSemantics(object(raw), input.raw_text);
       const ordinal = Number(plan.transaction_ordinal) - ordinalOffset;
       if (
         !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= rawPlans.length ||
@@ -489,7 +555,7 @@ export function deriveAmountPreview(
         if (!input.raw_text.includes(splitEvidence)) throw new Error("ungrounded_split");
         if (
           splitMethod === "equal" &&
-          !/\b(?:equal(?:ly)?|same\s+share|split\s+evenly|each)\b/i.test(splitEvidence)
+          !explicitlyEqualSplit(splitEvidence, participantCount)
         ) throw new Error("ungrounded_equal_split");
       } else if (!["unknown", "not_applicable"].includes(splitMethod) && splitMethod !== "exact") {
         throw new Error("missing_split_evidence");
@@ -959,6 +1025,7 @@ export async function enrich(
       rawAmountPlans.length,
       tokens.length,
     ))
+    .map((plan) => reconcileSplitSemantics(plan, input.raw_text))
     .sort((left, right) =>
       normalizedOrdinal(left.transaction_ordinal) - normalizedOrdinal(right.transaction_ordinal)
     );
@@ -969,6 +1036,7 @@ export async function enrich(
     throw new ApiError(503, "invalid_participants");
   let participantRows = model.participants.map((participant) => object(participant));
   for (const plan of amountPlans) {
+    participantRows = reconcileParticipantSplitMethods(participantRows, plan);
     const participantCount = plan.participant_count === null
       ? null
       : Number(plan.participant_count);
@@ -1141,20 +1209,18 @@ export async function enrich(
     if (typeof t.confidence !== "number" || t.confidence < 0.85)
       unresolved.push("low_confidence");
     const estimated = t.estimated === true;
+    const participantCount = t.participant_count === null ? null : Number(t.participant_count);
     const splitMethod = t.split_method as Transaction["split_method"];
     const splitEvidence = t.split_evidence === null
       ? null
       : evidenceClaim(t.split_evidence, 200);
     if (
       splitMethod === "equal" &&
-      (!splitEvidence || !/\b(?:equal(?:ly)?|same\s+share|split\s+evenly|each)\b/i.test(
-        splitEvidence.text,
-      ))
+      (!splitEvidence || !explicitlyEqualSplit(splitEvidence.text, participantCount))
     ) throw new ApiError(503, "ungrounded_equal_split");
     if (
       ["unknown", "not_applicable"].includes(splitMethod ?? "") && splitEvidence !== null
     ) throw new ApiError(503, "unexpected_split_evidence");
-    const participantCount = t.participant_count === null ? null : Number(t.participant_count);
     if (
       participantCount !== null &&
       (!Number.isInteger(participantCount) || participantCount < 1 || participantCount > 100000)

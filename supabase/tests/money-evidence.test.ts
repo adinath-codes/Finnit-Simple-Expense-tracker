@@ -142,3 +142,39 @@ test("inferred group split expands anonymous people and preserves confirmed tota
     ["self", 1, "33400"],
   ]);
 });
+
+test("explicit weighted splits never fall through to equal-share inference", () => {
+  const extraction = inferEqualSplits({
+    transactions: [{
+      description: "Dinner 100 split unevenly",
+      amount_minor: "10000",
+      currency: "INR",
+      direction: "expense",
+      cash_flow: "out",
+      amount_status: "confirmed",
+      category_id: "food",
+      category_source: "llm_fallback",
+      merchant_id: null,
+      occurred_on: "2026-09-27",
+      quantity: null,
+      unit_price_minor: null,
+      confidence: 0.9,
+      needs_review: true,
+      unresolved: ["user_share"],
+      person: null,
+      evidence: "100",
+      primary_amount_role: "group_total",
+      group_total_minor: "10000",
+      user_share_minor: null,
+      paid_by_user_minor: null,
+      split_method: "weighted",
+      participant_count: 2,
+    }],
+    people: [],
+    contexts: [],
+    unresolved: [],
+  });
+  assert.equal(extraction.transactions[0].split_method, "weighted");
+  assert.equal(extraction.transactions[0].user_share_minor, null);
+  assert.equal(extraction.participants?.length ?? 0, 0);
+});
