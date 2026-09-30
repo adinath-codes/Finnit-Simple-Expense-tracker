@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" role="img" aria-labelledby="title description">
+  <title id="title">Finnit — Apple Notes for your money</title>
+  <desc id="description">An animated field of floating coins and dollar marks surrounds the Finnit wordmark.</desc>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#05083d" />
+      <stop offset="0.56" stop-color="#17216f" />
+      <stop offset="1" stop-color="#0a4d45" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="48%" r="48%">
+      <stop offset="0" stop-color="#20c878" stop-opacity="0.26" />
+      <stop offset="1" stop-color="#20c878" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="coin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9f3a7" />
+      <stop offset="0.48" stop-color="#f6ca4b" />
+      <stop offset="1" stop-color="#d99516" />
+    </linearGradient>
+    <linearGradient id="coin-edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff5ad" />
+      <stop offset="1" stop-color="#be7410" />
+    </linearGradient>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse">
+      <path d="M 42 0 L 0 0 0 42" fill="none" stroke="#ffffff" stroke-opacity="0.045" stroke-width="1" />
+    </pattern>
+    <g id="coin-small">
+      <circle cy="7" r="30" fill="#00052a" opacity="0.34" />
+      <circle r="29" fill="url(#coin-edge)" />
+      <circle r="23" fill="url(#coin)" stroke="#fff4a5" stroke-opacity="0.72" stroke-width="2" />
+      <text y="10" text-anchor="middle" fill="#5d3909" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="800">$</text>
+    </g>
+
+    <g id="coin-large">
+      <ellipse cy="5" rx="42" ry="39" fill="#9d5c0c" opacity="0.78" />
+      <circle r="42" fill="url(#coin-edge)" />
+      <circle r="34" fill="url(#coin)" stroke="#fff6b5" stroke-opacity="0.78" stroke-width="3" />
+      <text y="14" text-anchor="middle" fill="#5d3909" font-family="Arial, Helvetica, sans-serif" font-size="43" font-weight="800">$</text>
+    </g>
+  </defs>
+
+  <style>
+    .coin {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: float-coin 6.4s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+    }
+
+    .coin-a { animation-delay: -0.8s; }
+    .coin-b { animation-delay: -2.6s; }
+    .coin-c { animation-delay: -4.4s; }
+    .coin-d { animation-delay: -1.7s; }
+    .coin-e { animation-delay: -5.2s; }
+
+    .spark {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: breathe 3.2s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+    }
+
+    .spark-b { animation-delay: -1.6s; }
+
+    .halo {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: halo-breathe 5.2s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+    }
+
+    @keyframes float-coin {
+      0%, 100% {
+        opacity: 0.48;
+        transform: translateY(14px) rotate(-5deg) scale(0.96);
+      }
+      50% {
+        opacity: 1;
+        transform: translateY(-14px) rotate(5deg) scale(1);
+      }
+    }
+
+    @keyframes breathe {
+      0%, 100% {
+        opacity: 0.35;
+        transform: scale(0.94);
+      }
+      50% {
+        opacity: 0.92;
+        transform: scale(1);
+      }
+    }
+
+    @keyframes halo-breathe {
+      0%, 100% {
+        opacity: 0.62;
+        transform: scale(0.98);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .coin,
+      .spark,
+      .halo {
+        animation: none;
+        transform: none;
+      }
+
+      .coin { opacity: 0.82; }
+      .spark { opacity: 0.62; }
+      .halo { opacity: 0.86; }
+    }
+  </style>
+
+  <rect width="1200" height="340" rx="30" fill="url(#background)" />
+  <rect width="1200" height="340" rx="30" fill="url(#grid)" />
+  <ellipse class="halo" cx="600" cy="164" rx="310" ry="190" fill="url(#glow)" />
+
+  <g transform="translate(108 92) rotate(-10)">
+    <g class="coin coin-a"><use href="#coin-small" /></g>
+  </g>
+  <g transform="translate(232 244) rotate(8)">
+    <g class="coin coin-b"><use href="#coin-large" /></g>
+  </g>
+  <g transform="translate(1007 88) rotate(12)">
+    <g class="coin coin-c"><use href="#coin-large" /></g>
+  </g>
+  <g transform="translate(1092 252) rotate(-8)">
+    <g class="coin coin-d"><use href="#coin-small" /></g>
+  </g>
+  <g transform="translate(924 270) rotate(5)">
+    <g class="coin coin-e"><use href="#coin-small" /></g>
+  </g>
+
+  <g class="spark" fill="#7ff0b2">
+    <path d="M159 190c16 4 22 10 26 26 4-16 10-22 26-26-16-4-22-10-26-26-4 16-10 22-26 26Z" />
+    <circle cx="79" cy="236" r="6" />
+  </g>
+  <g class="spark spark-b" fill="#fff4a5">
+    <path d="M1032 190c12 3 17 8 20 20 3-12 8-17 20-20-12-3-17-8-20-20-3 12-8 17-20 20Z" />
+    <circle cx="1120" cy="126" r="7" />
+  </g>
+
+  <g>
+    <text x="600" y="168" text-anchor="middle" fill="#00052a" fill-opacity="0.48" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="900" letter-spacing="-4">Finnit</text>
+    <text x="600" y="161" text-anchor="middle" fill="#f7faf8" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="900" letter-spacing="-4">Finnit</text>
+    <text x="600" y="211" text-anchor="middle" fill="#8ff0ba" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" letter-spacing="4">APPLE NOTES FOR YOUR MONEY</text>
+  </g>
+
+  <g transform="translate(490 249)">
+    <rect width="220" height="44" rx="22" fill="#ffffff" fill-opacity="0.1" stroke="#8ff0ba" stroke-opacity="0.42" />
+    <circle cx="26" cy="22" r="8" fill="#20c878" />
+    <text x="46" y="29" fill="#f7faf8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">write → remember</text>
+  </g>
+</svg>

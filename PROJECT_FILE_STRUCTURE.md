@@ -727,6 +727,7 @@ Supabase safety requirements:
 | `assets/marketing/social/finnit-x-launch-clean.png` | Cleaner 576 × 680 X variant with reference-matched negative space, restrained header chrome, simplified feature panels, and flatter presentation.                                                                                                              |
 | `assets/marketing/social/finnit-x-launch-source-screens.png` | Corrected 576 × 680 X variant whose four iPhone displays are sourced from the supplied Finnit journal, receipt, Ask, and spending screenshots instead of invented replacement UI.                                                                            |
 | `assets/marketing/readme/paywall/*.png`       | Six production iPhone screenshots used by the README paywall gallery: the three value/trial pages plus annual, monthly, and weekly plan-selection states.                                                                                                       |
+| `assets/marketing/readme/money-header.svg`    | Animated README hero with floating dollar coins, a subtle money-ledger grid, Finnit branding, and a static Reduced Motion fallback.                                                                                                                            |
 
 ## Tests
 

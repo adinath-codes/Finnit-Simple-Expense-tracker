@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&height=220&color=0:05083D,52:3246D3,100:20C878&text=Finnit&fontColor=F7FAF8&fontSize=78&fontAlignY=38&desc=Apple%20Notes%20for%20your%20money&descAlignY=60&descSize=19&animation=fadeIn" alt="Finnit — Apple Notes for your money" width="100%" />
+<img src="assets/marketing/readme/money-header.svg" alt="Finnit — Apple Notes for your money, surrounded by animated coins and dollar marks" width="100%" />
 
 <img src="assets/logo/app-icon.png" width="112" alt="Finnit app icon" />
 <br />
