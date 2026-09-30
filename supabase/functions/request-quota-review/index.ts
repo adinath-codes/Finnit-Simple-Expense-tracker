@@ -1,5 +1,6 @@
 import { ApiError } from "../_shared/validation.ts";
 import { metric, requireQuota, rpc, serve } from "../_shared/runtime.ts";
+import { sendSupportEmail } from "../_shared/support-email.ts";
 
 serve(async (body, ctx) => {
   if (body.action !== "request_review")
@@ -11,8 +12,9 @@ serve(async (body, ctx) => {
     "finn_request_ai_quota_review",
     { p_user: ctx.userId },
   );
+  await sendSupportEmail(ctx, "quota_review", { requestId });
   await metric(ctx, "ai_quota_review_requested", {
     metadata: { request_id: requestId },
   });
-  return { requested: true, request_id: requestId };
+  return { requested: true, emailed: true, request_id: requestId };
 });

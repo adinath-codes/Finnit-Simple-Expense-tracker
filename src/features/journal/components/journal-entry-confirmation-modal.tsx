@@ -14,6 +14,7 @@ export function JournalEntryConfirmationModal({
   onRecalculate,
   onPreserve,
   onDelete,
+  aiEnabled,
 }: {
   kind: JournalEntryConfirmationKind | null;
   busy: boolean;
@@ -21,6 +22,7 @@ export function JournalEntryConfirmationModal({
   onRecalculate: () => void;
   onPreserve: () => void;
   onDelete: () => void;
+  aiEnabled: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const reduced = useMotionPreference();
@@ -62,17 +64,21 @@ export function JournalEntryConfirmationModal({
             />
           </View>
           <Text accessibilityRole="header" style={styles.title}>
-            {deleting ? "Delete this entry?" : "Recalculate this entry?"}
+            {deleting
+              ? "Delete this entry?"
+              : aiEnabled ? "Recalculate this entry?" : "Save this note edit?"}
           </Text>
           <Text style={styles.body}>
             {deleting
               ? "This removes it from your journal, totals, insights, and search. This can’t be undone."
-              : "Finn can read the edited note again and update its amount and details. Or keep the current amount and details."}
+              : aiEnabled
+                ? "Finn can read the edited note again and update its amount and details. Or keep the current amount and details."
+                : "The note will change while its current amount and details stay the same. Turn on AI in Settings to recalculate it."}
           </Text>
 
           {deleting ? (
             <>
-              <Button
+              {aiEnabled && <Button
                 disabled={busy}
                 label="Delete entry"
                 onPress={onDelete}
@@ -81,7 +87,7 @@ export function JournalEntryConfirmationModal({
                 <Text style={styles.primaryButtonText}>
                   {busy ? "Deleting…" : "Delete entry"}
                 </Text>
-              </Button>
+              </Button>}
               <Button disabled={busy} label="Keep entry" onPress={close}>
                 <Text style={styles.secondaryButtonText}>Keep entry</Text>
               </Button>

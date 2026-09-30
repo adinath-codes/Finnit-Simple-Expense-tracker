@@ -4,6 +4,14 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "ios-simulator": {
+      "distribution": "internal",
+      "environment": "production",
+      "channel": "preview",
+      "ios": {
+        "simulator": true
+      }
+    },
     "preview": {
       "distribution": "internal",
       "channel": "preview"
@@ -14,6 +22,10 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6816385439"
+      }
+    }
   }
 }

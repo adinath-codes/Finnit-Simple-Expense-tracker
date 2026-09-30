@@ -13,6 +13,7 @@ import {
 
 serve(async (body, ctx) => {
   const requestStartedAt = Date.now();
+  let zeroResultFallbackRequest: Record<string, unknown> | null = null;
   await requireQuota(ctx);
   if (body.action === "explain") {
     const candidates = await rpc<Catalog>(ctx.db, "finn_search_catalog", {
@@ -391,6 +392,15 @@ serve(async (body, ctx) => {
       }
     }
     plan = validatePlan(plan, candidates);
+    zeroResultFallbackRequest = {
+      query,
+      timezone,
+      selected_range: {
+        start_date: plan.start_date,
+        end_date: plan.end_date,
+      },
+      default_currency: plan.currency,
+    };
   }
   if (planCacheStatus) {
     await metric(ctx, `ask_simple_plan_cache_${planCacheStatus}`);
@@ -422,6 +432,45 @@ serve(async (body, ctx) => {
       p_revision: cursor ? body.revision : null,
     },
   );
+  if (
+    !body.filters &&
+    !body.cursor &&
+    Number(result.matching_count) === 0 &&
+    zeroResultFallbackRequest
+  ) {
+    try {
+      const { askSqlSearch } = await import("../_shared/ask-sql.ts");
+      const fallback = await askSqlSearch(
+        ctx,
+        zeroResultFallbackRequest,
+        { maxGenerationAttempts: 1 },
+      );
+      await metric(ctx, "ask_zero_result_fallback_success", {
+        metadata: {
+          route: "guarded_sql",
+          operation: plan.operation,
+          fallback_outcome: "success",
+          result_count: Array.isArray(fallback.transactions)
+            ? fallback.transactions.length
+            : 0,
+          latency_ms: Date.now() - requestStartedAt,
+        },
+      });
+      return { ...fallback, interpretation: "guarded_sql_zero_result" };
+    } catch (fallbackError) {
+      await metric(ctx, "ask_zero_result_fallback_unsupported", {
+        metadata: {
+          route: "guarded_sql",
+          operation: plan.operation,
+          fallback_outcome: "unsupported",
+          rejection: fallbackError instanceof ApiError
+            ? fallbackError.code
+            : "read_failed",
+          latency_ms: Date.now() - requestStartedAt,
+        },
+      });
+    }
+  }
   const filter_labels = {
     merchant: candidates.merchants.find((m) => m.id === plan.merchant_id)
       ?.canonical_name ?? null,

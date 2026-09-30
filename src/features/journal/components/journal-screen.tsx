@@ -21,6 +21,7 @@ import {
   useJournalStatus,
 } from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
+import { useAiConsent } from "@/features/ai-consent/providers/ai-consent-provider";
 import type { JournalEntry, ReceiptPhoto } from "@/types/domain";
 import { captureReceipt } from "@/features/camera/services/receipt-service";
 import { JournalHeader } from "./journal-header";
@@ -31,6 +32,10 @@ import {
   type JournalEntryConfirmationKind,
 } from "./journal-entry-confirmation-modal";
 import { JournalEmptyPrompt } from "./journal-empty-prompt";
+import {
+  ManualJournalEntryModal,
+  type ManualJournalEntry,
+} from "./manual-journal-entry-modal";
 import {
   JournalProcessingDots,
   JournalProcessingStatus,
@@ -56,6 +61,7 @@ export default function JournalScreen() {
   const { entries, selectedDate, settings, recentPresetEntryId } = useJournalData();
   const {
     captureNote,
+    capturePreset,
     saveEntryText,
     deleteEntry,
     clearMutationError,
@@ -63,6 +69,7 @@ export default function JournalScreen() {
   } = useJournalActions();
   const { mutationError, journalLoading } = useJournalStatus();
   const ownerId = useSession().session?.user.id;
+  const aiEnabled = useAiConsent().status === "granted";
   const screenActive = useIsFocused();
   const [draft, setDraft] = useState("");
   const [draftLoaded, setDraftLoaded] = useState(false);
@@ -75,6 +82,7 @@ export default function JournalScreen() {
   const [editSaving, setEditSaving] = useState(false);
   const [receiptError, setReceiptError] = useState<string | null>(null);
   const [tool, setTool] = useState<"add" | "receipt" | null>(null);
+  const [manualNote, setManualNote] = useState<string | null>(null);
   const input = useRef<TextInput>(null);
   const entryInputs = useRef(new Map<string, TextInput>());
   const editingEntryIdRef = useRef<string | null>(null);
@@ -130,6 +138,13 @@ export default function JournalScreen() {
     async (submittedDraft: string, dismissKeyboard: boolean) => {
       const note = submittedDraft.trim();
       if (!note || submitLock.current) return;
+      if (!aiEnabled) {
+        setFocused(false);
+        input.current?.blur();
+        Keyboard.dismiss();
+        setManualNote(note);
+        return;
+      }
       submitLock.current = true;
       setSubmitting(true);
       try {
@@ -154,8 +169,36 @@ export default function JournalScreen() {
         scroll.current?.scrollToEnd({ animated: false });
       });
     },
-    [captureNote, selectedDate],
+    [aiEnabled, captureNote, selectedDate],
   );
+  const saveManualEntry = useCallback(async ({
+    amountMinor,
+    category,
+  }: ManualJournalEntry) => {
+    const note = manualNote?.trim();
+    if (!note || submitLock.current) return;
+    submitLock.current = true;
+    setSubmitting(true);
+    try {
+      await capturePreset({
+        id: `manual-${Date.now()}`,
+        name: note,
+        note,
+        amountMinor,
+        category,
+      }, selectedDate, "manual");
+    } catch {
+      submitLock.current = false;
+      setSubmitting(false);
+      return;
+    }
+    setDraft((current) => current.trim() === note ? "" : current);
+    lastReturnSubmission.current = null;
+    setManualNote(null);
+    submitLock.current = false;
+    setSubmitting(false);
+    requestAnimationFrame(() => scroll.current?.scrollToEnd({ animated: false }));
+  }, [capturePreset, manualNote, selectedDate]);
   const submitOnReturn = useCallback(
     (submittedDraft: string) => {
       const note = submittedDraft.trim();
@@ -457,6 +500,14 @@ export default function JournalScreen() {
             ))
           )}
           <View style={styles.editor}>
+            {!aiEnabled && (
+              <View style={styles.manualMode}>
+                <Text style={styles.manualModeTitle}>Manual journal mode</Text>
+                <Text style={styles.manualModeBody}>
+                  Write a note, then add its amount and category. Receipt scanning and AI organization stay off.
+                </Text>
+              </View>
+            )}
             {!journalLoading && dayEntries.length === 0 && draft.length === 0 && !focused && (
               <JournalEmptyPrompt
                 key={selectedDate}
@@ -513,6 +564,7 @@ export default function JournalScreen() {
             saveValue={editingEntryId ? entryDraft : draft}
             saveLabel={editingEntryId ? "Review edited note" : "Save note"}
             editingEntry={!!editingEntryId}
+            aiEnabled={aiEnabled}
             submitting={submitting || editSaving}
             input={input}
             onSave={() => {
@@ -535,6 +587,17 @@ export default function JournalScreen() {
           onRecalculate={() => { void applyEditPrompt("recalculate"); }}
           onPreserve={() => { void applyEditPrompt("preserve"); }}
           onDelete={() => { void applyEditPrompt(); }}
+          aiEnabled={aiEnabled}
+        />
+        <ManualJournalEntryModal
+          busy={submitting}
+          currency={settings.currency}
+          note={manualNote}
+          onDismiss={() => {
+            lastReturnSubmission.current = null;
+            setManualNote(null);
+          }}
+          onSave={(entry) => { void saveManualEntry(entry); }}
         />
       </SafeAreaView>
     </Screen>
@@ -554,7 +617,23 @@ const styles = StyleSheet.create({
   },
   saveErrorText: { color: Finn.danger, flex: 1, fontSize: 12, lineHeight: 17 },
   saveErrorAction: { color: Finn.danger, fontSize: 11, fontWeight: "600" },
-  editor: { flex: 1, flexDirection: "row", minHeight: 160 },
+  editor: { flex: 1, flexDirection: "row", flexWrap: "wrap", minHeight: 160 },
+  manualMode: {
+    backgroundColor: Finn.primarySoft,
+    borderRadius: 14,
+    marginTop: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    width: "100%",
+  },
+  manualModeTitle: { color: Finn.primary, fontFamily: JournalType.medium, fontSize: 12 },
+  manualModeBody: {
+    color: Finn.secondary,
+    fontFamily: JournalType.regular,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 2,
+  },
   statusSlot: {
     alignItems: "flex-end",
     marginLeft: 16,

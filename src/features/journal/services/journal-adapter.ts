@@ -116,6 +116,8 @@ export function textJournalEntry(
   const first = transactions[0];
   const components = entry.extraction.amount_components ?? [];
   const allocationRows = deriveAllocationRows(entry.extraction, entry.input.id);
+  const aiCorrectionPending = !!sync &&
+    "pendingAction" in sync && sync.pendingAction === "ai_correct";
   return {
     id: entry.input.id,
     date: first?.occurred_on ?? entry.input.selected_date ?? entry.input.captured_at.slice(0, 10),
@@ -196,7 +198,7 @@ export function textJournalEntry(
       : {}),
     amountBreakdown: deriveAmountBreakdown(entry.extraction, entry.input.id),
     allocationRows,
-    thought: entry.sync === "synced"
+    thought: entry.sync === "synced" || aiCorrectionPending
       ? entry.extraction.interpretation_summary ||
         "Here’s what I picked up from this spending entry."
       : entry.sync === "blocked"

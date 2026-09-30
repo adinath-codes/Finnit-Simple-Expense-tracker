@@ -20,6 +20,7 @@ export const ANALYTICS_EVENTS = {
   signInBlocked: "sign in blocked",
   passwordResetRequested: "password reset requested",
   accountSignedOut: "account signed out",
+  accountDeleted: "account deleted",
   accountDeletionScheduled: "account deletion scheduled",
   journalEntryCreated: "journal entry created",
   journalEntryUpdated: "journal entry updated",
@@ -155,6 +156,7 @@ function sanitizePostHogProperties(properties: Record<string, unknown> | undefin
 export const analyticsClient = new PostHog(apiKey || "phc_disabled", {
   host,
   disabled: !isAnalyticsConfigured,
+  persistence: "file",
   captureAppLifecycleEvents: true,
   capturePushNotificationOpened: false,
   capturePushNotificationSubscriptions: false,
@@ -162,6 +164,7 @@ export const analyticsClient = new PostHog(apiKey || "phc_disabled", {
   disableGeoip: true,
   enablePersistSessionIdAcrossRestart: false,
   personProfiles: "identified_only",
+  disableRemoteFeatureFlags: true,
   flushAt: 15,
   flushInterval: 10_000,
   enableSessionReplay:

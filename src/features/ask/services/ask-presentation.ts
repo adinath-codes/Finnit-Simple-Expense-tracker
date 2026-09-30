@@ -99,7 +99,9 @@ export function buildAnswerRows(
           }
         : null,
       caption: [
-        row.label,
+        row.label && (advanced.rows.length > 1 || row.label !== advanced.label)
+          ? row.label
+          : null,
         row.value_date && row.value_minor != null ? row.value_date : null,
         row.rounded ? "rounded to the nearest minor unit" : null,
         row.change_percent != null

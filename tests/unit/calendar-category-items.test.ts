@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCalendarCategoryItems } from "../../src/features/calendar/services/calendar-category-items.ts";
+import { searchCalendarMonth } from "../../src/features/calendar/services/calendar-search.ts";
 
 function entry(id, date, note, items) {
   return {
@@ -97,4 +98,48 @@ test("filters other categories, months, and future dates", () => {
   });
 
   assert.deepEqual(rows.map((row) => row.id), ["older:ride"]);
+});
+
+test("month search matches every term across notes, merchants, and item names", () => {
+  const rows = searchCalendarMonth({
+    entries: [
+      ...entries,
+      {
+        ...entry("merchant", "2026-09-18", "Weekly essentials", [
+          item("oat-milk", "food", 250),
+        ]),
+        merchant: "Café Verde",
+      },
+    ],
+    month: new Date(2026, 8, 1, 12),
+    query: "cafe oat",
+    today: "2026-09-22",
+  });
+
+  assert.deepEqual(rows.map((row) => row.id), ["merchant"]);
+});
+
+test("month search is newest-first and excludes future and other-month entries", () => {
+  const rows = searchCalendarMonth({
+    entries,
+    month: new Date(2026, 8, 1, 12),
+    query: "food",
+    today: "2026-09-22",
+  });
+
+  assert.deepEqual(
+    rows.map((row) => row.id),
+    ["newer", "same-day", "older"],
+  );
+});
+
+test("month search does not return entries before a query exists", () => {
+  const rows = searchCalendarMonth({
+    entries,
+    month: new Date(2026, 8, 1, 12),
+    query: "   ",
+    today: "2026-09-22",
+  });
+
+  assert.deepEqual(rows, []);
 });

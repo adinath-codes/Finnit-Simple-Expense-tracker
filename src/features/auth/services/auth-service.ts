@@ -3,6 +3,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
 import type { Provider, Session } from "@supabase/supabase-js";
+import { Platform } from "react-native";
 import { getSupabase, isBackendConfigured } from "@/lib/supabase/client";
 import { deleteJournalCache } from "@/lib/offline/database";
 import { deleteJournalDrafts } from "@/features/journal/store/journal-draft-store";
@@ -23,7 +24,7 @@ let redirectAttempt:
 
 function requireBackend() {
   if (!isBackendConfigured()) {
-    throw new Error("Finn’s secure account connection is not configured yet.");
+    throw new Error("Finnit’s secure account connection is not configured yet.");
   }
   return getSupabase();
 }
@@ -178,7 +179,7 @@ export async function verifyEmailOtp(email: string, token: string) {
   });
   if (error) throw error;
   if (!data.session) {
-    throw new Error("Finn couldn’t create a secure session from that code.");
+    throw new Error("Finnit couldn’t create a secure session from that code.");
   }
   return data.session;
 }
@@ -226,7 +227,7 @@ export async function cancelPendingAccountDeletion(): Promise<AccountDeletionRes
   if (error) throw error;
   const status = (data as { status?: AccountDeletionRestoreStatus } | null)?.status;
   if (status !== "none" && status !== "cancelled" && status !== "expired") {
-    throw new Error("Finn couldn’t verify your account status.");
+    throw new Error("Finnit couldn’t verify your account status.");
   }
   if (status === "expired") {
     await db.auth.signOut({ scope: "local" }).catch(() => undefined);
@@ -234,21 +235,75 @@ export async function cancelPendingAccountDeletion(): Promise<AccountDeletionRes
   return status;
 }
 
-export async function scheduleCurrentAccountDeletion() {
+export type AccountDeletionTiming = "immediate" | "scheduled";
+
+function appleIdentityUser(session: Session) {
+  const identity = session.user.identities?.find(
+    (candidate) => candidate.provider === "apple",
+  );
+  const subject = identity?.identity_data?.sub;
+  if (typeof subject === "string" && subject) return subject;
+  return typeof identity?.id === "string" && identity.id ? identity.id : null;
+}
+
+async function appleAuthorizationCodeForDeletion(session: Session) {
+  const appleUser = appleIdentityUser(session);
+  const providers = session.user.app_metadata.providers;
+  const usesApple = !!appleUser ||
+    (Array.isArray(providers) && providers.includes("apple")) ||
+    session.user.app_metadata.provider === "apple";
+  if (!usesApple) return undefined;
+  if (Platform.OS !== "ios") {
+    throw new Error(
+      "Open Finnit on your iPhone or iPad to verify Sign in with Apple before deleting this account.",
+    );
+  }
+
+  let credential: AppleAuthentication.AppleAuthenticationCredential;
+  try {
+    credential = appleUser
+      ? await AppleAuthentication.refreshAsync({ user: appleUser })
+      : await AppleAuthentication.signInAsync();
+  } catch (error) {
+    if (
+      error && typeof error === "object" && "code" in error &&
+      error.code === "ERR_REQUEST_CANCELED"
+    ) {
+      throw new Error("Apple verification was canceled. Your account was not deleted.");
+    }
+    throw error;
+  }
+  if (!credential.authorizationCode) {
+    throw new Error("Apple couldn’t verify this deletion. Please try again.");
+  }
+  return credential.authorizationCode;
+}
+
+export async function deleteCurrentAccount(timing: AccountDeletionTiming) {
   const db = requireBackend();
   const { data, error: sessionError } = await db.auth.getSession();
   if (sessionError) throw sessionError;
   if (!data.session) throw new Error("Sign in again before deleting your account.");
 
   const userId = data.session.user.id;
+  const appleAuthorizationCode = await appleAuthorizationCodeForDeletion(data.session);
   const { data: result, error } = await db.functions.invoke("delete-account", {
-    body: { action: "request_deletion", confirmation: "DELETE" },
+    body: {
+      action: timing === "immediate" ? "delete_immediately" : "request_deletion",
+      confirmation: "DELETE",
+      ...(appleAuthorizationCode
+        ? { apple_authorization_code: appleAuthorizationCode }
+        : {}),
+    },
   });
   if (error) throw error;
 
-  captureAnalytics(ANALYTICS_EVENTS.accountDeletionScheduled, {
-    recovery_days: 30,
-  });
+  captureAnalytics(
+    timing === "immediate"
+      ? ANALYTICS_EVENTS.accountDeleted
+      : ANALYTICS_EVENTS.accountDeletionScheduled,
+    { recovery_days: timing === "immediate" ? 0 : 30 },
+  );
   await analyticsClient.flush().catch(() => undefined);
 
   await Promise.allSettled([
@@ -260,5 +315,7 @@ export async function scheduleCurrentAccountDeletion() {
   if (signOutError) {
     await db.auth.signOut({ scope: "local" }).catch(() => undefined);
   }
-  return result as { status: "scheduled"; scheduled_for: string };
+  return result as
+    | { status: "deleted"; apple_revoked: boolean }
+    | { status: "scheduled"; scheduled_for: string; apple_revoked: boolean };
 }

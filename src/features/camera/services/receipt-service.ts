@@ -17,6 +17,7 @@ import type {
   SavedEntry,
 } from "@/lib/supabase/database.types";
 import { notifyFirstJournalEntryLogged } from "@/features/notifications/services/entry-events";
+import { requireGrantedAiConsent } from "@/features/ai-consent/services/ai-consent-service";
 
 const MAX_EDGE = 2560;
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -106,6 +107,7 @@ export async function captureReceipt(
 ) {
   if (!photo.uri) throw new Error("receipt_file_missing");
   const userId = await currentUserId();
+  await requireGrantedAiConsent(userId);
   const entryId = Crypto.randomUUID();
   const attachmentId = Crypto.randomUUID();
   const directory = directoryFor(userId);
@@ -207,6 +209,7 @@ export async function pickReceiptFromGallery() {
 
 export async function retryReceipt(entryId: string) {
   const userId = await currentUserId();
+  await requireGrantedAiConsent(userId);
   let needsPreparation = false;
   await changeJournalCache(userId, (cache) => {
     const receipt = cache.receipts[entryId];

@@ -134,6 +134,3 @@ export async function deletePresetForAccountRemote(userId: string, id: string) {
     .from("user_presets").delete().eq("user_id", userId).eq("id", id);
   if (error) throw error;
 }
-
-/** Preset-generated notes include the saved facts so the normal parser and the
- * remote source of truth receive the same amount/category the user selected. */

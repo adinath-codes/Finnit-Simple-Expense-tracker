@@ -12,6 +12,15 @@ entitlement snapshot and reject inactive users with `premium_required`.
 `refresh-entitlement` and the RevenueCat webhook keep that snapshot current;
 the latency-sensitive capture path does not call RevenueCat.
 
+The client does not poll RevenueCat. It configures the SDK once for the signed-in
+Supabase UUID, reads `CustomerInfo` once at session bootstrap, and then reacts to
+SDK customer-info events plus explicit purchase, restore, retry, redemption, and
+expiration boundaries. Store offerings are loaded only for inactive users who
+need the paywall. The last verified entitlement is also stored per account so an
+existing subscriber can open the durable local journal without waiting for a
+network request. Cached renewing access is bounded to the store expiration plus
+RevenueCat's three-day offline grace; known cancellations stop at expiration.
+
 ## Environment
 
 Replace the placeholders in the local ignored `.env` and in the corresponding
@@ -109,6 +118,15 @@ Implemented in the in-app purchase flow:
   than the monthly equivalent.
 - “3 days free” and the exact localized post-trial renewal price when the store
   reports eligibility; ineligible accounts see immediate-charge language.
+- A local notification is scheduled from RevenueCat's verified `TRIAL`
+  entitlement expiry, 24 hours before the trial ends. Permission is requested
+  only after checkout succeeds; normal, inactive, and expired entitlements
+  cannot schedule it, and accelerated sandbox trials use a before-expiry
+  fallback. The scheduled expiry is recorded locally so reopening the app does
+  not postpone or duplicate the one-shot reminder.
+- Offer-neutral navigation, timeline, and checkout copy while StoreKit
+  eligibility is unknown; only a confirmed eligible plan promises the 3-day
+  trial, while confirmed ineligible plans show the localized immediate price.
 - Auto-renewal and cancellation language.
 - Restore Purchases.
 - Native App Store offer-code redemption.
@@ -118,19 +136,17 @@ Implemented in the in-app purchase flow:
 - Active subscribers can open the store's subscription-management UI from
   Settings.
 
-Still required outside the repository before App Review:
-
-- Complete App Store Connect subscription products, prices, localization,
-  review screenshots, three-day introductory offers, and tester offer code.
-- Put working public Privacy Policy and Terms links in App Store Connect
-  metadata in addition to the in-app routes.
-- Enable the In-App Purchase capability for the App Store target and submit the
-  subscription products with the app version.
-- Add clear App Review notes and a review account or instructions that let the
-  reviewer reach and exercise the purchase flow.
-- Complete App Privacy and age-rating questionnaires accurately and test
-  purchase, restore, expiry, cancellation, billing retry, ineligible-trial, and
-  offer-code paths in Sandbox/TestFlight.
+The September 29, 2026 live audit verified that all three App Store products
+have English (U.S.) localization, all-storefront prices, and three-day free
+introductory offers. In-App Purchase is enabled for `com.finnit.app`. Remaining
+work is tracked precisely in
+`docs/app-store-connect/APP_REVIEW_RELEASE_HANDOFF.md`; the principal blockers
+are missing IAP review screenshots, no iOS/TestFlight build or Sandbox testers,
+and blank app-version review access/notes. RevenueCat now has valid Apple
+credentials and correctly maps all three iOS products to `finn_it_pro` and the
+annual, monthly, and weekly packages. App Privacy, age rating, product-page
+metadata, StoreKit scenario testing, and joint app/subscription submission
+remain external release gates.
 
 Passing the repository checks cannot guarantee approval. Store configuration,
 metadata, reviewer access, and live sandbox behavior are part of review and must

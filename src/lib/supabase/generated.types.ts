@@ -1055,6 +1055,39 @@ export type Database = {
           },
         ]
       }
+      ai_consent_records: {
+        Row: {
+          created_at: string
+          data_categories: string[]
+          decided_at: string
+          decision: string
+          policy_version: string
+          provider: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          data_categories: string[]
+          decided_at?: string
+          decision: string
+          policy_version: string
+          provider: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          data_categories?: string[]
+          decided_at?: string
+          decision?: string
+          policy_version?: string
+          provider?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_presets: {
         Row: {
           amount_minor: number

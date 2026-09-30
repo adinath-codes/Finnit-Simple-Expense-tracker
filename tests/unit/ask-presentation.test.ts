@@ -85,6 +85,17 @@ test("legacy totals are never relabeled as the settings currency", () => {
   assert.deepEqual(rows[0].money, { minor: "100", currency: "EUR" });
 });
 
+test("a single answer row does not repeat the result label", () => {
+  const result = advanced("sum", [{
+    label: "Total",
+    currency: "EUR",
+    value_minor: "1825",
+  }]);
+  result.label = "Total";
+  const row = buildAnswerRows(result, emptyTotals)[0];
+  assert.equal(row.caption, "");
+});
+
 test("removable entity chips expose all normalized filters", () => {
   const chips = entityFilterChips(plan, {
     merchant: "One", category: "Food",

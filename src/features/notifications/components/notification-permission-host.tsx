@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { usePathname } from "expo-router";
+import { useAppToast } from "@/components/ui/toast-provider";
 import { useSession } from "@/features/auth/providers/session-provider";
 import {
   useJournalActions,
@@ -27,6 +28,7 @@ export function NotificationPermissionHost() {
   const { entries, settings } = useJournalData();
   const { updateSettings } = useJournalActions();
   const { initialSyncReady, settingsReady } = useJournalStatus();
+  const { setToastPresentationPaused } = useAppToast();
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,14 +59,15 @@ export function NotificationPermissionHost() {
     if (await wasNotificationRationaleShown(userId)) return;
     await markNotificationRationaleShown(userId);
     const permission = await getJournalReminderPermission();
-    if (permission.granted) {
-      await enableReminders();
-      return;
-    }
-    if (!permission.canAskAgain) return;
+    if (!permission.granted && !permission.canAskAgain) return;
     setError(null);
+    setToastPresentationPaused(true);
     setVisible(true);
-  }, [enableReminders, userId]);
+  }, [setToastPresentationPaused, userId]);
+
+  useEffect(() => () => {
+    setToastPresentationPaused(false);
+  }, [setToastPresentationPaused]);
 
   useEffect(() => {
     if (Platform.OS === "web" || !userId) return;
@@ -103,6 +106,7 @@ export function NotificationPermissionHost() {
       }
       await enableReminders();
       setVisible(false);
+      setToastPresentationPaused(false);
     } catch {
       setError("I couldn’t set reminders up just now. Try once more.");
     } finally {
@@ -118,6 +122,7 @@ export function NotificationPermissionHost() {
       onDismiss={() => {
         setError(null);
         setVisible(false);
+        setToastPresentationPaused(false);
       }}
       visible={visible}
     />

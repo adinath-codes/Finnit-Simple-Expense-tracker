@@ -2,35 +2,53 @@ import { MaskedView } from "@expo/ui/community/masked-view";
 import { ZoomLink } from "@/components/navigation/zoom-link";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import {
+     Platform,
+     StyleSheet,
+     Text,
+     useWindowDimensions,
+     View,
+} from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Button } from "@/components/ui/button";
 import { Finn, JournalType } from "@/constants/theme";
 import { JournalGlyph } from "./journal-glyph";
 import { useJournalData } from "@/providers/app-providers";
 import { dayLabel } from "@/utils/dates";
+import { useAiConsent } from "@/features/ai-consent/providers/ai-consent-provider";
 
 const ASK_GRADIENT_ID = "ask-finn-blue";
 const HEADER_CHARACTER = require("../../../../assets/images/character/header/finn-laptop-wordmark-v2.webp");
 
 function AskFinnLabel() {
+     const { fontScale } = useWindowDimensions();
      const label = (
           <View pointerEvents="none" style={styles.askLabel}>
                <JournalGlyph name="sparkle" size={13} color="#000000" />
-               <Text maxFontSizeMultiplier={1.3} style={styles.askText}>
+               <Text
+                    maxFontSizeMultiplier={1.3}
+                    numberOfLines={1}
+                    style={styles.askText}
+               >
                     Ask Finn
                </Text>
           </View>
      );
 
-     return Platform.OS === "web" ? (
+     return Platform.OS === "web" || fontScale > 1 ? (
           <View pointerEvents="none" style={styles.askLabel}>
                <JournalGlyph
                     name="sparkle"
                     size={13}
                     colors={[Finn.blueSparkleStart, Finn.blueSparkleEnd]}
                />
-               <Text style={[styles.askText, styles.askTextWeb]}>Ask Finn</Text>
+               <Text
+                    maxFontSizeMultiplier={1.3}
+                    numberOfLines={1}
+                    style={[styles.askText, styles.askTextWeb]}
+               >
+                    Ask Finn
+               </Text>
           </View>
      ) : (
           <MaskedView
@@ -69,6 +87,7 @@ function AskFinnLabel() {
 
 export function JournalHeader() {
      const { selectedDate, today } = useJournalData();
+     const aiEnabled = useAiConsent().status === "granted";
      return (
           <View style={styles.header}>
                <View style={styles.side}>
@@ -94,11 +113,13 @@ export function JournalHeader() {
                <View style={[styles.side, styles.actions]}>
                     <View style={styles.actionGroup}>
                          <Button
-                              label="Ask Finn"
-                              onPress={() => router.push("/search")}
+                              label={aiEnabled ? "Ask Finn" : "AI is off. Open settings to enable it"}
+                              onPress={() => router.push(aiEnabled ? "/search" : "/settings")}
                               style={[styles.actionButton, styles.askButton]}
                          >
-                              <AskFinnLabel />
+                              {aiEnabled ? <AskFinnLabel /> : (
+                                   <Text style={styles.aiOffText}>AI off</Text>
+                              )}
                          </Button>
                          <View
                               pointerEvents="none"
@@ -188,12 +209,18 @@ const styles = StyleSheet.create({
      },
      askText: {
           color: "#000000",
+          flexShrink: 0,
           fontFamily: JournalType.medium,
           fontSize: 11,
           includeFontPadding: false,
           lineHeight: 20,
      },
      askTextWeb: { color: Finn.blueSparkleStart },
+     aiOffText: {
+          color: Finn.secondary,
+          fontFamily: JournalType.medium,
+          fontSize: 12,
+     },
      placeholder: {
           fontFamily: JournalType.medium,
           fontSize: 14,

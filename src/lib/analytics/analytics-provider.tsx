@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PropsWithChildren } from "react";
+import { useEffect, useRef, useState, type PropsWithChildren } from "react";
 import { usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
 import { useSession } from "@/features/auth/providers/session-provider";
@@ -60,11 +60,15 @@ export function AnalyticsRuntime() {
   const { settingsReady } = useJournalStatus();
   const previousUserId = useRef<string | null>(null);
   const appOpened = useRef(false);
+  const [runtimeReady, setRuntimeReady] = useState(false);
 
   useEffect(() => {
+    setRuntimeReady(false);
     if (!isAnalyticsConfigured || !settingsReady) return;
     let active = true;
     const sync = async () => {
+      await analyticsClient.ready();
+      if (!active) return;
       if (!settings.analyticsEnabled) {
         await analyticsClient.optOut();
         return;
@@ -74,7 +78,10 @@ export function AnalyticsRuntime() {
       if (!active) return;
 
       const userId = session?.user.id ?? null;
-      if (previousUserId.current && !userId) {
+      if (
+        previousUserId.current &&
+        previousUserId.current !== userId
+      ) {
         analyticsClient.reset();
         await analyticsClient.optIn();
       }
@@ -94,18 +101,21 @@ export function AnalyticsRuntime() {
           onboarding_completed: onboardingComplete,
         });
       }
+      if (active) setRuntimeReady(true);
     };
-    void sync();
+    void sync().catch(() => {
+      if (active) setRuntimeReady(false);
+    });
     return () => {
       active = false;
     };
   }, [onboardingComplete, session?.user.id, settings.analyticsEnabled, settingsReady]);
 
   useEffect(() => {
-    if (!settingsReady || !settings.analyticsEnabled) return;
+    if (!runtimeReady || !settingsReady || !settings.analyticsEnabled) return;
     const route = normalizedRoute(pathname);
     captureScreen(screenName(pathname), route);
-  }, [pathname, settings.analyticsEnabled, settingsReady]);
+  }, [pathname, runtimeReady, settings.analyticsEnabled, settingsReady]);
 
   return null;
 }

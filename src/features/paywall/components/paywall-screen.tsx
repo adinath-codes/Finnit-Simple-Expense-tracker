@@ -1,10 +1,11 @@
 import { Image } from "expo-image";
-import { useLocales } from "expo-localization";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
      ActivityIndicator,
+     Alert,
      Platform,
      ScrollView,
      StyleSheet,
@@ -19,11 +20,25 @@ import { ExternalLink } from "@/components/external-link";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
+import {
+     FINN_WEBSITE_URLS,
+     type FinnWebsiteUrl,
+} from "@/constants/website-links";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
 import {
      isRevenueCatTestStore,
      trackPaywallImpression,
 } from "@/features/paywall/services/subscription-service";
+import {
+     billingDisclosure,
+     checkoutCtaLabel,
+     introductoryOfferConfirmation,
+     pageReassurance,
+     PAYWALL_NAVIGATION_LABELS,
+     planPageTitle,
+     trialOfferStatus,
+     trialTimelineCopy,
+} from "@/features/paywall/services/paywall-copy";
 import type { SubscriptionPlan } from "@/features/paywall/types/subscription.types";
 
 const PAGE_COUNT = 4;
@@ -45,7 +60,7 @@ const HERO_BENEFITS = [
           image: require("../../../../assets/images/paywall/benefits/natural-capture.webp"),
           accessibilityLabel: "Chromatic journal, pen, and coin",
           title: "Capture before the detail fades",
-          body: "Write naturally. Finn keeps the amount, place, person, and purpose together.",
+          body: "Write naturally. Finnit keeps the amount, place, person, and purpose together.",
      },
      {
           image: require("../../../../assets/images/paywall/benefits/receipt-scan.webp"),
@@ -75,7 +90,6 @@ const COMPARISON_ROWS: {
 
 export default function PaywallScreen() {
      const { height, width } = useWindowDimensions();
-     const [locale] = useLocales();
      const pageWidth = Math.min(width, 620);
      const heroScale = Math.max(
           0.86,
@@ -135,24 +149,10 @@ export default function PaywallScreen() {
      };
 
      const trialConfigured = selectedPlan?.hasRequiredThreeDayTrial === true;
-     const eligibleForTrial = selectedPlan?.trialEligibility === "eligible";
-     const trialUnknown = selectedPlan?.trialEligibility === "unknown";
-     const checkoutLabel = !selectedPlan
-          ? "Store plans unavailable"
-          : testStore
-            ? "Run Test Store purchase"
-          : eligibleForTrial
-            ? "Start my 3-day free trial"
-            : `Continue for ${selectedPlan.fullPrice}`;
+     const trialUnknown = trialOfferStatus(selectedPlan) === "unknown";
+     const checkoutLabel = checkoutCtaLabel(selectedPlan, testStore);
      const pageActionLabels = [
-          trialPriceLabel(
-               selectedPlan,
-               locale.languageTag,
-               locale.currencySymbol,
-               locale.currencyCode,
-          ),
-          "See how my trial works",
-          "Try it for free",
+          ...PAYWALL_NAVIGATION_LABELS,
           checkoutLabel,
      ];
 
@@ -162,6 +162,17 @@ export default function PaywallScreen() {
                return;
           }
           if (selectedPlan) await purchase(selectedPlan);
+     };
+
+     const openLegalPage = async (url: FinnWebsiteUrl, title: string) => {
+          try {
+               await WebBrowser.openBrowserAsync(url);
+          } catch {
+               Alert.alert(
+                    `Couldn’t open ${title}`,
+                    "Check your connection and try again.",
+               );
+          }
      };
 
      return (
@@ -189,6 +200,7 @@ export default function PaywallScreen() {
                               <TrialTimelinePage
                                    width={pageWidth}
                                    height={height}
+                                   selectedPlan={selectedPlan}
                               />
                          </Page>
                          <Page width={pageWidth}>
@@ -237,11 +249,18 @@ export default function PaywallScreen() {
                          {page <= 2 ? null : page === PAGE_COUNT - 1 &&
                            selectedPlan ? (
                               <Text style={styles.billingDisclosure}>
-                                   {billingDisclosure(selectedPlan, testStore)}
+                                   {billingDisclosure(
+                                        selectedPlan,
+                                        testStore,
+                                   )}
                               </Text>
                          ) : (
                               <Text style={styles.billingDisclosure}>
-                                   {pageReassurance(page, selectedPlan)}
+                                   {pageReassurance(
+                                        page,
+                                        selectedPlan,
+                                        STORE_NAME,
+                                   )}
                               </Text>
                          )}
 
@@ -249,9 +268,9 @@ export default function PaywallScreen() {
                               <>
                                    {!testStore && trialUnknown && selectedPlan ? (
                                         <Text style={styles.eligibilityNote}>
-                                             The 3-day trial is for eligible new
-                                             subscribers. {STORE_NAME} confirms
-                                             eligibility before purchase.
+                                             {introductoryOfferConfirmation(
+                                                  STORE_NAME,
+                                             )}
                                         </Text>
                                    ) : null}
                                    <View style={styles.utilityLinks}>
@@ -259,6 +278,12 @@ export default function PaywallScreen() {
                                              label="Restore purchases"
                                              disabled={isBusy}
                                              onPress={() => void restore()}
+                                        />
+                                        <FooterLink
+                                             label="Settings"
+                                             onPress={() =>
+                                                  router.push("/settings")
+                                             }
                                         />
                                         {Platform.OS === "ios" ? (
                                              <FooterLink
@@ -274,7 +299,10 @@ export default function PaywallScreen() {
                                         <FooterLink
                                              label="Terms"
                                              onPress={() =>
-                                                  router.push("/legal/terms")
+                                                  void openLegalPage(
+                                                       FINN_WEBSITE_URLS.termsOfService,
+                                                       "Terms of Service",
+                                                  )
                                              }
                                         />
                                         <Text style={styles.linkSeparator}>
@@ -283,7 +311,10 @@ export default function PaywallScreen() {
                                         <FooterLink
                                              label="Privacy"
                                              onPress={() =>
-                                                  router.push("/legal/privacy")
+                                                  void openLegalPage(
+                                                       FINN_WEBSITE_URLS.privacyPolicy,
+                                                       "Privacy Policy",
+                                                  )
                                              }
                                         />
                                    </View>
@@ -371,7 +402,7 @@ function HeroPage({ scale }: { scale: number }) {
                          source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                          contentFit="contain"
                          style={[styles.finnProBadgeImage, responsive.badge]}
-                         accessibilityLabel="Finn Pro"
+                         accessibilityLabel="Finnit Pro"
                     />
                     <Text
                          pointerEvents="none"
@@ -504,7 +535,7 @@ function ComparisonPage({ width, height }: { width: number; height: number }) {
                                    source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                                    contentFit="contain"
                                    style={responsive.comparisonBadge}
-                                   accessibilityLabel="Finn Pro"
+                                   accessibilityLabel="Finnit Pro"
                               />
                          </View>
                     </View>
@@ -561,31 +592,18 @@ function ComparisonPage({ width, height }: { width: number; height: number }) {
 function TrialTimelinePage({
      width,
      height,
+     selectedPlan,
 }: {
      width: number;
      height: number;
+     selectedPlan: SubscriptionPlan | null;
 }) {
      const responsive = useMemo(
           () => createTimelineResponsiveStyles(width, height),
           [height, width],
      );
-     const timeline = [
-          {
-               label: "Today",
-               body: "Unlock full access to all Finn Pro features",
-               icon: "lock" as IconName,
-          },
-          {
-               label: "Day 2",
-               body: "Get reminded when your free trial is about to end",
-               icon: "bell" as IconName,
-          },
-          {
-               label: "Day 3",
-               body: "Your selected plan begins. Cancel anytime before your free trial ends",
-               icon: "check" as IconName,
-          },
-     ];
+     const copy = trialTimelineCopy(selectedPlan, STORE_NAME);
+     const icons = ["lock", "bell", "check"] as const satisfies readonly IconName[];
 
      return (
           <ScrollView
@@ -599,16 +617,16 @@ function TrialTimelinePage({
                     source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                     contentFit="contain"
                     style={responsive.badge}
-                    accessibilityLabel="Finn Pro"
+                    accessibilityLabel="Finnit Pro"
                />
                <Text
                     style={[styles.referencePageTitle, responsive.title]}
                >
-                    How your free trial works
+                    {copy.title}
                </Text>
                <View style={[styles.timelineCard, responsive.card]}>
                     <View style={[styles.timelineRail, responsive.rail]} />
-                    {timeline.map((item) => (
+                    {copy.items.map((item, index) => (
                          <View
                               key={item.label}
                               style={[styles.timelineRow, responsive.row]}
@@ -620,7 +638,7 @@ function TrialTimelinePage({
                                    ]}
                               >
                                    <Icon
-                                        name={item.icon}
+                                        name={icons[index]}
                                         size={responsive.iconSize}
                                         color="#FFFFFF"
                                         animation={false}
@@ -673,14 +691,10 @@ function PlanPage({
                     source={require("../../../../assets/images/paywall/finn-pro-badge.webp")}
                     contentFit="contain"
                     style={styles.planBadge}
-                    accessibilityLabel="Finn Pro"
+                    accessibilityLabel="Finnit Pro"
                />
                <Text style={styles.referencePageTitle}>
-                    {testStore
-                         ? "Choose a Test Store plan."
-                         : planStartsImmediately(selectedPlan)
-                         ? "Choose the Premium plan that fits."
-                         : "Choose what happens after your free trial."}
+                    {planPageTitle(selectedPlan, testStore)}
                </Text>
 
                {state === "loading" ? (
@@ -1019,75 +1033,6 @@ function planCardSummary(plan: SubscriptionPlan) {
      }
 
      return `${plan.durationLabel} • ${plan.fullPrice}`;
-}
-
-function trialPriceLabel(
-     plan: SubscriptionPlan | null,
-     languageTag: string,
-     localeCurrencySymbol: string | null,
-     localeCurrencyCode: string | null,
-) {
-     const currencyCode =
-          plan?.package.product.currencyCode ?? localeCurrencyCode;
-     let currency = localeCurrencySymbol ?? localeCurrencyCode ?? "";
-
-     if (currencyCode) {
-          try {
-               currency =
-                    new Intl.NumberFormat(languageTag, {
-                         style: "currency",
-                         currency: currencyCode,
-                         currencyDisplay: "narrowSymbol",
-                         minimumFractionDigits: 0,
-                         maximumFractionDigits: 0,
-                    })
-                         .formatToParts(0)
-                         .find((part) => part.type === "currency")?.value ??
-                    currencyCode;
-          } catch {
-               currency = currencyCode;
-          }
-     }
-
-     return `Try for 0${currency ? ` ${currency}` : ""}`;
-}
-
-function pageReassurance(page: number, plan: SubscriptionPlan | null) {
-     if (page === 0)
-          return "A clearer money picture begins with one honest note.";
-     if (page === 1)
-          return "Keep the habit human. Let Finn handle the structure.";
-     if (planStartsImmediately(plan)) {
-          return `You’ll see the exact price before ${STORE_NAME} asks you to confirm.`;
-     }
-     if (plan?.trialEligibility === "unknown") {
-          return `${STORE_NAME} confirms trial eligibility before purchase.`;
-     }
-     return "No charge today for eligible new subscribers. Cancel before the trial ends.";
-}
-
-function planStartsImmediately(plan: SubscriptionPlan | null) {
-     return Boolean(
-          plan &&
-          (!plan.hasRequiredThreeDayTrial ||
-               plan.trialEligibility === "ineligible"),
-     );
-}
-
-function billingDisclosure(plan: SubscriptionPlan, testStore = false) {
-     if (testStore) {
-          return "RevenueCat Test Store simulates checkout and entitlement access; verify the 3-day trial in each store sandbox.";
-     }
-     if (
-          !plan.hasRequiredThreeDayTrial ||
-          plan.trialEligibility === "ineligible"
-     ) {
-          return `${plan.fullPrice} is charged on confirmation and renews every ${plan.renewalPeriodLabel} until cancelled.`;
-     }
-     if (plan.trialEligibility === "unknown") {
-          return `Eligible new subscribers get 3 days free, then ${plan.fullPrice} every ${plan.renewalPeriodLabel}. Auto-renews until cancelled.`;
-     }
-     return `Free for 3 days, then ${plan.fullPrice} every ${plan.renewalPeriodLabel}. Auto-renews until cancelled.`;
 }
 
 const styles = StyleSheet.create({

@@ -3,11 +3,11 @@ import type { Href } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useState, type ReactNode } from "react";
 import {
-  Alert,
   Linking,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppSheet, SectionLabel } from "@/components/sheets/app-sheet";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { useAppToast } from "@/components/ui/toast-provider";
 import { Finn, JournalType } from "@/constants/theme";
 import { useMotionPreference } from "@/hooks/use-motion-preference";
 import {
@@ -25,7 +26,8 @@ import {
 } from "@/providers/app-providers";
 import { useSession } from "@/features/auth/providers/session-provider";
 import {
-  scheduleCurrentAccountDeletion,
+  deleteCurrentAccount,
+  type AccountDeletionTiming,
   signOutCurrentDevice,
 } from "@/features/auth/services/auth-service";
 import {
@@ -41,6 +43,7 @@ import {
   captureAnalytics,
 } from "@/lib/analytics/analytics";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
+import { isRevenueCatTestStore } from "@/features/paywall/services/subscription-service";
 import {
   FINN_WEBSITE_URLS,
   type FinnWebsiteUrl,
@@ -52,9 +55,11 @@ import {
 } from "@/features/notifications/services/notification-service";
 import { localDayKey } from "@/utils/dates";
 import {
-  openSupportEmail,
+  sendContactSupportEmail,
   SUPPORT_EMAIL,
 } from "@/features/support/services/quota-support";
+import { useAiConsent } from "@/features/ai-consent/providers/ai-consent-provider";
+import { AiConsentSettingsModal } from "@/features/ai-consent/components/ai-consent-settings-modal";
 
 type Picker = "currency" | null;
 
@@ -63,22 +68,41 @@ export default function SettingsScreen() {
   const { updateSettings, clearMutationError } = useJournalActions();
   const { mutationError } = useJournalStatus();
   const { setOnboardingComplete } = useSession();
+  const { showToast } = useAppToast();
+  const aiConsent = useAiConsent();
   const {
     entitlement,
     isActive: hasPremiumAccess,
     isBusy: subscriptionBusy,
     manage: manageSubscription,
+    refresh: refreshSubscription,
     restore: restoreSubscription,
   } = useSubscription();
   const [picker, setPicker] = useState<Picker>(null);
   const [accountBusy, setAccountBusy] = useState<"sign-out" | "delete" | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [supportError, setSupportError] = useState<string | null>(null);
+  const [supportBusy, setSupportBusy] = useState(false);
   const [reminderBusy, setReminderBusy] = useState(false);
   const [showAnalyticsOptOut, setShowAnalyticsOptOut] = useState(false);
+  const [showAccountDeletion, setShowAccountDeletion] = useState(false);
+  const [deletionTiming, setDeletionTiming] = useState<AccountDeletionTiming>("scheduled");
+  const [billingAcknowledged, setBillingAcknowledged] = useState(false);
+  const [showAiConsent, setShowAiConsent] = useState(false);
+  const [aiConsentError, setAiConsentError] = useState<string | null>(null);
 
   const togglePicker = (next: Exclude<Picker, null>) => {
     setPicker((current) => (current === next ? null : next));
+  };
+  const updateAiConsent = async () => {
+    setAiConsentError(null);
+    try {
+      if (aiConsent.status === "granted") await aiConsent.withdraw();
+      else await aiConsent.grant();
+      setShowAiConsent(false);
+    } catch {
+      setAiConsentError("Couldn’t update AI data sharing. Please try again.");
+    }
   };
   const applySettings = (patch: Parameters<typeof updateSettings>[0]) =>
     updateSettings(patch);
@@ -111,14 +135,16 @@ export default function SettingsScreen() {
       }
       const granted = await requestJournalReminderPermission();
       if (!granted) {
-        Alert.alert(
-          "Notifications are off",
-          "Allow notifications in your phone settings whenever you want Finn’s journal nudges.",
-          [
-            { text: "Not now", style: "cancel" },
-            { text: "Open settings", onPress: () => { void Linking.openSettings(); } },
-          ],
-        );
+        showToast({
+          id: "journal-reminders-permission-off",
+          message: "Notifications are off.",
+          highlighted: "Allow them in phone settings for journal nudges.",
+          state: "warning",
+          action: {
+            label: "Open settings",
+            onPress: () => { void Linking.openSettings(); },
+          },
+        });
         return;
       }
       await applySettings({ reminders: true });
@@ -127,26 +153,56 @@ export default function SettingsScreen() {
         entries.some((entry) => entry.date === localDayKey()),
       );
     } catch {
-      Alert.alert(
-        "Couldn’t update reminders",
-        "Finn couldn’t change that setting just now. Please try again.",
-      );
+      showToast({
+        id: "journal-reminders-update-error",
+        message: "Couldn’t update reminders.",
+        highlighted: "Please try again.",
+        state: "error",
+      });
     } finally {
       setReminderBusy(false);
     }
   };
 
   const openSubscriptionManagement = async () => {
-    setAccountError(null);
+    if (isRevenueCatTestStore()) {
+      showToast({
+        id: "subscription-management-test-store",
+        message: "Subscription management is unavailable in the Test Store.",
+        highlighted: "Use a Google Play or App Store sandbox to test this link.",
+        state: "info",
+      });
+      return;
+    }
     try {
       await manageSubscription();
     } catch (error) {
-      setAccountError(
-        error instanceof Error
-          ? error.message
-          : "Couldn’t open your subscription settings.",
-      );
+      showToast({
+        id: "subscription-management-error",
+        message: "Couldn’t open your subscription settings.",
+        highlighted: error instanceof Error ? error.message : "Please try again.",
+        state: "error",
+      });
     }
+  };
+
+  const restorePurchases = async () => {
+    const restored = await restoreSubscription();
+    showToast(
+      restored
+        ? {
+            id: "restore-purchases-success",
+            message: "Purchases restored.",
+            highlighted: "Finnit Premium is active.",
+            state: "info",
+          }
+        : {
+            id: "restore-purchases-error",
+            message: "Couldn’t restore an active purchase.",
+            highlighted: "Check the store account, then try again.",
+            state: "error",
+          },
+    );
   };
 
   const openWebsite = async (
@@ -162,11 +218,21 @@ export default function SettingsScreen() {
   };
 
   const contactSupport = async () => {
+    if (supportBusy) return;
     setSupportError(null);
+    setSupportBusy(true);
     try {
-      await openSupportEmail();
+      await sendContactSupportEmail();
+      showToast({
+        id: "support-email-sent",
+        message: "Support has been contacted.",
+        highlighted: "We’ll reply to your account email.",
+        state: "info",
+      });
     } catch {
-      setSupportError(`Couldn’t open your email app. Contact us at ${SUPPORT_EMAIL}.`);
+      setSupportError(`Couldn’t contact support. Try again or email ${SUPPORT_EMAIL}.`);
+    } finally {
+      setSupportBusy(false);
     }
   };
 
@@ -182,40 +248,55 @@ export default function SettingsScreen() {
     }
   };
 
-  const confirmDelete = () => {
-    const perform = async () => {
-      if (accountBusy) return;
-      setAccountBusy("delete");
-      setAccountError(null);
-      try {
-        await scheduleCurrentAccountDeletion();
-        await clearOnboardingSnapshot();
-        setOnboardingComplete(false);
-      } catch (error) {
-        setAccountError(error instanceof Error ? error.message : "Couldn’t delete your account. Try again.");
-        setAccountBusy(null);
-      }
-    };
+  const openAccountDeletion = () => {
+    if (accountBusy) return;
+    setAccountError(null);
+    setDeletionTiming("scheduled");
+    setBillingAcknowledged(false);
+    setShowAccountDeletion(true);
+  };
 
-    if (Platform.OS === "web") {
-      if (window.confirm("Schedule your Finn account and synced journal for permanent deletion in 30 days? You’ll be signed out everywhere. Sign back in during the recovery period to cancel.")) {
-        void perform();
-      }
+  const performDelete = async () => {
+    if (accountBusy) return;
+    setAccountBusy("delete");
+    setAccountError(null);
+    try {
+      await deleteCurrentAccount(deletionTiming);
+      await clearOnboardingSnapshot();
+      setShowAccountDeletion(false);
+      setOnboardingComplete(false);
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : "Couldn’t delete your account. Try again.");
+      setAccountBusy(null);
+    }
+  };
+
+  const cancelSubscriptionBeforeDeletion = async () => {
+    setAccountError(null);
+    if (isRevenueCatTestStore()) {
+      showToast({
+        id: "deletion-subscription-management-test-store",
+        message: "Subscription management is unavailable in the Test Store.",
+        highlighted: "Use an App Store sandbox to test cancellation.",
+        state: "info",
+      });
       return;
     }
-    Alert.alert(
-      "Schedule account deletion?",
-      "Finn will sign you out everywhere and permanently delete your account and synced journal after 30 days. Sign back in during that recovery period to cancel.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Schedule deletion", style: "destructive", onPress: () => void perform() },
-      ],
-    );
+    try {
+      await manageSubscription();
+      await refreshSubscription();
+    } catch (error) {
+      setAccountError(
+        error instanceof Error
+          ? error.message
+          : "Couldn’t open your subscription settings. Try again.",
+      );
+    }
   };
 
   return (
     <AppSheet title="Settings" bodyStyle={styles.body}>
-      {mutationError && (
+      {hasPremiumAccess && mutationError && (
         <View accessibilityLiveRegion="polite" style={[styles.group, styles.saveError]}>
           <Text style={styles.saveErrorText}>{mutationError}</Text>
           <Button label="Dismiss settings error" onPress={clearMutationError}>
@@ -223,88 +304,120 @@ export default function SettingsScreen() {
           </Button>
         </View>
       )}
-      <SectionLabel style={styles.sectionLabel}>Saved entries</SectionLabel>
-      <View style={styles.group}>
-        <SettingsRow
-          icon="bookmark"
-          color={Finn.amber}
-          title="Manage saved entries"
-          subtitle={`${presets.length} saved ${presets.length === 1 ? "entry" : "entries"}`}
-          href="/settings/presets"
-        />
-      </View>
-
-      {Platform.OS !== "web" && entries.length > 0 ? (
+      {hasPremiumAccess ? (
         <>
-          <SectionLabel style={styles.sectionLabel}>Reminders</SectionLabel>
+          <SectionLabel style={styles.sectionLabel}>Saved entries</SectionLabel>
           <View style={styles.group}>
             <SettingsRow
-              icon="bell"
-              color={Finn.primary}
-              title={reminderBusy ? "Updating reminders…" : "Journal reminders"}
-              subtitle="Light Finn nudges when a day might slip by"
-              value={settings.reminders ? "On" : "Off"}
-              disclosure="none"
-              onPress={() => { void toggleReminders(); }}
+              icon="bookmark"
+              color={Finn.amber}
+              title="Manage saved entries"
+              subtitle={`${presets.length} saved ${presets.length === 1 ? "entry" : "entries"}`}
+              href="/settings/presets"
             />
           </View>
+
+          {Platform.OS !== "web" && entries.length > 0 ? (
+            <>
+              <SectionLabel style={styles.sectionLabel}>Reminders</SectionLabel>
+              <View style={styles.group}>
+                <SettingsRow
+                  icon="bell"
+                  color={Finn.primary}
+                  title={reminderBusy ? "Updating reminders…" : "Journal reminders"}
+                  subtitle="Light Finnit nudges when a day might slip by"
+                  value={settings.reminders ? "On" : "Off"}
+                  disclosure="none"
+                  onPress={() => { void toggleReminders(); }}
+                />
+              </View>
+            </>
+          ) : null}
         </>
       ) : null}
 
-      <SectionLabel style={styles.sectionLabel}>Finn Premium</SectionLabel>
+      <SectionLabel style={styles.sectionLabel}>
+        {hasPremiumAccess ? "Finnit Premium" : "Purchases"}
+      </SectionLabel>
       <View style={styles.group}>
-        <SettingsRow
-          icon="star"
-          color={Finn.primary}
-          title={hasPremiumAccess ? "Finn Premium is active" : "Premium access required"}
-          subtitle={subscriptionStatus(entitlement)}
-          disclosure={hasPremiumAccess ? "chevron" : "none"}
-          onPress={hasPremiumAccess ? () => void openSubscriptionManagement() : undefined}
-        />
-        <Divider />
+        {hasPremiumAccess ? (
+          <>
+            <SettingsRow
+              icon="star"
+              color={Finn.primary}
+              title="Finnit Premium is active"
+              subtitle={subscriptionStatus(entitlement)}
+              onPress={() => void openSubscriptionManagement()}
+            />
+            <Divider />
+          </>
+        ) : null}
         <SettingsRow
           icon="refresh"
           color="#5865D8"
           title={subscriptionBusy ? "Checking purchases…" : "Restore purchases"}
           subtitle="Use the App Store account that originally subscribed"
           disclosure="none"
-          onPress={() => void restoreSubscription()}
+          onPress={() => void restorePurchases()}
         />
       </View>
 
-      <SectionLabel style={styles.sectionLabel}>Currency</SectionLabel>
-      <View style={styles.group}>
-        <SettingsRow
-          icon="globe"
-          color="#D529D7"
-          title="Base currency"
-          value={currencyDisplay(settings.currency)}
-          disclosure="down"
-          onPress={() => togglePicker("currency")}
-        />
-        {picker === "currency" && (
-          <CurrencyPicker
-            selected={settings.currency}
-            onSelect={(currency) => {
-              applySettings({ currency });
-              setPicker(null);
-            }}
-          />
-        )}
-      </View>
+      {hasPremiumAccess ? (
+        <>
+          <SectionLabel style={styles.sectionLabel}>Currency</SectionLabel>
+          <View style={styles.group}>
+            <SettingsRow
+              icon="globe"
+              color="#D529D7"
+              title="Base currency"
+              value={currencyDisplay(settings.currency)}
+              disclosure="down"
+              onPress={() => togglePicker("currency")}
+            />
+            {picker === "currency" && (
+              <CurrencyPicker
+                autoFocus={false}
+                selected={settings.currency}
+                onSelect={(currency) => {
+                  applySettings({ currency });
+                  setPicker(null);
+                }}
+              />
+            )}
+          </View>
+        </>
+      ) : null}
 
       <SectionLabel style={styles.sectionLabel}>Privacy & legal</SectionLabel>
       <View style={styles.group}>
-        <SettingsRow
-          icon="analytics"
-          color="#5865D8"
-          title="Share usage analytics"
-          subtitle="Feature use only — never notes, amounts, receipts, or searches"
-          value={settings.analyticsEnabled ? "On" : "Off"}
-          disclosure="none"
-          onPress={() => void toggleAnalytics()}
-        />
-        <Divider />
+        {hasPremiumAccess ? (
+          <>
+            <SettingsRow
+              icon="sparkle"
+              color={Finn.primary}
+              title="AI features & data sharing"
+              subtitle={aiConsent.status === "granted"
+                ? "Google Gemini sharing is allowed"
+                : "Manual journal is available; Gemini features are off"}
+              value={aiConsent.status === "granted" ? "On" : "Off"}
+              onPress={() => {
+                setAiConsentError(null);
+                setShowAiConsent(true);
+              }}
+            />
+            <Divider />
+            <SettingsRow
+              icon="analytics"
+              color="#5865D8"
+              title="Share usage analytics"
+              subtitle="On by default — never notes, amounts, receipts, or searches"
+              value={settings.analyticsEnabled ? "On" : "Off"}
+              disclosure="none"
+              onPress={() => void toggleAnalytics()}
+            />
+            <Divider />
+          </>
+        ) : null}
         <SettingsRow
           icon="globe"
           color="#5865D8"
@@ -325,7 +438,7 @@ export default function SettingsScreen() {
           icon="analytics"
           color={Finn.primary}
           title="AI Policy"
-          subtitle="How Finn uses AI"
+          subtitle="How Finnit uses AI"
           onPress={() => void openWebsite(FINN_WEBSITE_URLS.aiPolicy)}
         />
         <Divider />
@@ -359,9 +472,9 @@ export default function SettingsScreen() {
         <SettingsRow
           icon="note"
           color={Finn.primary}
-          title="Email support"
+          title={supportBusy ? "Contacting support…" : "Email support"}
           subtitle={SUPPORT_EMAIL}
-          onPress={() => void contactSupport()}
+          onPress={supportBusy ? undefined : () => void contactSupport()}
         />
       </View>
       {supportError ? (
@@ -391,21 +504,239 @@ export default function SettingsScreen() {
         <SettingsRow
           icon="trash"
           color={Finn.danger}
-          title={accountBusy === "delete" ? "Scheduling deletion…" : "Delete my account"}
+          title={accountBusy === "delete" ? "Deleting account…" : "Delete my account"}
           titleColor={Finn.danger}
-          subtitle="Deletes your account after a 30-day recovery period"
+          subtitle="Choose immediate deletion or a 30-day recovery period"
           disclosure="none"
-          onPress={confirmDelete}
+          onPress={openAccountDeletion}
         />
       </View>
       {accountError ? <Text accessibilityRole="alert" style={styles.accountError}>{accountError}</Text> : null}
 
-      <AnalyticsOptOutModal
-        visible={showAnalyticsOptOut}
-        onDismiss={() => setShowAnalyticsOptOut(false)}
-        onConfirm={() => void turnOffAnalytics()}
+      {hasPremiumAccess ? (
+        <>
+          <AnalyticsOptOutModal
+            visible={showAnalyticsOptOut}
+            onDismiss={() => setShowAnalyticsOptOut(false)}
+            onConfirm={() => void turnOffAnalytics()}
+          />
+          <AiConsentSettingsModal
+            busy={aiConsent.saving}
+            enabled={aiConsent.status === "granted"}
+            error={aiConsentError}
+            onConfirm={() => { void updateAiConsent(); }}
+            onDismiss={() => setShowAiConsent(false)}
+            visible={showAiConsent}
+          />
+        </>
+      ) : null}
+      <AccountDeletionModal
+        activeSubscription={Boolean(entitlement?.isActive && entitlement.willRenew)}
+        billingAcknowledged={billingAcknowledged}
+        busy={accountBusy === "delete"}
+        error={accountError}
+        managingSubscription={subscriptionBusy}
+        onBillingAcknowledged={setBillingAcknowledged}
+        onConfirm={() => void performDelete()}
+        onDismiss={() => {
+          if (accountBusy !== "delete") setShowAccountDeletion(false);
+        }}
+        onManageSubscription={() => void cancelSubscriptionBeforeDeletion()}
+        onTimingChange={setDeletionTiming}
+        timing={deletionTiming}
+        visible={showAccountDeletion}
       />
     </AppSheet>
+  );
+}
+
+function AccountDeletionModal({
+  activeSubscription,
+  billingAcknowledged,
+  busy,
+  error,
+  managingSubscription,
+  onBillingAcknowledged,
+  onConfirm,
+  onDismiss,
+  onManageSubscription,
+  onTimingChange,
+  timing,
+  visible,
+}: {
+  activeSubscription: boolean;
+  billingAcknowledged: boolean;
+  busy: boolean;
+  error: string | null;
+  managingSubscription: boolean;
+  onBillingAcknowledged: (acknowledged: boolean) => void;
+  onConfirm: () => void;
+  onDismiss: () => void;
+  onManageSubscription: () => void;
+  onTimingChange: (timing: AccountDeletionTiming) => void;
+  timing: AccountDeletionTiming;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const reducedMotion = useMotionPreference();
+  const storeName = Platform.OS === "ios" ? "Apple" : "your app store";
+  const confirmationDisabled = busy || (activeSubscription && !billingAcknowledged);
+
+  return (
+    <Modal
+      animationType={reducedMotion ? "none" : "fade"}
+      navigationBarTranslucent
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+      transparent
+      visible={visible}
+    >
+      <View style={styles.deletionModalBackdrop}>
+        <Pressable
+          accessibilityLabel="Keep account"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={onDismiss}
+          style={StyleSheet.absoluteFill}
+        />
+        <ScrollView
+          accessibilityViewIsModal
+          bounces={false}
+          contentContainerStyle={styles.deletionModalContent}
+          showsVerticalScrollIndicator={false}
+          style={[
+            styles.deletionModalCard,
+            { marginBottom: Math.max(insets.bottom, 20) },
+          ]}
+        >
+          <View style={styles.deletionModalIcon}>
+            <Icon name="trash" size={22} color={Finn.destructive} animation={false} />
+          </View>
+          <Text accessibilityRole="header" style={styles.deletionModalTitle}>
+            When should we delete your account?
+          </Text>
+          <Text style={styles.deletionModalBody}>
+            Your account and synced journal will be permanently deleted. You’ll be
+            signed out on every device.
+          </Text>
+
+          <DeletionTimingOption
+            description="Keeps a recovery window so an accidental deletion can be undone. Sign in during the 30 days to cancel."
+            label="30 days"
+            recommended
+            selected={timing === "scheduled"}
+            onPress={() => onTimingChange("scheduled")}
+          />
+          <DeletionTimingOption
+            description="Deletes your account now. Your journal cannot be recovered afterward."
+            label="Immediate deletion"
+            selected={timing === "immediate"}
+            onPress={() => onTimingChange("immediate")}
+          />
+
+          {activeSubscription ? (
+            <View style={styles.subscriptionDeletionWarning}>
+              <Text style={styles.subscriptionDeletionTitle}>
+                Cancel your subscription before continuing
+              </Text>
+              <Text style={styles.subscriptionDeletionBody}>
+                Deleting your Finnit account does not cancel billing. {storeName} will
+                keep renewing your subscription until you cancel it.
+              </Text>
+              <Button
+                disabled={busy || managingSubscription}
+                label={`Manage ${storeName} subscription`}
+                onPress={onManageSubscription}
+                style={styles.subscriptionManagementButton}
+              >
+                <Text style={styles.subscriptionManagementText}>
+                  {managingSubscription ? "Opening…" : `Manage ${storeName} subscription`}
+                </Text>
+              </Button>
+              <Button
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: billingAcknowledged }}
+                disabled={busy}
+                label="I understand store billing continues until I cancel"
+                onPress={() => onBillingAcknowledged(!billingAcknowledged)}
+                style={styles.billingAcknowledgement}
+              >
+                <View style={[
+                  styles.checkbox,
+                  billingAcknowledged && styles.checkboxSelected,
+                ]}>
+                  {billingAcknowledged ? (
+                    <Icon name="check" color={Finn.surface} size={12} animation={false} />
+                  ) : null}
+                </View>
+                <Text style={styles.billingAcknowledgementText}>
+                  I understand billing continues until I cancel it.
+                </Text>
+              </Button>
+            </View>
+          ) : null}
+
+          {error ? (
+            <Text accessibilityRole="alert" style={styles.deletionModalError}>
+              {error}
+            </Text>
+          ) : null}
+
+          <Button
+            disabled={confirmationDisabled}
+            label={timing === "immediate" ? "Delete account now" : "Schedule account deletion"}
+            onPress={onConfirm}
+            style={styles.deletionConfirmButton}
+          >
+            <Text style={styles.deletionConfirmText}>
+              {busy
+                ? timing === "immediate" ? "Deleting…" : "Scheduling…"
+                : timing === "immediate" ? "Delete account now" : "Delete in 30 days"}
+            </Text>
+          </Button>
+          <Button disabled={busy} label="Keep account" onPress={onDismiss}>
+            <Text style={styles.deletionCancelText}>Keep my account</Text>
+          </Button>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function DeletionTimingOption({
+  description,
+  label,
+  onPress,
+  recommended = false,
+  selected,
+}: {
+  description: string;
+  label: string;
+  onPress: () => void;
+  recommended?: boolean;
+  selected: boolean;
+}) {
+  return (
+    <Button
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      label={label}
+      onPress={onPress}
+      style={[styles.deletionOption, selected && styles.deletionOptionSelected]}
+    >
+      <View style={[styles.radioOuter, selected && styles.radioOuterSelected]}>
+        {selected ? <View style={styles.radioInner} /> : null}
+      </View>
+      <View style={styles.deletionOptionCopy}>
+        <View style={styles.deletionOptionTitleRow}>
+          <Text style={styles.deletionOptionTitle}>{label}</Text>
+          {recommended ? (
+            <Text style={styles.recommendedBadge}>Recommended</Text>
+          ) : null}
+        </View>
+        <Text style={styles.deletionOptionDescription}>{description}</Text>
+      </View>
+    </Button>
   );
 }
 
@@ -451,7 +782,7 @@ function AnalyticsOptOutModal({
             Turn off usage analytics?
           </Text>
           <Text style={styles.analyticsModalBody}>
-            Finn will keep working normally. We’ll lose anonymous signals that
+            Finnit will keep working normally. We’ll lose anonymous signals that
             help us spot performance problems and understand which features need
             improvement, so fixes and future updates may take longer to prioritize.
           </Text>
@@ -679,6 +1010,196 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   analyticsModalSecondaryText: {
+    color: Finn.secondary,
+    fontFamily: JournalType.medium,
+    fontSize: 14,
+  },
+  deletionModalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: 16,
+    backgroundColor: "rgba(23, 23, 23, 0.24)",
+  },
+  deletionModalCard: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: "92%",
+    borderRadius: 28,
+    backgroundColor: Finn.surface,
+    ...Finn.shadow,
+  },
+  deletionModalContent: {
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 10,
+  },
+  deletionModalIcon: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+    borderRadius: 22,
+    backgroundColor: "#FFF0EF",
+  },
+  deletionModalTitle: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 22,
+    lineHeight: 27,
+  },
+  deletionModalBody: {
+    marginTop: 7,
+    marginBottom: 16,
+    color: Finn.secondary,
+    fontFamily: JournalType.regular,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  deletionOption: {
+    minHeight: 0,
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 9,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: "#E8E2DE",
+    borderRadius: 17,
+    backgroundColor: "#FFFEFD",
+  },
+  deletionOptionSelected: {
+    borderColor: Finn.primary,
+    backgroundColor: Finn.primarySoft,
+  },
+  radioOuter: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+    borderWidth: 1.5,
+    borderColor: "#B7B0AC",
+    borderRadius: 10,
+  },
+  radioOuterSelected: { borderColor: Finn.primary },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Finn.primary,
+  },
+  deletionOptionCopy: { flex: 1 },
+  deletionOptionTitleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+  },
+  deletionOptionTitle: {
+    color: Finn.ink,
+    fontFamily: JournalType.bold,
+    fontSize: 15,
+    lineHeight: 19,
+  },
+  recommendedBadge: {
+    overflow: "hidden",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    color: Finn.primary,
+    backgroundColor: "#FFFFFF",
+    fontFamily: JournalType.medium,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  deletionOptionDescription: {
+    marginTop: 4,
+    color: Finn.secondary,
+    fontFamily: JournalType.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  subscriptionDeletionWarning: {
+    marginTop: 3,
+    marginBottom: 10,
+    padding: 13,
+    borderRadius: 16,
+    backgroundColor: "#FFF8EA",
+  },
+  subscriptionDeletionTitle: {
+    color: "#6E4C14",
+    fontFamily: JournalType.bold,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  subscriptionDeletionBody: {
+    marginTop: 4,
+    color: "#80632E",
+    fontFamily: JournalType.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  subscriptionManagementButton: {
+    minHeight: 40,
+    marginTop: 9,
+    paddingHorizontal: 12,
+    borderRadius: 13,
+    backgroundColor: "#FFFFFF",
+  },
+  subscriptionManagementText: {
+    color: Finn.primary,
+    fontFamily: JournalType.bold,
+    fontSize: 13,
+  },
+  billingAcknowledgement: {
+    minHeight: 0,
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 10,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#B5965C",
+    borderRadius: 6,
+    backgroundColor: "#FFFFFF",
+  },
+  checkboxSelected: {
+    borderColor: Finn.primary,
+    backgroundColor: Finn.primary,
+  },
+  billingAcknowledgementText: {
+    flex: 1,
+    color: "#6E4C14",
+    fontFamily: JournalType.medium,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  deletionModalError: {
+    marginBottom: 9,
+    color: Finn.danger,
+    fontFamily: JournalType.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  deletionConfirmButton: {
+    minHeight: 46,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: Finn.destructive,
+  },
+  deletionConfirmText: {
+    color: Finn.surface,
+    fontFamily: JournalType.bold,
+    fontSize: 15,
+  },
+  deletionCancelText: {
     color: Finn.secondary,
     fontFamily: JournalType.medium,
     fontSize: 14,

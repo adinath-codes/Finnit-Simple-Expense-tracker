@@ -5,6 +5,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { Finn, JournalType } from "@/constants/theme";
 import { useSession } from "@/features/auth/providers/session-provider";
 import { useSubscription } from "@/features/paywall/providers/subscription-provider";
+import { useAiConsent } from "@/features/ai-consent/providers/ai-consent-provider";
 import {
   finishAuthRedirect,
   hasAuthRedirectData,
@@ -14,6 +15,7 @@ export default function AuthCallbackScreen() {
   const url = Linking.useURL();
   const { session, loading } = useSession();
   const subscription = useSubscription();
+  const aiConsent = useAiConsent();
   const params = useLocalSearchParams<{
     code?: string | string[];
     error?: string | string[];
@@ -40,12 +42,24 @@ export default function AuthCallbackScreen() {
       loading ||
       !session ||
       subscription.state === "signed-out" ||
-      subscription.state === "loading"
+      subscription.state === "loading" ||
+      (subscription.isActive && aiConsent.status === "loading")
     ) {
       return;
     }
-    router.replace((subscription.isActive ? "/" : "/paywall") as Href);
-  }, [loading, session, subscription.isActive, subscription.state]);
+    const destination = !subscription.isActive
+      ? "/paywall"
+      : aiConsent.status === "undecided"
+        ? "/ai-consent"
+        : "/";
+    router.replace(destination as Href);
+  }, [
+    aiConsent.status,
+    loading,
+    session,
+    subscription.isActive,
+    subscription.state,
+  ]);
 
   useEffect(() => {
     if (!callbackUrl || handledUrl.current === callbackUrl) return;

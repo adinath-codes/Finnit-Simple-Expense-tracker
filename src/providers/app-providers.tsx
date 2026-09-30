@@ -146,7 +146,6 @@ function useJournalState() {
     const refreshAll = (force = false) =>
       Promise.allSettled([
         refreshWithPolicy(userId, "journal", 15_000, () => refreshJournal(userId), force),
-        recoverPreparingReceipts(),
         refreshWithPolicy(
           userId, "settings", 5 * 60_000,
           () => refreshSettingsForAccount(userId), force,
@@ -156,6 +155,13 @@ function useJournalState() {
           () => refreshPresetsForAccount(userId), force,
         ),
       ]);
+    const refreshWhenOnline = async (force = false) => {
+      const state = await Network.getNetworkStateAsync();
+      connected =
+        state.isConnected !== false && state.isInternetReachable !== false;
+      if (!connected) return;
+      await refreshAll(force);
+    };
 
     setCache(null);
     setOwnerId(null);
@@ -171,6 +177,12 @@ function useJournalState() {
       .then(load)
       .then(() => {
         if (!active) return;
+        // A durable local snapshot is sufficient to render and accept writes.
+        // Remote hydration must never hold an empty offline journal hostage.
+        setInitialSyncOwnerId(userId);
+        // Image normalization is local work. Resume it even when the device is
+        // offline; finishPreparing will leave the upload in the durable queue.
+        void recoverPreparingReceipts().catch(() => undefined);
         unsubscribeCache = subscribeJournalCache(() => { void load(); }, userId);
         stopSync = startJournalSync();
         revisionChannel = getSupabase()
@@ -202,19 +214,18 @@ function useJournalState() {
             },
           )
           .subscribe();
-        void refreshAll(true).finally(() => {
-          if (active) setInitialSyncOwnerId(userId);
-        });
+        void refreshWhenOnline(true).catch(() => undefined);
       })
       .catch((error) => {
         if (active) setMutationError(errorMessage(error));
       });
 
     const appState = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refreshAll(true);
+      if (state === "active") void refreshWhenOnline(true).catch(() => undefined);
     });
     const network = Network.addNetworkStateListener((state) => {
-      const next = state.isConnected === true && state.isInternetReachable !== false;
+      const next =
+        state.isConnected !== false && state.isInternetReachable !== false;
       if (next && connected === false) void refreshAll(true);
       connected = next;
     });
@@ -277,7 +288,7 @@ function useJournalState() {
   const captureNote = useCallback((note: string, date: string) =>
     runMutation("journal.capture_note", async () => {
       if (!session) throw new Error("Sign in before saving this note.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to save notes.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to save notes.");
       const input = createCaptureInput(
         note.trim(),
         settings.currency,
@@ -287,11 +298,15 @@ function useJournalState() {
       return input.id;
     }), [hasPremiumAccess, runMutation, session, settings.currency]);
 
-  const capturePreset = useCallback((preset: Preset, date: string) =>
+  const capturePreset = useCallback((
+    preset: Preset,
+    date: string,
+    source: "preset" | "manual" = "preset",
+  ) =>
     runMutation("journal.capture_preset", async () => {
       if (!session) throw new Error("Sign in before using a saved entry.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to use saved entries.");
-      const id = await capturePresetEntry(preset, date, settings.currency);
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to use saved entries.");
+      const id = await capturePresetEntry(preset, date, settings.currency, source);
       setRecentPresetEntryId(id);
       return id;
     }), [hasPremiumAccess, runMutation, session, settings.currency]);
@@ -299,7 +314,7 @@ function useJournalState() {
   const updateEntry = useCallback((entry: JournalEntry) =>
     runMutation("journal.update_entry", async () => {
       if (!session) throw new Error("Sign in before changing this entry.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to change entries.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to change entries.");
       if (entry.receipt) return correctReceiptEntry(entry);
       const currentCache = await readJournalCache(session.user.id);
       const current = currentCache.entries[entry.id];
@@ -322,7 +337,7 @@ function useJournalState() {
   ) =>
     runMutation("journal.save_entry_text", async () => {
       if (!session) throw new Error("Sign in before changing this entry.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to change entries.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to change entries.");
       const currentCache = await readJournalCache(session.user.id);
       const current = currentCache.entries[id];
       if (!current) throw new Error("This journal entry is no longer available.");
@@ -342,7 +357,7 @@ function useJournalState() {
   const deleteEntry = useCallback((id: string) =>
     runMutation("journal.delete_entry", async () => {
       if (!session) throw new Error("Sign in before removing this entry.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to remove entries.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to remove entries.");
       const currentCache = await readJournalCache(session.user.id);
       if (currentCache.receipts[id]) return deleteReceipt(id);
       await deleteJournalEntry(id);
@@ -351,21 +366,21 @@ function useJournalState() {
   const askFinnToCorrectEntry = useCallback((id: string, instruction: string) =>
     runMutation("journal.ai_correction", async () => {
       if (!session) throw new Error("Sign in before asking Finn to revise this entry.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required for Finn corrections.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required for Finn corrections.");
       await correctJournalEntryWithFinn(id, instruction);
     }), [hasPremiumAccess, runMutation, session]);
 
   const savePreset = useCallback((preset: Preset) =>
     runMutation("preset.save", async () => {
       if (!session) throw new Error("Sign in before saving this shortcut.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to save shortcuts.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to save shortcuts.");
       await savePresetForAccount(session.user.id, preset);
     }), [hasPremiumAccess, runMutation, session]);
 
   const deletePreset = useCallback((id: string) =>
     runMutation("preset.delete", async () => {
       if (!session) throw new Error("Sign in before removing this shortcut.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to remove shortcuts.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to remove shortcuts.");
       await deletePresetForAccount(session.user.id, id);
     }), [hasPremiumAccess, runMutation, session]);
 
@@ -382,28 +397,28 @@ function useJournalState() {
   const updateGoal = useCallback((id: string, limit: number) =>
     runMutation("goal.update", async () => {
       if (!session) throw new Error("Sign in before changing a goal.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to change goals.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to change goals.");
       await updateGoalForAccount(session.user.id, id, limit);
     }), [hasPremiumAccess, runMutation, session]);
 
   const retrySync = useCallback((entryId: string) =>
     runMutation("sync.retry", async () => {
       if (!session) throw new Error("Sign in before retrying this sync.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to sync entries.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to sync entries.");
       await retryEntrySync(entryId);
     }), [hasPremiumAccess, runMutation, session]);
 
   const keepLocalVersion = useCallback((entryId: string) =>
     runMutation("sync.keep_local", async () => {
       if (!session) throw new Error("Sign in before resolving this conflict.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to resolve sync conflicts.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to resolve sync conflicts.");
       await keepLocalEntryVersion(entryId);
     }), [hasPremiumAccess, runMutation, session]);
 
   const acceptRemoteVersion = useCallback((entryId: string) =>
     runMutation("sync.accept_remote", async () => {
       if (!session) throw new Error("Sign in before resolving this conflict.");
-      if (!hasPremiumAccess) throw new Error("Finn Premium is required to resolve sync conflicts.");
+      if (!hasPremiumAccess) throw new Error("Finnit Premium is required to resolve sync conflicts.");
       await acceptRemoteEntryVersion(entryId);
     }), [hasPremiumAccess, runMutation, session]);
 

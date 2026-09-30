@@ -4,10 +4,12 @@ import { Motion } from "@/constants/motion";
 import { ContentFade, Reveal, MotionLayout } from "@/components/ui/motion";
 import { useState } from "react";
 import { router } from "expo-router";
-import { Alert, Platform, StyleSheet, Text, TextInput, View } from "react-native";
+import { StyleSheet, Text, TextInput, View } from "react-native";
 import { AppSheet, sheetStyles as shared } from "@/components/sheets/app-sheet";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
+import { ConfirmationModal } from "@/components/ui/confirmation-modal";
+import { useAppToast } from "@/components/ui/toast-provider";
 import { Finn, Categories } from "@/constants/theme";
 import {
   useJournalActions,
@@ -17,6 +19,7 @@ import {
 import { money } from "@/utils/currency";
 import type { Category, Preset } from "@/types/domain";
 export default function PresetList() {
+  const { showToast } = useAppToast();
   const { presets, selectedDate, settings } = useJournalData();
   const {
     savePreset,
@@ -34,6 +37,7 @@ export default function PresetList() {
   const [amount, setAmount] = useState("");
   const [capturing, setCapturing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmPreset, setConfirmPreset] = useState<Preset | null>(null);
   const beginEdit = (preset?: Preset) => {
     setAnimateList(true);
     setForm(
@@ -65,30 +69,26 @@ export default function PresetList() {
     try {
       await deletePreset(preset.id);
     } catch {
+      showToast({
+        id: `delete-preset-${preset.id}-error`,
+        message: "Couldn’t delete this saved entry.",
+        highlighted: "Please try again.",
+        state: "error",
+      });
       setDeleting(null);
       return;
     }
+    setConfirmPreset(null);
     setDeleting(null);
+    showToast({
+      id: `delete-preset-${preset.id}-success`,
+      message: "Saved entry deleted.",
+      highlighted: preset.name,
+      state: "info",
+    });
   };
   const confirmRemove = (preset: Preset) => {
-    if (Platform.OS === "web") {
-      if (window.confirm(`Delete ${preset.name} from your saved entries?`)) {
-        void remove(preset);
-      }
-      return;
-    }
-    Alert.alert(
-      "Delete saved entry?",
-      `${preset.name} will be removed from this list.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => { void remove(preset); },
-        },
-      ],
-    );
+    setConfirmPreset(preset);
   };
   const filtered = presets.filter((preset) =>
     `${preset.name} ${preset.note}`
@@ -313,6 +313,21 @@ export default function PresetList() {
           ? "Tap a saved entry to edit it, or use the trash button to delete it."
           : "Tap anywhere on a saved entry to add it to your journal."}
       </Text>
+      <ConfirmationModal
+        body={confirmPreset
+          ? `${confirmPreset.name} will be removed from your saved entries. This can’t be undone.`
+          : ""}
+        busy={deleting !== null}
+        cancelLabel="Keep saved entry"
+        confirmLabel="Delete saved entry"
+        destructive
+        onConfirm={() => {
+          if (confirmPreset) void remove(confirmPreset);
+        }}
+        onDismiss={() => setConfirmPreset(null)}
+        title="Delete saved entry?"
+        visible={confirmPreset !== null}
+      />
     </AppSheet>
   );
 }

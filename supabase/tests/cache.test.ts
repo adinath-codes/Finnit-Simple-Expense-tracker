@@ -3,6 +3,7 @@ import test from "node:test";
 import { safeCacheableExplanation } from "../functions/_shared/cache.ts";
 import {
   formatPresetAmount,
+  legacyPresetCaptureText,
   presetCaptureText,
   presetExtraction,
 } from "../functions/_shared/preset.ts";
@@ -32,7 +33,8 @@ test("preset capture uses the immutable approved values without AI", () => {
     amount_minor: "1234",
     category_id: "food",
   };
-  assert.equal(presetCaptureText(preset, "INR"), "Cafe lunch · 12.34 food");
+  assert.equal(presetCaptureText(preset, "INR"), "Cafe lunch");
+  assert.equal(legacyPresetCaptureText(preset, "INR"), "Cafe lunch · 12.34 food");
   const result = presetExtraction(preset, capture);
   assert.equal(result.transactions.length, 1);
   assert.equal(result.transactions[0].amount_minor, "1234");

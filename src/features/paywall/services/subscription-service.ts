@@ -1,4 +1,4 @@
-import { Platform } from "react-native";
+import { LogBox, Platform } from "react-native";
 import Purchases, {
   INTRO_ELIGIBILITY_STATUS,
   LOG_LEVEL,
@@ -73,6 +73,13 @@ export async function configureRevenueCat(appUserId: string) {
 
   const configured = await Purchases.isConfigured();
   if (!configured) {
+    if (__DEV__ && apiKey.startsWith("test_")) {
+      LogBox.ignoreLogs([
+        "[RevenueCat] Using a Test Store API key.",
+        "The Test Store is for development only.",
+        "[RevenueCat] ⚠️ allowSharingPlayStoreAccount is set to false and restorePurchases has been called.",
+      ]);
+    }
     Purchases.configure({ apiKey, appUserID: appUserId });
     configuredUserId = appUserId;
     await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.WARN);
@@ -203,19 +210,19 @@ function hasThreeDayFreeTrial(item: PurchasesPackage) {
 function planName(item: PurchasesPackage) {
   switch (item.packageType) {
     case PACKAGE_TYPE.ANNUAL:
-      return "Finn Premium Annual";
+      return "Finnit Premium Annual";
     case PACKAGE_TYPE.SIX_MONTH:
-      return "Finn Premium — 6 months";
+      return "Finnit Premium — 6 months";
     case PACKAGE_TYPE.THREE_MONTH:
-      return "Finn Premium — 3 months";
+      return "Finnit Premium — 3 months";
     case PACKAGE_TYPE.TWO_MONTH:
-      return "Finn Premium — 2 months";
+      return "Finnit Premium — 2 months";
     case PACKAGE_TYPE.MONTHLY:
-      return "Finn Premium Monthly";
+      return "Finnit Premium Monthly";
     case PACKAGE_TYPE.WEEKLY:
-      return "Finn Premium Weekly";
+      return "Finnit Premium Weekly";
     default:
-      return item.product.title || "Finn Premium";
+      return item.product.title || "Finnit Premium";
   }
 }
 
@@ -271,7 +278,7 @@ export function subscriptionErrorMessage(error: unknown) {
     if ((error as { userCancelled?: boolean }).userCancelled) return null;
   }
   if (error instanceof Error && error.message) return error.message;
-  return "Finn couldn’t reach the App Store. Check your connection and try again.";
+  return "Finnit couldn’t reach the App Store. Check your connection and try again.";
 }
 
 export async function purchaseSubscription(plan: SubscriptionPlan) {

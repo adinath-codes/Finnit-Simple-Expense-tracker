@@ -12,11 +12,19 @@ import { completeJsonArrayProperty, splitSseFrames } from "./json-stream.ts";
 import { contains } from "./text.ts";
 import { localDay, parseDate } from "./dates.ts";
 import { ApiError, extraction, names, object, text } from "./validation.ts";
-import { env, metric, positiveEnv, reserve, type Context } from "./runtime.ts";
+import {
+  env,
+  metric,
+  positiveEnv,
+  requireAiConsent,
+  reserve,
+  type Context,
+} from "./runtime.ts";
 
 const nullableString = { type: ["string", "null"] };
 export const EXTRACTION_SCHEMA_VERSION = 4;
 export const EXTRACTION_PROMPT_VERSION = "amount-plans-first-v5-current-context";
+export const CORRECTION_PROMPT_VERSION = "amount-correction-grounding-v1";
 export type GeminiModelRole = "extraction" | "reasoning" | "fast";
 
 type ReadEnvironment = (name: string) => string | undefined;
@@ -320,6 +328,43 @@ export function resolveRelativeAmountCorrection(
   };
 }
 
+/** Resolve an explicit single-entry amount replacement from the user's
+ * correction. The grammar is intentionally narrow: ambiguous numbers remain
+ * Gemini's responsibility instead of being promoted to financial truth. */
+export function resolveAbsoluteAmountCorrection(
+  instruction: string,
+  current: Extraction,
+) {
+  if (current.transactions.length !== 1) return null;
+  const transaction = current.transactions[0];
+  if (transaction.amount_minor === null || !(transaction.currency in CURRENCIES)) {
+    return null;
+  }
+  const match = instruction.match(
+    /^\s*(?:please\s+)?(?:(?:change|set|update|correct)\s+(?:the\s+)?(?:amount|total|price)|make\s+(?:it|the\s+(?:amount|total|price)))\s+(?:to|as)\s+(.+?)\s*[.!]?\s*$/i,
+  );
+  if (!match) return null;
+  const literal = match[1].trim();
+  const tokens = moneyTokens(literal, transaction.currency);
+  if (
+    tokens.length !== 1 ||
+    tokens[0].index !== 0 ||
+    tokens[0].end !== literal.length
+  ) return null;
+  const token = tokens[0];
+  const digits = CURRENCIES[token.currency];
+  const scale = 10n ** BigInt(digits);
+  const targetMinor = BigInt(token.minor);
+  const formatted = digits === 0
+    ? targetMinor.toString()
+    : `${targetMinor / scale}.${(targetMinor % scale).toString().padStart(digits, "0")}`;
+  return {
+    currency: token.currency,
+    targetMinor: token.minor,
+    evidence: `Server-resolved target amount: ${token.currency} ${formatted}`,
+  };
+}
+
 export async function generate(
   ctx: Context,
   task: string,
@@ -331,6 +376,7 @@ export async function generate(
     onTextChunk?: (chunk: string) => void | Promise<void>;
   },
 ): Promise<unknown> {
+  await requireAiConsent(ctx);
   if (!Deno.env.get("GEMINI_API_KEY"))
     throw new ApiError(503, "ai_not_configured");
   const modelRole = options?.modelRole ?? "reasoning";
@@ -575,18 +621,26 @@ export function deriveAmountPreview(
       let currency = amountToken?.currency ?? groupToken?.currency ??
         shareToken?.currency ?? paidToken?.currency ?? null;
       let componentTotal = 0n;
+      let recoveredComponentQuantity = false;
       const componentTokens = new Set<(typeof tokens)[number]>();
       for (const rawComponent of plan.components) {
         const component = object(rawComponent);
         const evidence = text(component.evidence, 500);
         if (!description.includes(evidence)) throw new Error("ungrounded_component");
-        const componentQuantity = Number(component.quantity);
+        let componentQuantity = Number(component.quantity);
         const quantityEvidence = text(component.quantity_evidence, 100);
         if (
           !Number.isInteger(componentQuantity) || componentQuantity < 1 ||
-          componentQuantity > 100000 || !evidence.includes(quantityEvidence) ||
-          !new RegExp(`\\b${componentQuantity}\\b`).test(quantityEvidence)
+          componentQuantity > 100000
         ) throw new Error("ungrounded_component_quantity");
+        if (
+          componentQuantity !== 1 &&
+          (!evidence.includes(quantityEvidence) ||
+            !new RegExp(`\\b${componentQuantity}\\b`).test(quantityEvidence))
+        ) {
+          componentQuantity = 1;
+          recoveredComponentQuantity = true;
+        }
         const unitToken = claimToken(component.unit_amount_token, ordinal);
         if (!unitToken || !evidence.includes(unitToken.evidence)) {
           throw new Error("ungrounded_component_amount");
@@ -657,7 +711,7 @@ export function deriveAmountPreview(
         scope,
         needsReview:
           plan.estimated === true || plan.ambiguous === true || confidence < 0.85 ||
-          scope === "group_total",
+          scope === "group_total" || recoveredComponentQuantity,
       });
     }
     if (!candidates.length) return null;
@@ -691,6 +745,11 @@ export async function enrich(
   options?: {
     correctionInstruction?: string;
     currentExtraction?: Extraction;
+    resolvedAmountCorrection?: {
+      currency: string;
+      targetMinor: string;
+      evidence: string;
+    };
     onAmountPreview?: (preview: EntryAmountPreview) => void | Promise<void>;
     onFirstOutput?: () => void | Promise<void>;
   },
@@ -936,7 +995,7 @@ export async function enrich(
     throw new ApiError(500, "missing_correction_context");
   }
   const correctionTask = options?.correctionInstruction
-    ? "correction_instruction is an authoritative request to revise current_entry, the saved structured state currently visible to the user. Use current_entry as the baseline, apply every requested change, and preserve fields the correction does not mention. raw_note contains the immutable source note followed by the same correction only so new literal amounts and evidence can be grounded. When raw_note includes a 'Server-resolved target amount' line, that exact grounded value is the authoritative result of deterministic arithmetic and must replace the corrected amount. Apply the correction to any requested transaction, amount, item, participant, split, merchant, category, or date while returning a complete replacement. Never describe the correction or server-resolved line as a purchase. "
+    ? "correction_instruction is an authoritative request to revise current_entry, the saved structured state currently visible to the user. Use current_entry as the baseline, apply every requested change, and preserve fields the correction does not mention. raw_note contains the immutable source note followed by the same correction only so new literal amounts and evidence can be grounded. When raw_note includes a 'Server-resolved target amount' line, that exact grounded value is the authoritative result of deterministic arithmetic and must replace the corrected amount. For an amount-only correction, preserve the original transaction description and select the corrected amount token even though that token is outside the original description. Apply the correction to any requested transaction, amount, item, participant, split, merchant, category, or date while returning a complete replacement. Never describe the correction or server-resolved line as a purchase. "
     : "";
   let partialOutput = "";
   let firstOutputSeen = false;
@@ -1049,6 +1108,19 @@ export async function enrich(
     }
   }
   const tokenOwner = new Map<number, number>();
+  const resolvedCorrectionTokenIndices = new Set(
+    options?.resolvedAmountCorrection
+      ? tokens.flatMap((token, index) =>
+          token.currency === options.resolvedAmountCorrection!.currency &&
+            token.minor === options.resolvedAmountCorrection!.targetMinor
+            ? [index]
+            : []
+        )
+      : [],
+  );
+  if (options?.resolvedAmountCorrection && !resolvedCorrectionTokenIndices.size) {
+    throw new ApiError(500, "missing_resolved_correction_amount");
+  }
   const claimToken = (value: unknown, transactionOrdinal: number) => {
     if (value === null) return null;
     const index = Number(value);
@@ -1082,7 +1154,8 @@ export async function enrich(
     const token = claimToken(t.amount_token, transactionOrdinal);
     if (
       token && !description.includes(token.evidence) &&
-      !(amountPlans.length === 1 && tokens.length === 1)
+      !(amountPlans.length === 1 && tokens.length === 1) &&
+      !resolvedCorrectionTokenIndices.has(tokens.indexOf(token))
     )
       throw new ApiError(503, "ungrounded_amount");
     if (
@@ -1119,13 +1192,20 @@ export async function enrich(
       const componentEvidence = evidenceClaim(component.evidence);
       if (!description.includes(componentEvidence.text))
         throw new ApiError(503, "ungrounded_component");
-      const quantity = Number(component.quantity);
+      let quantity = Number(component.quantity);
       const quantityEvidence = text(component.quantity_evidence, 100);
       if (
-        !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 ||
-        !componentEvidence.text.includes(quantityEvidence) ||
-        !new RegExp(`\\b${quantity}\\b`).test(quantityEvidence)
+        !Number.isInteger(quantity) || quantity < 1 || quantity > 100000
       ) throw new ApiError(503, "ungrounded_component_quantity");
+      let quantityRecovered = false;
+      if (
+        quantity !== 1 &&
+        (!componentEvidence.text.includes(quantityEvidence) ||
+          !new RegExp(`\\b${quantity}\\b`).test(quantityEvidence))
+      ) {
+        quantity = 1;
+        quantityRecovered = true;
+      }
       const unitToken = claimToken(component.unit_amount_token, transactionOrdinal);
       if (!unitToken || !componentEvidence.text.includes(unitToken.evidence))
         throw new ApiError(503, "ungrounded_component_amount");
@@ -1161,7 +1241,9 @@ export async function enrich(
         semantic_role: role,
         confidence: componentConfidence,
         evidence: componentEvidence,
-        needs_review: component.uncertain === true || componentConfidence < 0.85,
+        needs_review:
+          component.uncertain === true || componentConfidence < 0.85 ||
+          quantityRecovered,
       });
     });
     if ([token, groupToken, shareToken, paidToken].some((candidate) =>
@@ -1424,6 +1506,18 @@ export async function enrich(
   for (let i = 0; i < tokens.length; i++) {
     if (!tokenOwner.has(i) && !ignored.has(i))
       throw new ApiError(503, "unreconciled_amounts");
+  }
+  if (options?.resolvedAmountCorrection) {
+    const corrected = transactions.length === 1 ? transactions[0] : null;
+    const claimedResolvedToken = [...resolvedCorrectionTokenIndices].some((index) =>
+      tokenOwner.has(index)
+    );
+    if (
+      !corrected ||
+      !claimedResolvedToken ||
+      corrected.amount_minor !== options.resolvedAmountCorrection.targetMinor ||
+      corrected.currency !== options.resolvedAmountCorrection.currency
+    ) throw new ApiError(503, "correction_amount_mismatch");
   }
   for (const transaction of transactions) {
     if (transaction.person) people.push(transaction.person);

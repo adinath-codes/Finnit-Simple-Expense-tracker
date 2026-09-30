@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Finn",
+    "name": "Finnit",
     "slug": "Finn",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,9 +8,12 @@
     "scheme": "finn",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/logo/app-icon-ios-opaque-v5.png",
+      "icon": "./assets/logo/app-icon.png",
       "bundleIdentifier": "com.finnit.app",
-      "usesAppleSignIn": true
+      "usesAppleSignIn": true,
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -30,15 +33,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Finn to choose a receipt photo for your journal",
-          "cameraPermission": "Allow Finn to photograph receipts for your journal",
+          "photosPermission": "Allow Finnit to choose a receipt photo for your journal",
+          "cameraPermission": "Allow Finnit to photograph receipts for your journal",
           "microphonePermission": false
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Finn to photograph receipts for your journal",
+          "cameraPermission": "Allow Finnit to photograph receipts for your journal",
           "microphonePermission": false,
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": false
@@ -48,12 +51,19 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#F6F6F4",
-          "image": "./assets/logo/app-icon.png",
+          "image": "./assets/logo/splash-logo.png",
           "imageWidth": 180
         }
       ],
       "expo-sqlite",
-      "@sentry/react-native",
+      [
+        "@sentry/react-native",
+        {
+          "organization": "adinaths-org",
+          "project": "finn-it-mobile",
+          "url": "https://sentry.io/"
+        }
+      ],
       "expo-localization",
       [
         "expo-notifications",
@@ -62,7 +72,8 @@
           "color": "#20C878",
           "defaultChannel": "journal-reminders"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

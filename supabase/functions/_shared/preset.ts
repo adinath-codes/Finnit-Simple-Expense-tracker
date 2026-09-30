@@ -19,6 +19,14 @@ export function formatPresetAmount(amountMinor: string, currency: string) {
 }
 
 export function presetCaptureText(snapshot: PresetSnapshot, currency: string) {
+  if (!(currency in CURRENCIES)) throw new Error("unsupported_currency");
+  return snapshot.note.trim() || snapshot.name.trim();
+}
+
+/** Accept captures queued by the previous client format during rollout. New
+ * captures keep the visible journal note human-readable; the immutable preset
+ * snapshot and deterministic extraction still carry amount and category. */
+export function legacyPresetCaptureText(snapshot: PresetSnapshot, currency: string) {
   const note = snapshot.note.trim() || snapshot.name.trim();
   return `${note} · ${formatPresetAmount(snapshot.amount_minor, currency)} ${
     CATEGORY_LABELS[snapshot.category_id]
@@ -28,6 +36,7 @@ export function presetCaptureText(snapshot: PresetSnapshot, currency: string) {
 export function presetExtraction(
   snapshot: PresetSnapshot,
   input: CaptureInput,
+  source: "preset" | "manual" = "preset",
 ): Extraction {
   const note = snapshot.note.trim() || snapshot.name.trim();
   const occurredOn = input.selected_date ?? localDay(input.captured_at, input.timezone);
@@ -67,7 +76,9 @@ export function presetExtraction(
     contexts: [],
     unresolved: [],
     schema_version: 3,
-    interpretation_summary: "This spending came from one of your saved entries.",
+    interpretation_summary: source === "manual"
+      ? "This spending was added manually with a confirmed amount and category."
+      : "This spending came from one of your saved entries.",
     participants: [],
     transaction_contexts: [],
     allocations: [],

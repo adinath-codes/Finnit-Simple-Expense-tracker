@@ -37,10 +37,12 @@ export function TransactionBreakdown({
   entry,
   currency,
   onChange,
+  readOnly = false,
 }: {
   entry: JournalEntry;
   currency: string;
   onChange: (entry: JournalEntry) => void | Promise<void>;
+  readOnly?: boolean;
 }) {
   const reducedMotion = useMotionPreference();
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -173,7 +175,7 @@ export function TransactionBreakdown({
                   )}
                 </Animated.View>
               )}
-              {editing === item.id ? (
+              {!readOnly && editing === item.id ? (
                 <Animated.View entering={detailEntrance(85)} style={styles.editFields}>
                   <View>
                     <Text style={styles.fieldLabel}>Description</Text>
@@ -303,7 +305,7 @@ export function TransactionBreakdown({
                     </Button>
                   </View>
                 </Animated.View>
-              ) : (
+              ) : !readOnly ? (
                 <Animated.View entering={detailEntrance(85)}>
                   <Button
                     label={`Edit ${item.name}`}
@@ -324,8 +326,8 @@ export function TransactionBreakdown({
                     </Text>
                   </Button>
                 </Animated.View>
-              )}
-              {entry.receipt && entry.items.length > 1 && pendingItem?.id !== item.id && (
+              ) : null}
+              {!readOnly && entry.receipt && entry.items.length > 1 && pendingItem?.id !== item.id && (
                 <Animated.View entering={detailEntrance(110)}>
                   <Button
                     label={`Remove ${item.name}`}
@@ -346,7 +348,7 @@ export function TransactionBreakdown({
           </MotionLayout>
         );
       })}
-      {entry.receipt && entry.items.length < 100 && pendingItem === null && (
+      {!readOnly && entry.receipt && entry.items.length < 100 && pendingItem === null && (
         <Button
           label="Add receipt line"
           onPress={() => {

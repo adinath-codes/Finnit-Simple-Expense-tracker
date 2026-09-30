@@ -1,5 +1,9 @@
 import type { PresetSnapshot, SavedEntry } from "../_shared/contracts.ts";
-import { presetCaptureText, presetExtraction } from "../_shared/preset.ts";
+import {
+  legacyPresetCaptureText,
+  presetCaptureText,
+  presetExtraction,
+} from "../_shared/preset.ts";
 import { metric, requireQuota, rpc, serve } from "../_shared/runtime.ts";
 import {
   ApiError,
@@ -36,23 +40,25 @@ serve(async (body, ctx) => {
     throw new ApiError(400, "invalid_category");
 
   const input = capture(body.input);
+  const source = body.source === "manual" ? "manual" : "preset";
   const expectedText = presetCaptureText(preset, input.currency);
-  if (input.raw_text !== expectedText)
+  const legacyText = legacyPresetCaptureText(preset, input.currency);
+  if (input.raw_text !== expectedText && input.raw_text !== legacyText)
     throw new ApiError(409, "preset_snapshot_conflict");
-  const result = extraction(presetExtraction(preset, input), [...CATEGORIES], []);
+  const result = extraction(presetExtraction(preset, input, source), [...CATEGORIES], []);
 
   const entry = await rpc<SavedEntry>(ctx.admin, "finn_commit_entry", {
     p_user: ctx.userId,
     p_input: input,
     p_extraction: result,
     p_audit: {
-      event: "preset_capture",
+      event: source === "manual" ? "manual_capture" : "preset_capture",
       preset_id: preset.id,
       preset_snapshot: preset,
       validated_result: result,
     },
   });
-  await metric(ctx, "preset_capture_saved", {
+  await metric(ctx, source === "manual" ? "manual_capture_saved" : "preset_capture_saved", {
     metadata: { category_id: preset.category_id },
   });
   return { entry, cached: true };

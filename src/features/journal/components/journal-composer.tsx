@@ -52,6 +52,7 @@ export function JournalComposer({
      saveValue,
      saveLabel,
      editingEntry,
+     aiEnabled,
      submitting,
      input,
      onSave,
@@ -65,6 +66,7 @@ export function JournalComposer({
      saveValue: string;
      saveLabel: string;
      editingEntry: boolean;
+     aiEnabled: boolean;
      submitting: boolean;
      input: RefObject<TextInput | null>;
      onSave: () => void;
@@ -280,7 +282,10 @@ export function JournalComposer({
                                                                       color={(["#EF7899", "#EBC64F", Finn.primary] as const)[index]}
                                                                  />
                                                                  <Text style={styles.miniValue}>
-                                                                      {Math.round(categoryTotal(category) / 100)}
+                                                                      {moneyValue(
+                                                                           categoryTotal(category),
+                                                                           settings.currency,
+                                                                      )}
                                                                  </Text>
                                                             </View>
                                                        ))}
@@ -347,8 +352,10 @@ export function JournalComposer({
                                              ref={cameraButton}
                                              name="camera"
                                              color={Finn.ink}
-                                             label="Open receipt camera"
-                                             disabled={editingEntry}
+                                             label={aiEnabled
+                                                  ? "Open receipt camera"
+                                                  : "Receipt scanning requires AI permission in Settings"}
+                                             disabled={editingEntry || !aiEnabled}
                                              onPress={() => {
                                                   const show = () => { setKeepToolbar(true); openTool("receipt"); };
                                                   if (!cameraButton.current) { setCameraOrigin(null); show(); return; }
@@ -376,7 +383,7 @@ export function JournalComposer({
                                    </Animated.View>
                               </View>
                </View>
-               <ReceiptCameraSheet
+               {aiEnabled && <ReceiptCameraSheet
                     visible={tool === "receipt"}
                     origin={cameraOrigin}
                     onDismissed={() => setKeepToolbar(false)}
@@ -385,7 +392,7 @@ export function JournalComposer({
                          setTool(null);
                          onReceiptCaptured(photo);
                     }}
-               />
+               />}
                <Modal
                     visible={tool === "add"}
                     transparent

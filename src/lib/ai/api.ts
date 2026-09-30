@@ -21,7 +21,12 @@ type BackendEndpoint =
   | "ask-money"
   | "ask-sql"
   | "refresh-entitlement"
-  | "request-quota-review";
+  | "request-quota-review"
+  | "support-email";
+
+type EntitlementRefreshResult = {
+  entitlement: { active: boolean; expires_at: string | null };
+};
 
 async function callBackendRequest<T>(
   endpoint: BackendEndpoint,
@@ -84,6 +89,18 @@ async function callBackendRequest<T>(
   }
 }
 
+export function refreshPremiumEntitlement(
+  expectedUserId?: string,
+  signal?: AbortSignal,
+) {
+  return callBackendRequest<EntitlementRefreshResult>(
+    "refresh-entitlement",
+    {},
+    expectedUserId,
+    signal,
+  );
+}
+
 export async function callBackend<T>(
   endpoint: BackendEndpoint,
   payload: unknown,
@@ -93,12 +110,30 @@ export async function callBackend<T>(
   const operation = `backend.${endpoint}`;
   recordOperation(operation, "started");
   try {
-    const result = await callBackendRequest<T>(
-      endpoint,
-      payload,
-      expectedUserId,
-      signal,
-    );
+    let result: T;
+    try {
+      result = await callBackendRequest<T>(
+        endpoint,
+        payload,
+        expectedUserId,
+        signal,
+      );
+    } catch (error) {
+      if (
+        endpoint === "refresh-entitlement" ||
+        !(error instanceof BackendError) ||
+        error.code !== "premium_required"
+      ) throw error;
+
+      const refreshed = await refreshPremiumEntitlement(expectedUserId, signal);
+      if (!refreshed.entitlement.active) throw error;
+      result = await callBackendRequest<T>(
+        endpoint,
+        payload,
+        expectedUserId,
+        signal,
+      );
+    }
     recordOperation(operation, "succeeded");
     return result;
   } catch (error) {

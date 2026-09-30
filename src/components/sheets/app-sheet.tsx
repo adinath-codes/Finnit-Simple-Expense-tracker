@@ -26,6 +26,7 @@ export function AppSheet({
      title,
      children,
      right,
+     customHeader,
      footer,
      headerLayout = "centered",
      bodyStyle,
@@ -35,6 +36,7 @@ export function AppSheet({
      title: string;
      children: ReactNode;
      right?: ReactNode;
+     customHeader?: ReactNode;
      footer?: ReactNode;
      headerLayout?: "centered" | "leading";
      bodyStyle?: StyleProp<ViewStyle>;
@@ -42,7 +44,7 @@ export function AppSheet({
      stickyFooter?: boolean;
 }) {
      const insets = useSafeAreaInsets();
-     const header = (
+     const defaultHeader = (
           <View
                style={[
                     styles.header,
@@ -83,6 +85,7 @@ export function AppSheet({
                )}
           </View>
      );
+     const header = customHeader ?? defaultHeader;
      return (
           <Screen>
                <KeyboardAvoidingView

@@ -444,6 +444,10 @@ entrypoint = "./functions/ask-sql/index.ts"
 verify_jwt = false
 entrypoint = "./functions/request-quota-review/index.ts"
 
+[functions.support-email]
+verify_jwt = false
+entrypoint = "./functions/support-email/index.ts"
+
 [functions.delete-account]
 verify_jwt = false
 

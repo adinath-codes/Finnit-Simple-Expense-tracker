@@ -25,6 +25,7 @@ import {
   ANALYTICS_EVENTS,
   captureAnalytics,
 } from "@/lib/analytics/analytics";
+import { sendErrorSupportEmail } from "../services/quota-support";
 
 type ErrorRecoveryScreenProps = {
   eventId?: string;
@@ -42,6 +43,7 @@ export function ErrorRecoveryScreen({
   onRetry,
 }: ErrorRecoveryScreenProps) {
   const [reported, setReported] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { showToast } = useAppToast();
@@ -54,8 +56,9 @@ export function ErrorRecoveryScreen({
     });
   }, [eventId]);
 
-  const raiseComplaint = () => {
-    if (reported) return;
+  const raiseComplaint = async () => {
+    if (reported || reporting) return;
+    setReporting(true);
     const associatedEventId = eventId || Sentry.lastEventId();
 
     if (isSentryEnabled && associatedEventId) {
@@ -73,23 +76,38 @@ export function ErrorRecoveryScreen({
       );
     }
 
-    recordOperation("error_recovery.complaint", "succeeded", {
-      associatedWithError: !!associatedEventId,
-      sentryEnabled: isSentryEnabled,
-    });
-    captureAnalytics(ANALYTICS_EVENTS.errorComplaintSubmitted, {
-      associated_with_error: !!associatedEventId,
-    });
-    setReported(true);
-    showToast({
-      id: `error-recovery-feedback:${associatedEventId ?? "local"}`,
-      message: "Thanks for the heads-up.",
-      highlighted: isSentryEnabled
-        ? "Your complaint is linked to the issue."
-        : "Finn has the recovery details ready.",
-      state: "info",
-      durationMs: 7_000,
-    });
+    try {
+      await sendErrorSupportEmail(associatedEventId);
+      recordOperation("error_recovery.complaint", "succeeded", {
+        associatedWithError: !!associatedEventId,
+        sentryEnabled: isSentryEnabled,
+      });
+      captureAnalytics(ANALYTICS_EVENTS.errorComplaintSubmitted, {
+        associated_with_error: !!associatedEventId,
+      });
+      setReported(true);
+      showToast({
+        id: `error-recovery-feedback:${associatedEventId ?? "local"}`,
+        message: "Thanks for the heads-up.",
+        highlighted: "Support has been emailed with the technical reference.",
+        state: "info",
+        durationMs: 7_000,
+      });
+    } catch {
+      recordOperation("error_recovery.complaint", "failed", {
+        associatedWithError: !!associatedEventId,
+        sentryEnabled: isSentryEnabled,
+      });
+      showToast({
+        id: `error-recovery-feedback-failed:${associatedEventId ?? "local"}`,
+        message: "Couldn’t email support.",
+        highlighted: "Check your connection, then try again.",
+        state: "error",
+        durationMs: 7_000,
+      });
+    } finally {
+      setReporting(false);
+    }
   };
 
   const retry = () => {
@@ -149,8 +167,8 @@ export function ErrorRecoveryScreen({
           </Button>
           <Button
             label={reported ? "Complaint raised" : "Raise a complaint"}
-            disabled={reported}
-            onPress={raiseComplaint}
+            disabled={reported || reporting}
+            onPress={() => void raiseComplaint()}
             style={styles.secondaryButton}
           >
             <View style={styles.buttonRow}>
@@ -161,7 +179,11 @@ export function ErrorRecoveryScreen({
                 animation={false}
               />
               <Text style={styles.secondaryButtonText}>
-                {reported ? "Complaint raised" : "Raise a complaint"}
+                {reported
+                  ? "Complaint raised"
+                  : reporting
+                    ? "Sending complaint…"
+                    : "Raise a complaint"}
               </Text>
             </View>
           </Button>

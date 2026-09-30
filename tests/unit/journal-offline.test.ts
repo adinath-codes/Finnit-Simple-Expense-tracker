@@ -14,7 +14,10 @@ import {
   receiptJournalText,
 } from "../../src/features/journal/services/journal-adapter.ts";
 import { entryTotal } from "../../src/utils/amounts.ts";
-import { presetCaptureText } from "../../src/features/presets/services/preset-format.ts";
+import {
+  presetCaptureText,
+  presetNameFromEntry,
+} from "../../src/features/presets/services/preset-format.ts";
 import {
   amountBreakdownText,
   deriveAmountBreakdown,
@@ -29,6 +32,11 @@ import {
   followDeletedEntryAfterSync,
   planEntryTextSave,
 } from "../../src/features/journal/services/journal-edit-flow.ts";
+import {
+  exhaustedAiValidationRetries,
+  MAX_AUTOMATIC_AI_VALIDATION_ATTEMPTS,
+} from "../../src/lib/offline/sync-retry-policy.ts";
+import { presetExtraction } from "../../supabase/functions/_shared/preset.ts";
 
 const transaction = {
   id: "transaction-1",
@@ -63,6 +71,38 @@ const cachedEntry: CachedEntry = {
   extraction: { transactions: [transaction], people: [], contexts: [], unresolved: [] },
   sync: "pending",
 };
+
+test("repeated AI validation failures stop while connectivity failures stay deferred", () => {
+  const job = {
+    id: "operation-1",
+    userId: "account-a",
+    entryId: cachedEntry.input.id,
+    endpoint: "correct-entry" as const,
+    payload: {
+      action: "ai_correct" as const,
+      operation_id: "operation-1",
+      id: cachedEntry.input.id,
+      expected_revision: 1,
+      instruction: "change amount to 6",
+    },
+    state: "pending" as const,
+    attempts: 0,
+    nextAttemptAt: 0,
+  };
+
+  assert.equal(exhaustedAiValidationRetries(
+    job,
+    "ungrounded_amount",
+    MAX_AUTOMATIC_AI_VALIDATION_ATTEMPTS - 1,
+  ), false);
+  assert.equal(exhaustedAiValidationRetries(
+    job,
+    "ungrounded_amount",
+    MAX_AUTOMATIC_AI_VALIDATION_ATTEMPTS,
+  ), true);
+  assert.equal(exhaustedAiValidationRetries(job, "ai_unavailable", 20), false);
+  assert.equal(exhaustedAiValidationRetries(job, "connection_unavailable", 20), false);
+});
 
 test("journal text edits distinguish unchanged, deleted, and changed drafts", () => {
   assert.equal(classifyJournalEdit("Coffee 120", " Coffee 120 "), "unchanged");
@@ -609,9 +649,18 @@ test("canonical group entry derives ride/share factors and participant rows", ()
 });
 
 test("AI correction jobs retain old extraction and expose pending action", () => {
+  const priorSummary = "You spent 1,200 on rent.";
   const cache = normalizeJournalCache({
     version: 3,
-    entries: { [cachedEntry.input.id]: { ...cachedEntry, extraction: cachedEntry.extraction } },
+    entries: {
+      [cachedEntry.input.id]: {
+        ...cachedEntry,
+        extraction: {
+          ...cachedEntry.extraction,
+          interpretation_summary: priorSummary,
+        },
+      },
+    },
     jobs: [{
       id: "44444444-4444-4444-8444-444444444444",
       userId: "account-a",
@@ -630,6 +679,7 @@ test("AI correction jobs retain old extraction and expose pending action", () =>
   const adapted = journalEntriesFromCache(cache)[0];
   assert.equal(adapted.pendingAction, "ai_correct");
   assert.equal(adapted.items[0].amountMinor, 120000);
+  assert.equal(adapted.thought, priorSummary);
   assert.equal(cache.entries[cachedEntry.input.id].input.raw_text, "rent 1200");
 });
 
@@ -776,14 +826,41 @@ test("editing note text does not turn a missing amount into a confirmed zero", (
   assert.equal(corrected.transactions[0].needs_review, true);
 });
 
-test("preset capture contains its durable amount and category context", () => {
+test("preset capture keeps a clean visible note while its snapshot owns facts", () => {
   assert.equal(presetCaptureText({
     id: "coffee",
     name: "Morning coffee",
     note: "my usual coffee",
     amountMinor: 18050,
     category: "food",
-  }), "my usual coffee · 180.50 food");
+  }), "my usual coffee");
+  assert.equal(presetNameFromEntry("coffee for 4.50"), "coffee");
+  assert.equal(presetNameFromEntry("Bus 42 · €2.50"), "Bus 42");
+  assert.equal(presetNameFromEntry("180"), "Saved expense");
+});
+
+test("manual capture records deterministic manual provenance", () => {
+  const result = presetExtraction({
+    id: "manual-1",
+    name: "Lunch",
+    note: "Lunch",
+    amount_minor: "1299",
+    category_id: "food",
+  }, {
+    id: "entry-1",
+    raw_text: "Lunch",
+    captured_at: "2026-09-29T12:00:00.000Z",
+    timezone: "Asia/Kolkata",
+    currency: "USD",
+    selected_date: "2026-09-29",
+  }, "manual");
+
+  assert.equal(
+    result.interpretation_summary,
+    "This spending was added manually with a confirmed amount and category.",
+  );
+  assert.equal(result.transactions[0].amount_minor, "1299");
+  assert.equal(result.transactions[0].category_source, "user_correction");
 });
 
 test("streamed amount preview survives normalization but never enters totals", () => {

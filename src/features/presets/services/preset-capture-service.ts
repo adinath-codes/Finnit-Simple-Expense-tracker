@@ -10,6 +10,7 @@ export async function capturePreset(
   preset: Preset,
   selectedDate: string,
   currency: string,
+  source: "preset" | "manual" = "preset",
 ) {
   const input = createCaptureInput(
     presetCaptureText(preset, currency),
@@ -25,6 +26,7 @@ export async function capturePreset(
       amount_minor: String(preset.amountMinor),
       category_id: preset.category,
     },
+    source,
   });
   return input.id;
 }

@@ -6,6 +6,7 @@ import {
   reconcileParticipantSplitMethods,
   reconcileSingleAmountToken,
   reconcileSplitSemantics,
+  resolveAbsoluteAmountCorrection,
   resolveRelativeAmountCorrection,
 } from "../functions/_shared/gemini.ts";
 import type { CaptureInput, Extraction } from "../functions/_shared/contracts.ts";
@@ -100,6 +101,60 @@ Deno.test("quantity, components and equal split use exact server arithmetic", ()
       }],
     }),
   ], input("2*100 + 1*20"))?.amount_minor, "22000");
+
+  assertEquals(deriveAmountPreview([
+    plan({
+      description: "Groceries included produce 24.50 and snacks 18.25",
+      amount_token: null,
+      participant_count: 1,
+      components: [{
+        label: "produce",
+        quantity: 1,
+        quantity_evidence: "1",
+        unit_amount_token: 0,
+        semantic_role: "item",
+        evidence: "produce 24.50",
+        confidence: 1,
+        uncertain: false,
+      }, {
+        label: "snacks",
+        quantity: 1,
+        quantity_evidence: "1",
+        unit_amount_token: 1,
+        semantic_role: "item",
+        evidence: "snacks 18.25",
+        confidence: 1,
+        uncertain: false,
+      }],
+    }),
+  ], input(
+    "Groceries included produce 24.50 and snacks 18.25",
+    "USD",
+  ))?.amount_minor, "4275");
+
+  assertEquals(deriveAmountPreview([
+    plan({
+      description: "Groceries included produce 24.50",
+      amount_token: null,
+      participant_count: 1,
+      components: [{
+        label: "produce",
+        quantity: 7,
+        quantity_evidence: "7",
+        unit_amount_token: 0,
+        semantic_role: "item",
+        evidence: "produce 24.50",
+        confidence: 1,
+        uncertain: false,
+      }],
+    }),
+  ], input("Groceries included produce 24.50", "USD")), {
+    amount_minor: "2450",
+    currency: "USD",
+    scope: "personal_total",
+    estimated: true,
+    needs_review: true,
+  });
 
   assertEquals(deriveAmountPreview([
     plan({
@@ -454,4 +509,43 @@ Deno.test("relative percentage corrections resolve from the current saved amount
     resolveRelativeAmountCorrection("reduce it by 20%", current)?.targetMinor,
     "20000",
   );
+});
+
+Deno.test("explicit amount replacements become authoritative grounded targets", () => {
+  const current: Extraction = {
+    transactions: [{
+      description: "coffee for 4.50",
+      amount_minor: "500",
+      currency: "EUR",
+      direction: "expense",
+      cash_flow: "out",
+      amount_status: "confirmed",
+      category_id: "food",
+      category_source: "user_correction",
+      merchant_id: null,
+      occurred_on: "2026-09-29",
+      quantity: 1,
+      unit_price_minor: "500",
+      confidence: 1,
+      needs_review: false,
+      unresolved: [],
+      person: null,
+      evidence: "5",
+    }],
+    people: [],
+    contexts: [],
+    unresolved: [],
+  };
+
+  assertEquals(resolveAbsoluteAmountCorrection("change amount to 6", current), {
+    currency: "EUR",
+    targetMinor: "600",
+    evidence: "Server-resolved target amount: EUR 6.00",
+  });
+  assertEquals(resolveAbsoluteAmountCorrection("please set the total to $7.25", current), {
+    currency: "USD",
+    targetMinor: "725",
+    evidence: "Server-resolved target amount: USD 7.25",
+  });
+  assertEquals(resolveAbsoluteAmountCorrection("change item 2 to 6", current), null);
 });

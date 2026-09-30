@@ -35,6 +35,7 @@ type QueuedToast = AppToast & { id: string };
 type ToastContextValue = {
   showToast: (toast: AppToast) => string;
   dismissToast: (id?: string) => void;
+  setToastPresentationPaused: (paused: boolean) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -42,6 +43,7 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 export function ToastProvider({ children }: PropsWithChildren) {
   const insets = useSafeAreaInsets();
   const [active, setActive] = useState<QueuedToast | null>(null);
+  const [presentationPaused, setToastPresentationPaused] = useState(false);
   const activeRef = useRef<QueuedToast | null>(null);
   const queue = useRef<QueuedToast[]>([]);
   const sequence = useRef(0);
@@ -86,20 +88,20 @@ export function ToastProvider({ children }: PropsWithChildren) {
   }, [presentNext]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || presentationPaused) return;
     const timeout = setTimeout(
       () => dismissToast(active.id),
       active.durationMs ?? (active.action ? 10_000 : 6_500),
     );
     return () => clearTimeout(timeout);
-  }, [active, dismissToast]);
+  }, [active, dismissToast, presentationPaused]);
 
   useEffect(() => () => {
     if (transitionTimer.current) clearTimeout(transitionTimer.current);
   }, []);
 
   const value = useMemo(
-    () => ({ showToast, dismissToast }),
+    () => ({ showToast, dismissToast, setToastPresentationPaused }),
     [dismissToast, showToast],
   );
 
@@ -110,7 +112,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
         pointerEvents="box-none"
         style={[styles.host, { paddingTop: insets.top + 8 }]}
       >
-        {active ? (
+        {active && !presentationPaused ? (
           <CustomToast
             key={active.id}
             mess={active.message}

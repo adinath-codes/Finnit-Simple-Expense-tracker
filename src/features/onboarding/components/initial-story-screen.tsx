@@ -21,9 +21,9 @@ import Animated, {
 } from "react-native-reanimated";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
-const CHARACTER_REVEAL_MS = 34;
-const READY_PAUSE_MS = 1400;
-const REDUCED_READY_PAUSE_MS = 500;
+const CHARACTER_REVEAL_MS = 17;
+const READY_PAUSE_MS = 700;
+const REDUCED_READY_PAUSE_MS = 250;
 
 const STORY_SCENES: Record<StorySceneId, number> = {
   hello: require("@/assets/images/onboarding/conversation-scenes/01-hello.webp"),
@@ -94,7 +94,7 @@ export function InitialStoryScreen({
 
     const typingDuration = reduced
       ? 0
-      : Math.max(900, characterCount * CHARACTER_REVEAL_MS);
+      : Math.max(450, characterCount * CHARACTER_REVEAL_MS);
     const readyDelay =
       typingDuration + (reduced ? REDUCED_READY_PAUSE_MS : READY_PAUSE_MS);
 
@@ -110,7 +110,7 @@ export function InitialStoryScreen({
       characterProgress.set(0);
       sceneProgress.set(
         withTiming(1, {
-          duration: 320,
+          duration: 160,
           easing: EASE_OUT,
         }),
       );

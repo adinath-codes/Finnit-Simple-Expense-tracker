@@ -92,6 +92,12 @@ test("onboarding shows the four quick currencies followed by Other", () => {
       "invite",
     ],
   );
+
+  const storyCopy = onboardingSteps
+    .filter((step) => step.kind === "story")
+    .map((step) => step.copy);
+  assert.ok(storyCopy.every((copy) => /\b(?:you|your)\b/i.test(copy)));
+  assert.ok(storyCopy.every((copy) => !/\b(?:I|I'm|my|me)\b/i.test(copy)));
 });
 
 test("onboarding accepts every catalog currency and rejects action or unknown ids", () => {

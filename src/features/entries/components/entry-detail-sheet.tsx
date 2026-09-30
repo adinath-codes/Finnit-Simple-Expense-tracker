@@ -6,13 +6,17 @@ import {
   sheetStyles as shared,
 } from "@/components/sheets/app-sheet";
 import { Button } from "@/components/ui/button";
+import { ConfirmationModal } from "@/components/ui/confirmation-modal";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { ContentFade } from "@/components/ui/motion";
+import { useAppToast } from "@/components/ui/toast-provider";
 import { Finn, JournalType } from "@/constants/theme";
 import { useSession } from "@/features/auth/providers/session-provider";
+import { useAiConsent } from "@/features/ai-consent/providers/ai-consent-provider";
 import { retryReceipt } from "@/features/camera/services/receipt-service";
 import { amountBreakdownText } from "@/features/entries/services/breakdown-service";
+import { presetNameFromEntry } from "@/features/presets/services/preset-format";
 import {
   ANALYTICS_EVENTS,
   captureAnalytics,
@@ -33,10 +37,8 @@ import { Image } from "expo-image";
 import { useLocalSearchParams } from "expo-router";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  Alert,
   Keyboard,
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -68,6 +70,7 @@ export default function EntryDetailSheet() {
   const { entries, settings } = useJournalData();
   const {
     updateEntry,
+    saveEntryText,
     savePreset,
     deleteEntry,
     clearMutationError,
@@ -78,6 +81,8 @@ export default function EntryDetailSheet() {
   } = useJournalActions();
   const { mutationError } = useJournalStatus();
   const { session } = useSession();
+  const aiEnabled = useAiConsent().status === "granted";
+  const { showToast } = useAppToast();
   const { width: windowWidth } = useWindowDimensions();
   const entry = entries.find((item) => item.id === entryId);
   const trackedEntryId = useRef<string | null>(null);
@@ -101,6 +106,8 @@ export default function EntryDetailSheet() {
   );
   const [receiptActionError, setReceiptActionError] = useState<string | null>(null);
   const [syncAction, setSyncAction] = useState<"retry" | "keep" | "remote" | null>(null);
+  const [confirmationKind, setConfirmationKind] = useState<"delete" | "remote" | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
     if (!entry || trackedEntryId.current === entry.id) return;
@@ -131,9 +138,13 @@ export default function EntryDetailSheet() {
     const value = note.trim();
     if (entry.receipt || value) {
       try {
-        await updateEntry(entry.receipt
-          ? { ...entry, merchant: value }
-          : { ...entry, note: value });
+        if (!entry.receipt && !aiEnabled) {
+          await saveEntryText(entry.id, value, "preserve");
+        } else {
+          await updateEntry(entry.receipt
+            ? { ...entry, merchant: value }
+            : { ...entry, note: value });
+        }
       }
       catch { return; }
       setConfirmation((current) => ({
@@ -144,33 +155,28 @@ export default function EntryDetailSheet() {
     setEditing(false);
   };
   const runSyncAction = async (action: "retry" | "keep" | "remote") => {
-    if (syncAction) return;
+    if (syncAction) return false;
     setSyncAction(action);
     setReceiptActionError(null);
     try {
       if (action === "retry") await retrySync(entry.id);
       else if (action === "keep") await keepLocalVersion(entry.id);
       else await acceptRemoteVersion(entry.id);
+      return true;
     } catch {
-      return;
+      showToast({
+        id: `entry-sync-${entry.id}`,
+        message: "Couldn’t update this entry.",
+        highlighted: "Please try again.",
+        state: "error",
+      });
+      return false;
     } finally {
       setSyncAction(null);
     }
   };
   const confirmUseRemoteVersion = () => {
-    const accept = () => { void runSyncAction("remote"); };
-    if (Platform.OS === "web") {
-      if (window.confirm("Replace this device’s unsynced changes with the latest synced version?")) accept();
-      return;
-    }
-    Alert.alert(
-      "Use the synced version?",
-      "This replaces the unsynced changes on this device. Your latest synced entry will remain.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use synced version", style: "destructive", onPress: accept },
-      ],
-    );
+    setConfirmationKind("remote");
   };
   const openActions = () => {
     actionsButton.current?.measureInWindow((x, y, width, height) => {
@@ -179,29 +185,31 @@ export default function EntryDetailSheet() {
     });
   };
   const removeEntry = async () => {
+    if (deleteBusy) return;
+    setDeleteBusy(true);
     try {
       await deleteEntry(entry.id);
     } catch {
+      showToast({
+        id: `delete-entry-${entry.id}-error`,
+        message: "Couldn’t delete this entry.",
+        highlighted: "Please try again.",
+        state: "error",
+      });
+      setDeleteBusy(false);
       return;
     }
+    setConfirmationKind(null);
+    showToast({
+      id: `delete-entry-${entry.id}-success`,
+      message: "Entry deleted.",
+      state: "info",
+    });
     closeSheet();
   };
   const confirmDelete = () => {
     setActionsOpen(false);
-    if (Platform.OS === "web") {
-      if (window.confirm("Delete this entry from its journal day?")) {
-        void removeEntry();
-      }
-      return;
-    }
-    Alert.alert(
-      "Delete this entry?",
-      "This removes it from the journal for that day.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: () => { void removeEntry(); } },
-      ],
-    );
+    setConfirmationKind("delete");
   };
   const menuLeft = actionAnchor
     ? Math.min(
@@ -225,8 +233,8 @@ export default function EntryDetailSheet() {
       headerLayout="leading"
       headerScrollable
       bodyStyle={styles.body}
-      stickyFooter={correctionOpen}
-      footer={correctionOpen ? (
+      stickyFooter={aiEnabled && correctionOpen}
+      footer={aiEnabled && correctionOpen ? (
         <FinnCorrectionComposer
           disabled={entry.syncState === "pending"}
           onSubmit={async (instruction) => {
@@ -312,8 +320,16 @@ export default function EntryDetailSheet() {
         <View accessibilityLiveRegion="polite" style={[shared.card, styles.syncCard, styles.syncFailedCard]}>
           <Icon name="offline" color={Finn.danger} size={16} />
           <View style={styles.syncCopy}>
-            <Text style={[styles.syncTitle, { color: Finn.danger }]}>Couldn’t sync this entry</Text>
-            <Text style={shared.subtle}>Your entry is safe on this device. Retry when you’re ready.</Text>
+            <Text style={[styles.syncTitle, { color: Finn.danger }]}>
+              {entry.pendingAction === "ai_correct"
+                ? "Finn couldn’t apply this correction"
+                : "Couldn’t sync this entry"}
+            </Text>
+            <Text style={shared.subtle}>
+              {entry.pendingAction === "ai_correct"
+                ? "Your existing entry is unchanged. Retry when you’re ready."
+                : "Your entry is safe on this device. Retry when you’re ready."}
+            </Text>
           </View>
           <Button
             disabled={!!syncAction}
@@ -409,11 +425,14 @@ export default function EntryDetailSheet() {
                 label={saved ? "Saved as a preset" : "Save as a preset"}
                 disabled={mixedCurrencies}
                 onPress={async () => {
+                  const presetName = presetNameFromEntry(
+                    entry.items[0]?.name ?? entry.note,
+                  );
                   try {
                     await savePreset({
                       id: `saved-${entry.id}`,
-                      name: entry.note.split("\n")[0],
-                      note: entry.note,
+                      name: presetName,
+                      note: presetName,
                       amountMinor: total,
                       category: entry.category,
                     });
@@ -529,25 +548,14 @@ export default function EntryDetailSheet() {
       )}
 
       <SectionLabel style={styles.sectionLabel}>Amount breakdown</SectionLabel>
-      {isFinnCorrectionPending
-        ? <LoadingState
-          label="Finn is revising the entry details."
-          variant="explanation"
-        />
-        : <View style={[shared.card, styles.amountCard]}>
-          {amountPreview
-            ? <PreliminaryAmount preview={amountPreview} displayCurrency={settings.currency} />
-            : <AmountExpression terms={entry.amountBreakdown ?? []} displayCurrency={settings.currency} />}
-        </View>}
+      <View style={[shared.card, styles.amountCard]}>
+        {amountPreview
+          ? <PreliminaryAmount preview={amountPreview} displayCurrency={settings.currency} />
+          : <AmountExpression terms={entry.amountBreakdown ?? []} displayCurrency={settings.currency} />}
+      </View>
 
       <SectionLabel style={styles.sectionLabel}>Items breakdown</SectionLabel>
-      {isFinnCorrectionPending
-        ? <LoadingState
-          announce={false}
-          label="Finn is revising the items breakdown."
-          variant="transactions"
-        />
-        : amountPreview
+      {amountPreview
         ? <LoadingState
           active={!entry.syncError}
           label={entry.syncError
@@ -562,19 +570,18 @@ export default function EntryDetailSheet() {
               rows={entry.allocationRows}
               selfName={session?.user.user_metadata.full_name ?? session?.user.user_metadata.name}
             />
-            : <TransactionBreakdown entry={entry} currency={settings.currency} onChange={updateEntry} />}
+            : <TransactionBreakdown
+              entry={entry}
+              currency={settings.currency}
+              onChange={updateEntry}
+              readOnly={isFinnCorrectionPending}
+            />}
         </ContentFade>}
 
       <SectionLabel style={styles.sectionLabel}>
         Finn’s take
       </SectionLabel>
-      {isFinnCorrectionPending
-        ? <LoadingState
-          announce={false}
-          label="I’m updating my take on this spending."
-          variant="explanation"
-        />
-        : amountPreview
+      {amountPreview
         ? <LoadingState
           active={!entry.syncError}
           announce={false}
@@ -590,7 +597,7 @@ export default function EntryDetailSheet() {
               style={styles.thoughtIllustration}
             />
             <Text style={styles.thoughtText}>{entry.thought}</Text>
-            {!entry.receipt && (
+            {!entry.receipt && aiEnabled && (
               <Button
                 disabled={entry.syncState === "pending"}
                 label="Tell Finn what to change in the breakdown"
@@ -603,6 +610,29 @@ export default function EntryDetailSheet() {
             )}
           </View>
         </ContentFade>}
+
+      <ConfirmationModal
+        body={confirmationKind === "remote"
+          ? "This replaces the unsynced changes on this device. Your latest synced entry will remain."
+          : "This removes it from your journal, totals, insights, and search. This can’t be undone."}
+        busy={confirmationKind === "remote" ? syncAction === "remote" : deleteBusy}
+        cancelLabel={confirmationKind === "delete" ? "Keep entry" : "Keep my changes"}
+        confirmLabel={confirmationKind === "delete" ? "Delete entry" : "Use synced version"}
+        destructive
+        icon={confirmationKind === "delete" ? "trash" : "refresh"}
+        onConfirm={() => {
+          if (confirmationKind === "delete") {
+            void removeEntry();
+            return;
+          }
+          void runSyncAction("remote").then((updated) => {
+            if (updated) setConfirmationKind(null);
+          });
+        }}
+        onDismiss={() => setConfirmationKind(null)}
+        title={confirmationKind === "delete" ? "Delete this entry?" : "Use the synced version?"}
+        visible={confirmationKind !== null}
+      />
 
     </AppSheet>
   );

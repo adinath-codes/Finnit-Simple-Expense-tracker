@@ -6,6 +6,11 @@ native crashes, unhandled promise rejections, release health, failed requests,
 navigation/interaction performance, app-start timing, and error-triggered mobile
 session replay.
 
+Native transport remains enabled, which is the React Native SDK boundary that
+provides device context and its bounded offline envelope cache. Events captured
+during a normal connectivity outage can therefore be delivered after the device
+reconnects without adding an app-level polling loop.
+
 ## Configure the real project
 
 Replace these values in the local `.env` and in the matching EAS build/update
@@ -22,6 +27,11 @@ environment:
 The `EXPO_PUBLIC_*_SAMPLE_RATE` values accept a decimal from `0` through `1`.
 Current defaults collect 15% of performance traces, no continuous replays, and a
 masked replay for every captured error session.
+
+The non-secret organization and project slugs are also pinned in the Expo
+config plugin so native source-map configuration cannot silently target another
+project. `SENTRY_AUTH_TOKEN` remains environment-only and must never be added to
+app config or source control.
 
 Create a new release build after replacing the placeholders. Native debug files
 and Metro source maps are uploaded by the Sentry Expo plugin. For an EAS Update,

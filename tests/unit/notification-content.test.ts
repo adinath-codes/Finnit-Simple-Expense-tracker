@@ -5,6 +5,7 @@ import {
   journalReminderCopy,
   nextJournalReminderDates,
   parseReminderTime,
+  trialExpiryReminderDate,
 } from "../../src/features/notifications/services/notification-content.ts";
 
 test("reminder copy rotates and always speaks as Finn", () => {
@@ -34,4 +35,49 @@ test("an unlogged day can still receive tonight's reminder", () => {
   const [date] = nextJournalReminderDates("9:00 PM", now, false, 1);
   assert.equal(date.getDate(), 26);
   assert.equal(date.getHours(), 21);
+});
+
+test("a trial reminder is scheduled 24 hours before the verified expiry", () => {
+  const now = new Date("2026-09-29T12:00:00.000Z");
+  const expiry = new Date("2026-10-02T12:00:00.000Z");
+  const reminder = trialExpiryReminderDate({
+    isActive: true,
+    periodType: "TRIAL",
+    expirationDateMillis: expiry.getTime(),
+  }, now);
+
+  assert.equal(reminder?.toISOString(), "2026-10-01T12:00:00.000Z");
+});
+
+test("accelerated store trials still get a reminder before expiry", () => {
+  const now = new Date("2026-09-29T12:00:00.000Z");
+  const expiry = new Date("2026-09-29T12:06:00.000Z");
+  const reminder = trialExpiryReminderDate({
+    isActive: true,
+    periodType: "trial",
+    expirationDateMillis: expiry.getTime(),
+  }, now);
+
+  assert.equal(reminder?.toISOString(), "2026-09-29T12:03:00.000Z");
+});
+
+test("normal, inactive, and expired entitlements do not schedule trial reminders", () => {
+  const now = new Date("2026-09-29T12:00:00.000Z");
+  const future = new Date("2026-10-02T12:00:00.000Z").getTime();
+
+  assert.equal(trialExpiryReminderDate({
+    isActive: true,
+    periodType: "NORMAL",
+    expirationDateMillis: future,
+  }, now), null);
+  assert.equal(trialExpiryReminderDate({
+    isActive: false,
+    periodType: "TRIAL",
+    expirationDateMillis: future,
+  }, now), null);
+  assert.equal(trialExpiryReminderDate({
+    isActive: true,
+    periodType: "TRIAL",
+    expirationDateMillis: now.getTime(),
+  }, now), null);
 });

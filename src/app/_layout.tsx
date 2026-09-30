@@ -37,6 +37,10 @@ import {
      SubscriptionProvider,
      useSubscription,
 } from "@/features/paywall/providers/subscription-provider";
+import {
+     AiConsentProvider,
+     useAiConsent,
+} from "@/features/ai-consent/providers/ai-consent-provider";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -78,8 +82,12 @@ function RootApplication() {
           ...(Platform.OS === "ios"
                ? {}
                : {
+                      // Expo Font requires static module IDs for bundled runtime fonts.
+                      // eslint-disable-next-line @typescript-eslint/no-require-imports
                       "SFProDisplay-Regular": require("../../assets/sf-pro-display/SFPRODISPLAYREGULAR.OTF"),
+                      // eslint-disable-next-line @typescript-eslint/no-require-imports
                       "SFProDisplay-Medium": require("../../assets/sf-pro-display/SFPRODISPLAYMEDIUM.OTF"),
+                      // eslint-disable-next-line @typescript-eslint/no-require-imports
                       "SFProDisplay-Bold": require("../../assets/sf-pro-display/SFPRODISPLAYBOLD.OTF"),
                       "SFProDisplay-Black": require("../../assets/sf-pro-display/SF-Pro-Display-Black.otf"),
                  }),
@@ -88,9 +96,10 @@ function RootApplication() {
      if (!fontsLoaded) return null;
      return (
           <SessionProvider>
-               <SentryUserContext />
-               <SubscriptionProvider>
-                    <AppProviders>
+               <AiConsentProvider>
+                    <SentryUserContext />
+                    <SubscriptionProvider>
+                         <AppProviders>
                          <AnalyticsRuntime />
                          <ThemeProvider
                               value={{
@@ -107,18 +116,21 @@ function RootApplication() {
                               <GuidanceToastHost />
                               <NotificationPermissionHost />
                          </ThemeProvider>
-                    </AppProviders>
-               </SubscriptionProvider>
+                         </AppProviders>
+                    </SubscriptionProvider>
+               </AiConsentProvider>
           </SessionProvider>
      );
 }
 
 function RootNavigator({ reduced }: { reduced: boolean }) {
      const { session, loading, onboardingComplete } = useSession();
+     const aiConsent = useAiConsent();
      const subscription = useSubscription();
      const navigationRef = useNavigationContainerRef();
      const booting =
           loading ||
+          (!!session && aiConsent.status === "loading") ||
           (!!session &&
                (subscription.state === "signed-out" ||
                     subscription.state === "loading"));
@@ -137,6 +149,7 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
 
      const authenticated = onboardingComplete && !!session;
      const premiumAccess = authenticated && subscription.isActive;
+     const aiConsentGranted = aiConsent.status === "granted";
 
      return (
           <ContentFade style={{ flex: 1 }}>
@@ -197,6 +210,15 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                               }}
                          />
                     </Stack.Protected>
+                    <Stack.Protected guard={authenticated && subscription.isActive && aiConsent.status === "undecided"}>
+                         <Stack.Screen
+                              name="ai-consent"
+                              options={{
+                                   gestureEnabled: false,
+                                   animation: reduced ? "fade" : "default",
+                              }}
+                         />
+                    </Stack.Protected>
                     <Stack.Protected guard={authenticated}>
                          <Stack.Screen
                               name="settings/index"
@@ -210,7 +232,6 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                     </Stack.Protected>
                     <Stack.Protected guard={premiumAccess}>
                          <Stack.Screen name="index" />
-                         <Stack.Screen name="search" />
                          <Stack.Screen
                               name="quick-add"
                               options={{
@@ -246,6 +267,9 @@ function RootNavigator({ reduced }: { reduced: boolean }) {
                                    sheetCornerRadius: 30,
                               }}
                          />
+                    </Stack.Protected>
+                    <Stack.Protected guard={premiumAccess && aiConsentGranted}>
+                         <Stack.Screen name="search" />
                     </Stack.Protected>
                </Stack>
           </ContentFade>

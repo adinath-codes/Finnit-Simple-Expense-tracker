@@ -1651,9 +1651,10 @@ The existing-account sign-in escape is present only on the opening story page.
 Each story page shows one muscular Finn paper-cut vignette and one short sentence.
 Characters materialize sequentially in place on the UI thread like ink being
 written, without pop-in translation; quoted statements use the handwritten
-Caveat face, and one or two meaningful words use Finn green. The persistent story
-action fills left-to-right during the writing and reading interval, then becomes
-tappable after a 1.4-second pause. Story props do not loop. Each of the six answer
+Caveat face, and one or two meaningful words use Finn green. The reveal and
+reading interval run at twice the original speed, with a 0.7-second pause. The
+persistent story action fills left-to-right during that interval but remains
+tappable throughout so the user can continue immediately. Story props do not loop. Each of the six answer
 questions restores Finn's existing four-frame sprite in one fixed 180-point
 viewport above the copy; the container never wanders and only the internal paper
 contours change. The final invitation stays typographic. Reduced Motion keeps the

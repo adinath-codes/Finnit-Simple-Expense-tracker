@@ -73,6 +73,7 @@ export function ReceiptCameraSheet({
   const [torch, setTorch] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [selectingFromGallery, setSelectingFromGallery] = useState(false);
   const [requestingPermission, setRequestingPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<ReceiptCapture | null>(null);
@@ -124,6 +125,7 @@ export function ReceiptCameraSheet({
     if (!present) {
       setCameraReady(false);
       setCapturing(false);
+      setSelectingFromGallery(false);
       setRequestingPermission(false);
       setError(null);
       setPhoto(null);
@@ -131,6 +133,45 @@ export function ReceiptCameraSheet({
       setFacing("back");
     }
   }, [present]);
+
+  const launchGallery = useCallback(async (session: number) => {
+    try {
+      const selected = await pickReceiptFromGallery();
+      if (
+        selected &&
+        isVisible.current &&
+        session === captureSession.current
+      ) {
+        setPhoto(selected);
+        captureAnalytics(ANALYTICS_EVENTS.receiptImageSelected, {
+          source: "gallery",
+        });
+      }
+    } catch {
+      if (isVisible.current && session === captureSession.current) {
+        setError("Finn could not open that photo. Please try another image.");
+      }
+    } finally {
+      if (session === captureSession.current) setSelectingFromGallery(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !selectingFromGallery ||
+      !visible ||
+      Platform.OS === "web"
+    ) return;
+
+    const session = captureSession.current;
+    // CameraView's `active` prop only stops the iOS session. Waiting until the
+    // next frame lets React remove the Android native camera before presenting
+    // ImagePicker's activity, so the two native surfaces never contend.
+    const frame = requestAnimationFrame(() => {
+      void launchGallery(session);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [launchGallery, selectingFromGallery, visible]);
 
   if (!present) return null;
 
@@ -179,18 +220,15 @@ export function ReceiptCameraSheet({
       setRequestingPermission(false);
     }
   };
-  const pickFromGallery = async () => {
+  const pickFromGallery = () => {
+    if (!isVisible.current || selectingFromGallery) return;
     setError(null);
-    try {
-      const selected = await pickReceiptFromGallery();
-      if (selected && isVisible.current) {
-        setPhoto(selected);
-        captureAnalytics(ANALYTICS_EVENTS.receiptImageSelected, {
-          source: "gallery",
-        });
-      }
-    } catch {
-      setError("Finn could not open that photo. Please try another image.");
+    setCameraReady(false);
+    setTorch(false);
+    setSelectingFromGallery(true);
+    if (Platform.OS === "web") {
+      // Browsers require the picker to open synchronously from the user action.
+      void launchGallery(captureSession.current);
     }
   };
 
@@ -261,22 +299,26 @@ export function ReceiptCameraSheet({
                 />
               ) : permission?.granted ? (
                 <View style={styles.cameraStage}>
-                  <CameraView
-                    active={visible}
-                    animateShutter
-                    enableTorch={torch}
-                    facing={facing}
-                    mode="picture"
-                    onCameraReady={() => setCameraReady(true)}
-                    onMountError={(event) => setError(event.message)}
-                    ref={camera}
-                    responsiveOrientationWhenOrientationLocked
-                    style={[StyleSheet.absoluteFill, styles.cameraPreview]}
-                  />
-                  {!cameraReady && (
+                  {visible && !selectingFromGallery && (
+                    <CameraView
+                      active
+                      animateShutter
+                      enableTorch={torch}
+                      facing={facing}
+                      mode="picture"
+                      onCameraReady={() => setCameraReady(true)}
+                      onMountError={(event) => setError(event.message)}
+                      ref={camera}
+                      responsiveOrientationWhenOrientationLocked
+                      style={[StyleSheet.absoluteFill, styles.cameraPreview]}
+                    />
+                  )}
+                  {visible && (!cameraReady || selectingFromGallery) && (
                     <View style={styles.startingCamera}>
                       <ActivityIndicator color="#FFFFFF" size="small" />
-                      <Text style={styles.startingText}>Starting camera…</Text>
+                      <Text style={styles.startingText}>
+                        {selectingFromGallery ? "Opening photos…" : "Starting camera…"}
+                      </Text>
                     </View>
                   )}
                   {!!error && (
@@ -284,23 +326,25 @@ export function ReceiptCameraSheet({
                       <Text style={styles.errorText}>{error}</Text>
                     </View>
                   )}
-                  <CameraControls
-                    cameraReady={cameraReady}
-                    capturing={capturing}
-                    facing={facing}
-                    torch={torch}
-                    onCapture={() => void takePhoto()}
-                    onClose={close}
-                    onFlip={() => {
-                      setCameraReady(false);
-                      setTorch(false);
-                      setFacing((current) =>
-                        current === "back" ? "front" : "back",
-                      );
-                    }}
-                    onGallery={() => void pickFromGallery()}
-                    onToggleTorch={() => setTorch((current) => !current)}
-                  />
+                  {visible && !selectingFromGallery && (
+                    <CameraControls
+                      cameraReady={cameraReady}
+                      capturing={capturing}
+                      facing={facing}
+                      torch={torch}
+                      onCapture={() => void takePhoto()}
+                      onClose={close}
+                      onFlip={() => {
+                        setCameraReady(false);
+                        setTorch(false);
+                        setFacing((current) =>
+                          current === "back" ? "front" : "back",
+                        );
+                      }}
+                      onGallery={pickFromGallery}
+                      onToggleTorch={() => setTorch((current) => !current)}
+                    />
+                  )}
                 </View>
               ) : (
                 <PermissionState
@@ -309,7 +353,7 @@ export function ReceiptCameraSheet({
                   loading={!permission || requestingPermission}
                   onAllow={() => void askAgain()}
                   onClose={close}
-                  onGallery={() => void pickFromGallery()}
+                  onGallery={pickFromGallery}
                 />
               )}
             </ContentFade>

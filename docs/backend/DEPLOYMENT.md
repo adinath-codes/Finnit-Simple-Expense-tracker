@@ -53,6 +53,20 @@ REVENUECAT_ENTITLEMENT_ID=premium
 REVENUECAT_PROJECT_ID=proj_your_revenuecat_project_id
 REVENUECAT_ENTITLEMENT_RESOURCE_ID=entl_your_entitlement_resource_id
 REVENUECAT_WEBHOOK_AUTHORIZATION=Bearer your-random-webhook-secret
+# Sign in with Apple account deletion. Use the app bundle ID as the client ID.
+APPLE_CLIENT_ID=com.finnit.app
+APPLE_TEAM_ID=your_apple_developer_team_id
+APPLE_KEY_ID=your_sign_in_with_apple_key_id
+APPLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nyour_p8_key\n-----END PRIVATE KEY-----"
+# Support notifications. These values are server-only and must never use an
+# EXPO_PUBLIC_ prefix.
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USERNAME=your-smtp-user
+SMTP_PASSWORD=your-smtp-app-password
+SMTP_FROM_EMAIL=support@example.com
+SMTP_FROM_NAME="Finn it customer support"
+SMTP_NOTIFICATION_EMAIL=support@example.com
 # A URL for the dedicated finn_ask_reader login. Provision its password outside
 # migrations and use the session-pooler host with TLS.
 FINN_ASK_READ_DB_URL=postgresql://finn_ask_reader.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres?sslmode=require
@@ -86,6 +100,19 @@ Supabase injects `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEYS` and
 with fallback to legacy injected anon/service-role keys. Those admin credentials
 never belong in Expo or committed examples.
 
+The four `APPLE_*` secrets let `delete-account` exchange a fresh native Apple
+authorization code and revoke the resulting refresh token before deleting or
+scheduling deletion for an Apple-authenticated account. Create the Sign in with
+Apple key in the Apple Developer portal, download its `.p8` file once, and keep
+that private key only in Supabase secrets. `APPLE_CLIENT_ID` must exactly match
+the native app bundle identifier used for the authorization request.
+
+The `SMTP_*` secrets are used only by the authenticated support Edge Functions.
+Settings contact requests, quota-review escalations, and crash complaints send
+an account reference (plus the Sentry event ID for a crash), never journal text,
+receipt data, amounts, or search content. For Gmail, use an app password rather
+than the account's primary password and rotate it if it is ever exposed.
+
 ## 2. Deploy the database, secrets, and functions
 
 Run these yourself from the repository root, replacing `YOUR_FINN_PROJECT_REF`:
@@ -95,7 +122,7 @@ npx supabase login
 npx supabase link --project-ref YOUR_FINN_PROJECT_REF
 npx supabase db push
 npx supabase secrets set --project-ref YOUR_FINN_PROJECT_REF --env-file .env.server
-npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review delete-account scan-receipt refresh-entitlement revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
+npx supabase functions deploy parse-entry correct-entry apply-preset ask-money ask-sql request-quota-review support-email delete-account scan-receipt refresh-entitlement revenuecat-webhook --project-ref YOUR_FINN_PROJECT_REF
 npx supabase functions delete redeem-testing-code --project-ref YOUR_FINN_PROJECT_REF
 ```
 
@@ -135,6 +162,9 @@ schema types in `src/lib/supabase/generated.types.ts` were generated from that
 deployed schema. No native client release is implied by these server steps.
 The Ask Finn v3 migration chain and the `ask-money` then `ask-sql` Edge Function
 bundles were deployed to the linked production project on September 27, 2026.
+The SMTP secrets, `support-email`, and SMTP-enabled `request-quota-review`
+bundles were deployed on September 29, 2026; Gmail accepted the direct delivery
+smoke test with no rejected recipient.
 
 Premium functions read the private local entitlement snapshot and never call
 RevenueCat on the capture path. `refresh-entitlement` securely reconciles the

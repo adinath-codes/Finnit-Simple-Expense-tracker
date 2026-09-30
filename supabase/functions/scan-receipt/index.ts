@@ -6,6 +6,7 @@ import {
   env,
   metric,
   positiveEnv,
+  requireAiConsent,
   requirePremium,
   requireQuota,
   reserve,
@@ -177,6 +178,7 @@ Deno.serve(async (request) => {
     }
     const ctx = await authenticate(request);
     await requirePremium(ctx);
+    await requireAiConsent(ctx);
     const form = await request.formData();
     const rawRequest = form.get("request");
     if (typeof rawRequest !== "string") throw new ApiError(400, "receipt_request_required");

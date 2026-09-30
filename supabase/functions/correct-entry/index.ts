@@ -2,11 +2,13 @@ import { ApiError, capture, extraction, object, text, uuid } from "../_shared/va
 import { normalize } from "../_shared/text.ts";
 import {
   enrich,
+  CORRECTION_PROMPT_VERSION,
   correctionInputHash,
   EXTRACTION_PROMPT_VERSION,
   EXTRACTION_SCHEMA_VERSION,
   extractionInputHash,
   geminiModel,
+  resolveAbsoluteAmountCorrection,
   resolveRelativeAmountCorrection,
 } from "../_shared/gemini.ts";
 import { withApproximatePlace } from "../_shared/entry-context.ts";
@@ -155,7 +157,7 @@ serve(async (body, ctx) => {
       p_entry_revision: revision,
       p_input_hash: inputHash,
       p_schema_version: EXTRACTION_SCHEMA_VERSION,
-      p_prompt_version: EXTRACTION_PROMPT_VERSION,
+      p_prompt_version: CORRECTION_PROMPT_VERSION,
       p_model_version: model,
     });
     if (claim === "in_progress") throw new ApiError(503, "ai_in_progress");
@@ -188,16 +190,16 @@ serve(async (body, ctx) => {
         candidates.categories.map((category) => category.id),
         candidates.merchants.map((merchant) => merchant.id),
       );
-      const relativeAmount = resolveRelativeAmountCorrection(
+      const resolvedAmount = resolveRelativeAmountCorrection(
         instruction,
         currentExtraction,
-      );
+      ) ?? resolveAbsoluteAmountCorrection(instruction, currentExtraction);
       const correctionInput = {
         ...originalInput,
         raw_text: [
           current.raw_text,
           `User correction: ${instruction}`,
-          relativeAmount?.evidence,
+          resolvedAmount?.evidence,
         ].filter(Boolean).join("\n"),
       };
       const { result, modelResult } = await enrich(
@@ -207,6 +209,7 @@ serve(async (body, ctx) => {
         {
           correctionInstruction: instruction,
           currentExtraction,
+          ...(resolvedAmount ? { resolvedAmountCorrection: resolvedAmount } : {}),
         },
       );
       const interpreted = extraction(
@@ -230,7 +233,7 @@ serve(async (body, ctx) => {
           model,
           model_role: "extraction",
           schema_version: EXTRACTION_SCHEMA_VERSION,
-          prompt_version: EXTRACTION_PROMPT_VERSION,
+          prompt_version: CORRECTION_PROMPT_VERSION,
           input_hash: inputHash,
           instruction,
           model_result: modelResult,

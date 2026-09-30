@@ -12,6 +12,7 @@ import type {
 import { capture } from "../../../../supabase/functions/_shared/validation";
 import { pendingExtraction } from "../../../../supabase/functions/_shared/pending-entry";
 import { applyJournalEntryDeletion } from "@/features/journal/services/journal-edit-flow";
+import { requireGrantedAiConsent } from "@/features/ai-consent/services/ai-consent-service";
 
 /** Explicit edits use an immutable request ID and a known remote revision. A
  * conflict is kept in the outbox for review, never silently force-overwritten. */
@@ -57,6 +58,7 @@ export async function correctJournalEntry(
 export async function reparseJournalEntry(value: CaptureInput) {
   const input = capture(value);
   const userId = await currentUserId();
+  await requireGrantedAiConsent(userId);
   await changeJournalCache(userId, (cache) => {
     const entry = cache.entries[input.id];
     if (!entry?.remote || cache.jobs.some((job) => job.entryId === input.id))
@@ -93,6 +95,7 @@ export async function correctJournalEntryWithFinn(id: string, value: string) {
     throw new Error("Tell Finn what to change in 500 characters or fewer.");
   }
   const userId = await currentUserId();
+  await requireGrantedAiConsent(userId);
   await changeJournalCache(userId, (cache) => {
     const entry = cache.entries[id];
     if (!entry?.remote) {

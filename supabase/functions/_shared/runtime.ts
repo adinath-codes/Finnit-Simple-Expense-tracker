@@ -4,6 +4,11 @@ import {
 } from "npm:@supabase/supabase-js@2.116.0";
 import { ApiError, object } from "./validation.ts";
 import type { Catalog } from "./contracts.ts";
+import {
+  AI_CONSENT_DATA_CATEGORIES,
+  AI_CONSENT_POLICY_VERSION,
+  AI_CONSENT_PROVIDER,
+} from "./ai-consent-contract.ts";
 
 export type Context = {
   userId: string;
@@ -68,6 +73,30 @@ export async function requirePremium(ctx: Context) {
     p_user: ctx.userId,
   });
   if (!active) throw new ApiError(402, "premium_required");
+}
+
+/** Fail closed immediately before any request can transmit user data to Gemini. */
+export async function requireAiConsent(ctx: Context) {
+  const { data, error } = await ctx.admin
+    .from("ai_consent_records")
+    .select("decision,provider,data_categories")
+    .eq("user_id", ctx.userId)
+    .eq("policy_version", AI_CONSENT_POLICY_VERSION)
+    .maybeSingle();
+  if (error) throw new ApiError(503, "ai_consent_unavailable");
+  const categories = Array.isArray(data?.data_categories)
+    ? data.data_categories
+    : [];
+  const disclosureMatches =
+    categories.length === AI_CONSENT_DATA_CATEGORIES.length &&
+    AI_CONSENT_DATA_CATEGORIES.every((category) => categories.includes(category));
+  if (
+    data?.decision !== "granted" ||
+    data.provider !== AI_CONSENT_PROVIDER ||
+    !disclosureMatches
+  ) {
+    throw new ApiError(403, "ai_consent_required");
+  }
 }
 async function readBody(request: Request) {
   if (!request.headers.get("content-type")?.includes("application/json"))

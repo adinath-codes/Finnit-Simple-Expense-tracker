@@ -13,7 +13,6 @@ import { Icon } from "@/components/ui/icon";
 import { Finn, JournalType } from "@/constants/theme";
 import { subscribeAiQuotaReached } from "../services/quota-events";
 import {
-  openQuotaSupportEmail,
   requestQuotaReview,
 } from "../services/quota-support";
 import {
@@ -24,6 +23,7 @@ import {
 export function QuotaReachedModalHost() {
   const [visible, setVisible] = useState(false);
   const [contacting, setContacting] = useState(false);
+  const [contacted, setContacted] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
@@ -32,6 +32,7 @@ export function QuotaReachedModalHost() {
     () =>
       subscribeAiQuotaReached(() => {
         setNotice(null);
+        setContacted(false);
         setVisible(true);
       }),
     [],
@@ -45,23 +46,13 @@ export function QuotaReachedModalHost() {
     if (contacting) return;
     setContacting(true);
     setNotice(null);
-    let recorded = false;
     try {
       await requestQuotaReview();
-      recorded = true;
       captureAnalytics(ANALYTICS_EVENTS.quotaReviewRequested);
+      setContacted(true);
+      setNotice("Support has been emailed. We’ll review the account activity.");
     } catch {
-      // The mail composer remains a useful fallback if the alert cannot sync.
-    }
-    try {
-      await openQuotaSupportEmail();
-      setVisible(false);
-    } catch {
-      setNotice(
-        recorded
-          ? "Your request is with us. We’ll review the account activity."
-          : "We couldn’t open email. Please try again when you’re connected.",
-      );
+      setNotice("We couldn’t contact support. Please try again when you’re connected.");
     } finally {
       setContacting(false);
     }
@@ -104,12 +95,16 @@ export function QuotaReachedModalHost() {
           )}
           <Button
             label="Contact support"
-            disabled={contacting}
+            disabled={contacting || contacted}
             onPress={() => void contactSupport()}
             style={styles.primaryButton}
           >
             <Text style={styles.primaryButtonText}>
-              {contacting ? "Contacting support…" : "Contact support"}
+              {contacting
+                ? "Contacting support…"
+                : contacted
+                  ? "Support contacted"
+                  : "Contact support"}
             </Text>
           </Button>
           <Button label="Maybe later" disabled={contacting} onPress={close}>

@@ -1,7 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-/** Supabase's documented React Native adapter. Use OS/device security for local data. */
-export const sessionStorage = {
-  getItem: (key: string) => AsyncStorage.getItem(key),
-  setItem: (key: string, value: string) => AsyncStorage.setItem(key, value),
-  removeItem: (key: string) => AsyncStorage.removeItem(key),
-};
+// TypeScript/non-native fallback. Metro resolves session-storage.native.ts on
+// iOS/Android and session-storage.web.ts for the web bundle.
+export { sessionStorage } from "./session-storage.web";

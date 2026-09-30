@@ -1,5 +1,7 @@
-import type { Extraction } from "../../../lib/supabase/database.types.ts";
-import type { ReceiptLine } from "../../../lib/supabase/database.types.ts";
+import type {
+  Extraction,
+  ReceiptLine,
+} from "../../../lib/supabase/database.types.ts";
 import type { EntryAllocationRow, EntryAmountTerm } from "../../../types/domain.ts";
 import { CURRENCIES } from "../../../../supabase/functions/_shared/contracts.ts";
 import { currencySymbol, moneyValue } from "../../../utils/currency.ts";

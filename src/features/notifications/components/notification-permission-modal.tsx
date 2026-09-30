@@ -66,12 +66,12 @@ export function NotificationPermissionModal({
           {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
           <Button
             disabled={busy}
-            label="Let Finn remind me"
+            label="Let Finnit remind me"
             onPress={onAllow}
             style={styles.primaryButton}
           >
             <Text style={styles.primaryButtonText}>
-              {busy ? "Asking your phone…" : "Let Finn remind me"}
+              {busy ? "Asking your phone…" : "Let Finnit remind me"}
             </Text>
           </Button>
           <Button disabled={busy} label="Not now" onPress={close}>

@@ -890,7 +890,7 @@ function StoryFooter({
     <View style={styles.storyFooter}>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <StoryProgressButton
-        disabled={saving || !ready}
+        disabled={saving}
         durationMs={readyDelay}
         label={buttonLabel}
         progressKey={progressKey}
@@ -963,7 +963,7 @@ function StoryProgressButton({
 
   return (
     <ScalePressable
-      accessibilityLabel={ready ? label : `${label}. Getting ready`}
+      accessibilityLabel={label}
       disabled={disabled}
       onPress={onPress}
     >

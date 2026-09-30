@@ -1,8 +1,13 @@
 import { AppState } from "react-native";
 import { File } from "expo-file-system";
+import * as Network from "expo-network";
 import { randomUUID } from "expo-crypto";
 import { fetch as expoFetch } from "expo/fetch";
-import { BackendError, callBackend } from "@/lib/ai/api";
+import {
+  BackendError,
+  callBackend,
+  refreshPremiumEntitlement,
+} from "@/lib/ai/api";
 import {
   EntryEventDecoder,
   legacyEntryResponse,
@@ -40,12 +45,21 @@ import {
   captureAnalytics,
 } from "@/lib/analytics/analytics";
 import { followDeletedEntryAfterSync } from "@/features/journal/services/journal-edit-flow";
+import { hasGrantedAiConsent } from "@/features/ai-consent/services/ai-consent-service";
+import {
+  exhaustedAiValidationRetries,
+  jobRequiresAi,
+} from "./sync-retry-policy";
 
 type SyncLane = "text" | "receipt" | "account";
 const SYNC_LANES: SyncLane[] = ["text", "receipt", "account"];
 const running = new Map<string, Promise<void>>();
 const preparing = new Map<string, Promise<void>>();
 const CONFLICT_CODE = "revision_or_idempotency_conflict";
+
+function canReachBackend(state: Network.NetworkState) {
+  return state.isConnected !== false && state.isInternetReachable !== false;
+}
 
 function laneKey(userId: string, lane: SyncLane) {
   return `${userId}:${lane}`;
@@ -78,7 +92,11 @@ async function backendSession(userId: string) {
   return session;
 }
 
-async function parseTextEntry(job: SyncJob, userId: string): Promise<SavedEntry> {
+async function parseTextEntry(
+  job: SyncJob,
+  userId: string,
+  entitlementRefreshed = false,
+): Promise<SavedEntry> {
   const session = await backendSession(userId);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
@@ -101,9 +119,16 @@ async function parseTextEntry(job: SyncJob, userId: string): Promise<SavedEntry>
     if (!response.ok) {
       let body: { error?: { code?: string; retryable?: boolean } } = {};
       try { body = await response.json(); } catch { /* invalid response */ }
-      if (body.error?.code === "ai_quota_exhausted") notifyAiQuotaReached();
+      const code = body.error?.code ?? "entry_parse_failed";
+      if (code === "ai_quota_exhausted") notifyAiQuotaReached();
+      if (code === "premium_required" && !entitlementRefreshed) {
+        const refreshed = await refreshPremiumEntitlement(userId);
+        if (refreshed.entitlement.active) {
+          return parseTextEntry(job, userId, true);
+        }
+      }
       throw new BackendError(
-        body.error?.code ?? "entry_parse_failed",
+        code,
         response.status,
         body.error?.retryable ?? response.status >= 500,
       );
@@ -350,11 +375,13 @@ async function runLane(userId: string, lane: SyncLane) {
     while (true) {
       if ((await currentUserId()) !== userId) return;
       const cache = await readJournalCache(userId);
+      const aiAllowed = await hasGrantedAiConsent(userId);
       // Per-entry ordering remains global even though independent resource
       // lanes now make progress concurrently.
       const job = cache.jobs.find(
         (candidate, index) =>
           laneFor(candidate, cache) === lane &&
+          (aiAllowed || !jobRequiresAi(candidate)) &&
           candidate.state === "pending" &&
           candidate.nextAttemptAt <= Date.now() &&
           !cache.jobs.slice(0, index).some(
@@ -492,7 +519,12 @@ async function runLane(userId: string, lane: SyncLane) {
         await invalidateRefresh(userId, "journal");
         recordSyncSuccess();
       } catch (error) {
-        const permanent = error instanceof BackendError && !error.retryable;
+        const attemptsAfterFailure = job.attempts + 1;
+        const validationRetriesExhausted = error instanceof BackendError &&
+          error.retryable &&
+          exhaustedAiValidationRetries(job, error.code, attemptsAfterFailure);
+        const permanent = error instanceof BackendError &&
+          (!error.retryable || validationRetriesExhausted);
         const conflict = error instanceof BackendError &&
           error.code === CONFLICT_CODE;
         recordOperation("sync.job", conflict || permanent ? "failed" : "deferred", {
@@ -535,7 +567,7 @@ async function runLane(userId: string, lane: SyncLane) {
         }, (state) => {
           const queued = state.jobs.find((j) => j.id === job.id);
           if (!queued) return;
-          queued.attempts += 1;
+          queued.attempts = attemptsAfterFailure;
           queued.state = conflict || permanent ? "blocked" : "pending";
           queued.error =
             error instanceof BackendError
@@ -584,6 +616,8 @@ async function runLane(userId: string, lane: SyncLane) {
 
 /** Run independent text, receipt and account-metadata queues concurrently. */
 export async function syncJournal(userId: string): Promise<void> {
+  const network = await Network.getNetworkStateAsync();
+  if (!canReachBackend(network)) return;
   await prepareQueue(userId);
   await Promise.all(SYNC_LANES.map((lane) => runLane(userId, lane)));
 }
@@ -608,6 +642,12 @@ export function startJournalSync() {
   } = db.auth.onAuthStateChange(() => {
     setTimeout(tick, 0);
   });
+  let connected: boolean | undefined;
+  const network = Network.addNetworkStateListener((state) => {
+    const next = canReachBackend(state);
+    if (next && connected !== true && AppState.currentState === "active") tick();
+    connected = next;
+  });
   const timer = setInterval(() => {
     if (AppState.currentState === "active") tick();
   }, 30000);
@@ -615,6 +655,7 @@ export function startJournalSync() {
   return () => {
     clearInterval(timer);
     listener.remove();
+    network.remove();
     subscription.unsubscribe();
     db.auth.stopAutoRefresh();
   };

@@ -157,6 +157,7 @@ export type PresetSnapshot = {
 export type PresetCaptureInput = {
   input: CaptureInput;
   preset: PresetSnapshot;
+  source?: "preset" | "manual";
 };
 export type JournalSyncRequest = {
   afterRevision?: string;

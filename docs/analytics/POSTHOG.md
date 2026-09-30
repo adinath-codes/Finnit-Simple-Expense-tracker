@@ -26,6 +26,12 @@ The saved insight set covers:
 Charts are expected to be empty until a build configured with the PostHog
 environment variables sends its first event batch.
 
+The React Native client uses file-backed queue persistence, waits for persisted
+identity/opt-out state before manual app and screen events, and flushes through
+the SDK lifecycle. Queued events therefore survive ordinary offline periods and
+process restarts. Remote feature-flag fetching is disabled because Finn does not
+consume PostHog flags.
+
 ## Data contract
 
 Event names live in `src/lib/analytics/analytics.ts`. The contract uses
@@ -66,7 +72,7 @@ stored locally immediately. Migration
 `20260923100000_usage_analytics_preference.sql` adds the durable account-level
 preference so it follows the user across devices.
 
-Session replay is enabled for approximately 10% of opted-in sessions. Both the
+Session replay is enabled for approximately 10% of analytics-enabled sessions. Both the
 PostHog project and the client use a `0.1` sample rate. Finn's client replay
 configuration masks text inputs, images, and sandboxed views; disables touch
 capture, console logs, network telemetry, and rage-click collection; and

@@ -5,6 +5,15 @@ export type JournalReminderCopy = {
   body: string;
 };
 
+export type TrialReminderEntitlement = {
+  isActive: boolean;
+  periodType: string;
+  expirationDateMillis: number | null;
+};
+
+const TRIAL_REMINDER_LEAD_TIME_MS = 24 * 60 * 60 * 1_000;
+const MINIMUM_SCHEDULE_DELAY_MS = 1_000;
+
 const JOURNAL_REMINDER_COPY: readonly JournalReminderCopy[] = [
   {
     title: "Have you logged it, honey? ;)",
@@ -73,4 +82,31 @@ export function nextJournalReminderDates(
     date.setDate(first.getDate() + index);
     return date;
   });
+}
+
+/**
+ * Schedule at the start of the trial's final 24 hours. Accelerated store
+ * sandboxes and late app opens fall back to the midpoint of the time remaining
+ * so the reminder still arrives before expiry.
+ */
+export function trialExpiryReminderDate(
+  entitlement: TrialReminderEntitlement | null,
+  now = new Date(),
+) {
+  const expiresAt = entitlement?.expirationDateMillis;
+  if (
+    !entitlement?.isActive ||
+    entitlement.periodType.toUpperCase() !== "TRIAL" ||
+    !expiresAt ||
+    expiresAt <= now.getTime() + MINIMUM_SCHEDULE_DELAY_MS
+  ) {
+    return null;
+  }
+
+  const preferredTime = expiresAt - TRIAL_REMINDER_LEAD_TIME_MS;
+  if (preferredTime > now.getTime() + MINIMUM_SCHEDULE_DELAY_MS) {
+    return new Date(preferredTime);
+  }
+
+  return new Date(now.getTime() + Math.floor((expiresAt - now.getTime()) / 2));
 }

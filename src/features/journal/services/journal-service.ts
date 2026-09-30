@@ -24,6 +24,7 @@ import { refreshRemoteReceipts } from "@/features/camera/services/receipt-servic
 import { recordCacheMetric } from "@/lib/offline/cache-metrics";
 import { mergeRemoteEntry } from "./journal-sync-merge";
 import { notifyFirstJournalEntryLogged } from "@/features/notifications/services/entry-events";
+import { requireGrantedAiConsent } from "@/features/ai-consent/services/ai-consent-service";
 
 export function createCaptureInput(
   rawText: string,
@@ -45,6 +46,7 @@ export function createCaptureInput(
 export async function captureJournalNote(value: CaptureInput) {
   const input = capture(value);
   const userId = await currentUserId();
+  await requireGrantedAiConsent(userId);
   let firstJournalItem = false;
   const saved = await changeJournalCacheTargeted(userId, {
     entryIds: [input.id],
@@ -100,7 +102,7 @@ export async function capturePresetJournalNote(value: PresetCaptureInput) {
       Object.values(cache.receipts).every((receipt) => receipt.deleted);
     const local = {
       input,
-      extraction: presetExtraction(value.preset, input),
+      extraction: presetExtraction(value.preset, input, value.source),
       sync: "pending" as const,
     };
     cache.entries[input.id] = local;

@@ -23,6 +23,7 @@ import { Finn, JournalType } from "@/constants/theme";
 import { AppleMark, GoogleMark } from "@/features/auth/components/provider-marks";
 import {
   requestEmailOtp,
+  signInWithEmail,
   signInWithNativeApple,
   signInWithSocialProvider,
   verifyEmailOtp,
@@ -37,20 +38,25 @@ const RIGHT_PEEK = require("@/assets/images/auth/finn-peek-right.webp");
 
 function messageFor(error: unknown) {
   const message = error instanceof Error ? error.message : "Please try again.";
+  if (/invalid login credentials|invalid.*password|password.*incorrect/i.test(message))
+    return "That email or password is incorrect.";
   if (/token.*expired|expired.*token|invalid.*(otp|token)|otp.*invalid/i.test(message))
     return "That code is incorrect or expired. Check it and try again.";
   if (/rate limit|security purposes|seconds/i.test(message))
     return "Please wait a moment before requesting another code.";
   if (/error sending|unable to send|email.*not.*sent/i.test(message))
-    return "Finn couldn’t send the code. Check the email setup and try again.";
+    return "Finnit couldn’t send the code. Check the email setup and try again.";
   if (/provider is not enabled/i.test(message))
-    return "This sign-in provider still needs to be enabled in Finn’s Supabase project.";
+    return "This sign-in provider still needs to be enabled in Finnit’s Supabase project.";
   return message;
 }
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
+  const passwordInput = useRef<TextInput>(null);
   const [email, setEmail] = useState("");
+  const [emailMethod, setEmailMethod] = useState<"otp" | "password">("otp");
+  const [password, setPassword] = useState("");
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
   const [resendSeconds, setResendSeconds] = useState(0);
@@ -89,7 +95,7 @@ export default function AuthScreen() {
     captureAnalytics(ANALYTICS_EVENTS.signInBlocked, {
       reason: "legal_consent_required",
     });
-    showToast("To continue with Finn,", "warning", "Agree to the Privacy Policy and Terms.");
+    showToast("To continue with Finnit,", "warning", "Agree to the Privacy Policy and Terms.");
   };
 
   const run = async (key: string, action: () => Promise<unknown>) => {
@@ -189,6 +195,31 @@ export default function AuthScreen() {
     }
   };
 
+  const submitPassword = async () => {
+    if (!agreed) {
+      warnForConsent();
+      return;
+    }
+    if (busy) return;
+    await run("email", async () => {
+      if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+        throw new Error("Enter a valid email address.");
+      }
+      if (!password) throw new Error("Enter your password.");
+      return signInWithEmail(email, password);
+    });
+  };
+
+  const switchEmailMethod = (method: "otp" | "password") => {
+    if (busy) return;
+    setEmailMethod(method);
+    setPendingEmail(null);
+    setOtp("");
+    setPassword("");
+    setResendSeconds(0);
+    setToast(null);
+  };
+
   const changeEmail = () => {
     if (busy) return;
     setPendingEmail(null);
@@ -258,7 +289,7 @@ export default function AuthScreen() {
                 <View style={styles.divider} />
               </View>
 
-              {pendingEmail ? (
+              {pendingEmail && emailMethod === "otp" ? (
                 <>
                   <View style={styles.codeIntro}>
                     <Text style={styles.codeTitle}>Check your email</Text>
@@ -332,24 +363,82 @@ export default function AuthScreen() {
                     editable={!busy}
                     style={styles.input}
                     accessibilityLabel="Email address"
-                    returnKeyType="done"
-                    onSubmitEditing={() => void sendEmailCode()}
+                    returnKeyType={emailMethod === "password" ? "next" : "done"}
+                    onSubmitEditing={() => {
+                      if (emailMethod === "password") passwordInput.current?.focus();
+                      else void sendEmailCode();
+                    }}
                   />
-                  <Text style={styles.emailHint}>
-                    We’ll email a one-time code. New accounts become active only after verification.
-                  </Text>
-                  <View style={consentGated && styles.disabledButton}>
-                    <Button
-                      label="Continue with email"
-                      onPress={() => void sendEmailCode()}
-                      disabled={!!busy}
-                      style={styles.primaryButton}
-                    >
-                      <Text style={styles.primaryButtonText}>
-                        {busy === "email-send" ? "Sending code…" : "Continue with email"}
+                  {emailMethod === "password" ? (
+                    <>
+                      <TextInput
+                        ref={passwordInput}
+                        autoCapitalize="none"
+                        autoComplete="current-password"
+                        autoCorrect={false}
+                        textContentType="password"
+                        secureTextEntry
+                        placeholder="Password"
+                        placeholderTextColor={Finn.muted}
+                        value={password}
+                        onChangeText={setPassword}
+                        editable={!busy}
+                        style={styles.input}
+                        accessibilityLabel="Password"
+                        returnKeyType="go"
+                        onSubmitEditing={() => void submitPassword()}
+                      />
+                      <Text style={styles.emailHint}>
+                        Use the password for this account. No email code is required.
                       </Text>
-                    </Button>
-                  </View>
+                      <View style={consentGated && styles.disabledButton}>
+                        <Button
+                          label="Sign in with email and password"
+                          onPress={() => void submitPassword()}
+                          disabled={!!busy}
+                          style={styles.primaryButton}
+                        >
+                          <Text style={styles.primaryButtonText}>
+                            {busy === "email" ? "Signing in…" : "Sign in"}
+                          </Text>
+                        </Button>
+                      </View>
+                      <Button
+                        label="Use an email code instead"
+                        onPress={() => switchEmailMethod("otp")}
+                        disabled={!!busy}
+                        style={styles.emailMethodButton}
+                      >
+                        <Text style={styles.emailActionText}>Use an email code instead</Text>
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.emailHint}>
+                        We’ll email a one-time code. New accounts become active only after verification.
+                      </Text>
+                      <View style={consentGated && styles.disabledButton}>
+                        <Button
+                          label="Continue with email"
+                          onPress={() => void sendEmailCode()}
+                          disabled={!!busy}
+                          style={styles.primaryButton}
+                        >
+                          <Text style={styles.primaryButtonText}>
+                            {busy === "email-send" ? "Sending code…" : "Continue with email"}
+                          </Text>
+                        </Button>
+                      </View>
+                      <Button
+                        label="Use a password instead"
+                        onPress={() => switchEmailMethod("password")}
+                        disabled={!!busy}
+                        style={styles.emailMethodButton}
+                      >
+                        <Text style={styles.emailActionText}>Use a password instead</Text>
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
 
@@ -370,7 +459,7 @@ export default function AuthScreen() {
                 {agreed ? <Icon name="check" size={14} color="#FFFFFF" animation={false} /> : null}
               </Button>
               <Text style={styles.consentText}>
-                I agree to Finn’s{" "}
+                I agree to Finnit’s{" "}
                 <Text
                   accessibilityRole="link"
                   onPress={() => router.push("/legal/privacy")}
@@ -803,6 +892,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   textButton: { minHeight: 30, paddingHorizontal: 3 },
+  emailMethodButton: { alignSelf: "center", minHeight: 30, paddingHorizontal: 8 },
   emailActionText: {
     fontFamily: JournalType.medium,
     fontSize: 12,
