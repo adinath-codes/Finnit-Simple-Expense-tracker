@@ -7,12 +7,12 @@
 <img src="assets/logo/app-icon.png" width="112" alt="Finnit app icon" />
 <br />
 <a href="#what-finnit-does">
-  <img src="https://readme-typing-svg.demolab.com?font=Krona+One&size=21&duration=2200&pause=850&color=20C878&center=true&vCenter=true&width=600&lines=Write+what+happened.;Scan+the+receipt.;Ask+your+money.;Finnit+organizes+the+rest." alt="Write what happened. Scan the receipt. Ask your money. Finnit organizes the rest." />
+  <img src="https://readme-typing-svg.demolab.com?font=Krona+One&size=21&duration=2200&pause=850&color=20C878&center=true&vCenter=true&width=600&lines=Where+did+your+money+go%3F;Write+it+in+your+own+words.;Finnit+keeps+the+context.;Remember+it+when+it+matters." alt="Remember exactly where your money went—in your own words." />
 </a>
 
 <p>
-  <b>Finnit is a financial journal for people who never stick with expense trackers.</b><br />
-  Write one natural sentence, scan a receipt, or ask a question. Finnit quietly turns the details into a searchable money memory.
+  <b>Finnit is a money-memory app—not an expense tracker.</b><br />
+  Write what happened in your own words. Finnit keeps the exact note, organizes the useful details around it, and helps you remember where your money went.
 </p>
 
 <p>
@@ -47,6 +47,10 @@
 Traditional expense apps ask people to think like accountants: pick a type, enter an amount,
 choose a category, set a date, add a merchant, and repeat. That is precise, but it is also why
 many people stop tracking.
+
+Finnit is not another expense tracker. Tracking is a supporting capability; remembering is the
+product. The user's exact words remain the primary record, while structured details make those
+words easier to understand and find later.
 
 Finnit starts from a simpler question:
 
@@ -104,11 +108,11 @@ on its target device.
 
 ## What Finnit does
 
-### ✍️ Capture money like a note
+### ✍️ Remember it in your own words
 
 One sentence can contain multiple expenses, dates, people, splits, places, purposes, and
-currencies. Finnit preserves the raw note and the structured result, so the human memory is
-never replaced by a machine interpretation.
+currencies. Finnit keeps the exact original note as the memory and organizes useful structure
+around it, so a machine interpretation never replaces what the person actually said.
 
 ### 🧾 Turn a receipt into memory
 

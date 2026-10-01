@@ -6,6 +6,8 @@
 
 > September 22, 2026 scope update: Location capture and iPhone Back Tap quick add are retired. Their saved opt-ins are turned off, and the old quick-add link returns to the journal. Historical notes may retain previously saved place context.
 
+> September 30, 2026 brand direction: Finn is not an expense-tracking app. It is a money-memory app that helps people remember exactly where their money went—in their own words. The original note is the primary record; amounts, categories, summaries, and AI-organized structure make that memory useful without replacing it.
+
 ---
 
 ## Part I — Core Product Idea
@@ -16,11 +18,13 @@ You are working on a consumer personal-finance app whose core idea is:
 
 This is NOT primarily a budgeting app.
 
+This is NOT an expense tracker.
+
 This is NOT a traditional expense manager with AI added on top.
 
 This is NOT another finance dashboard full of graphs, budgets, accounts, forms, and configuration.
 
-The product is a **financial journal / financial memory layer**.
+The product is a **personal money memory / notes-like financial journal**.
 
 The user should be able to describe what happened with their money in the same natural way they would write something in Apple Notes, Messages, or a personal journal.
 
@@ -31,6 +35,16 @@ The fundamental product loop is:
 **Capture → Understand → Organize → Remember → Search**
 
 Everything we build should support this loop.
+
+## Rebrand product rules
+
+The money-memory position must be true in the experience, not only in marketing:
+
+1. **The user's exact words are the primary record.** Finn must preserve them unless the user explicitly edits or deletes them.
+2. **The original note stays visible.** Journal entries, details, summaries, and future search should make it easy to return to what the user actually wrote.
+3. **Structure is secondary and assistive.** Amounts, categories, merchants, dates, people, and AI summaries organize the memory; they do not replace it.
+4. **Recall is the outcome.** Screens should help answer “Where did my money go, and what was happening?” rather than optimize for transaction administration alone.
+5. **Public product surfaces use the new category.** Onboarding, About copy, store listings, notifications, and launch assets must not introduce Finn as an expense tracker.
 
 ---
 
@@ -101,15 +115,18 @@ rather than:
 
 Our positioning should remain close to:
 
+- “Remember where your money went—in your own words.”
+- “Write what happened. Finn remembers it with you.”
+- “Your words. Your money. The context stays.”
+- “Write it while it is fresh. Remember it when it matters.”
 - “Notes for your money.”
-- “Write what happened. We organize the rest.”
-- “Track money like taking notes.”
-- “Your financial journal.”
-- “Remember your financial life.”
 
-Do not design the product around the phrase:
+Do not design or market the product around either phrase:
 
-“AI expense tracker.”
+- “expense tracker”;
+- “AI expense tracker.”
+
+Expense capture is a capability, not the product category. Organized transactions are a retrieval aid, not the primary human record.
 
 AI is infrastructure.
 

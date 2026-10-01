@@ -13,7 +13,7 @@ export function JournalEmptyPrompt({
 }) {
   const symbol = currencySymbol(currency);
   const phrases = useMemo(() => [
-    "Write what you spent…",
+    "Write where your money went…",
     `2 coffees from Starbucks, ${symbol}360`,
     `Uber back home, split ${symbol}432 with chris`,
   ], [symbol]);

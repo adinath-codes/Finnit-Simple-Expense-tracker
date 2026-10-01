@@ -8,6 +8,6 @@
       "@/assets/*": ["./assets/*"]
     }
   },
-  "exclude": ["supabase/functions", "supabase/tests", "node_modules"],
+  "exclude": ["supabase/functions", "supabase/tests", "demo-web", "node_modules"],
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }

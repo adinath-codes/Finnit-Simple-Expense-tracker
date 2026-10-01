@@ -8,8 +8,8 @@ export const onboardingSteps: OnboardingStep[] = [
     kind: "story",
     chapter: 1,
     scene: "hello",
-    copy: "Meet Finn. But this story belongs to you—and to the little money moments that disappear inside a busy day.",
-    highlightedWords: ["you", "disappear"],
+    copy: "Meet Finn: a memory for exactly where your money went, told in your own words. This story belongs to you—and to the little money moments that disappear inside a busy day.",
+    highlightedWords: ["your own words", "disappear"],
     continueLabel: "Begin your story",
   },
   {
@@ -119,8 +119,8 @@ export const onboardingSteps: OnboardingStep[] = [
     kind: "story",
     chapter: 4,
     scene: "natural-note",
-    copy: "Then you save one honest line: “Coffee 180 with Maya.” Finn finds the amount, person, and category—without a form. What else could one line remember?",
-    highlightedWords: ["honest", "remember"],
+    copy: "Then you save one honest line: “Coffee 180 with Maya.” Those exact words stay while Finn organizes the amount, person, and category around them. What else could one line remember?",
+    highlightedWords: ["exact words", "remember"],
     continueLabel: "Try another clue",
   },
   {
@@ -259,9 +259,9 @@ export const onboardingSteps: OnboardingStep[] = [
     id: "experience-invite",
     kind: "invite",
     chapter: 7,
-    title: "Ready to write the first line of your money story?",
+    title: "Ready to remember where your money went?",
     subtitle:
-      "Tell Finn what happened once. Your note becomes context you can return to, not another number to decode.",
+      "Tell Finn what happened in your own words. Your exact note becomes context you can return to, not another number to decode.",
     continueLabel: "Start your journal",
   },
 ];

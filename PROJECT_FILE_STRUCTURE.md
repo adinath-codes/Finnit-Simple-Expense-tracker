@@ -15,6 +15,35 @@
 
 Do not load both canonical product documents for routine maintenance. Search their headings and read only the sections relevant to the task.
 
+## Browser product-video rig: `demo-web/`
+
+`demo-web` is an isolated Expo web build that executes the production root
+layout and route modules from `src/app`. It does not clone Finn's interface.
+Metro swaps only backend-facing providers and services for local demo adapters,
+so future production UI and motion changes are inherited on the next demo build
+without entering the production application bundle.
+
+| Path | Ownership |
+| ---- | --------- |
+| `demo-web/app/` | Thin production route bridges plus the demo-only `/studio` control surface; Calendar, Entry Details, and Settings add only their missing web sheet presentation. |
+| `demo-web/src/demo/studio/` | iPhone/Dynamic Island frame, frame-only recording mode, and editable demo controls. |
+| `demo-web/src/demo/components/web-form-sheet-route.tsx` | Demo-only web presenter that keeps production Calendar, Entry Details, and Settings content in an iOS-style bottom sheet over the production Journal screen. |
+| `demo-web/src/demo/components/ios-demo-keyboard.tsx` | Interactive browser-only iOS keyboard for the exact production text inputs, including selection-aware typing, Shift/Caps Lock, number/symbol/emoji modes, Return actions, and deterministic demo-safe dictation feedback. |
+| `demo-web/src/demo/components/ios-demo-keyboard.css` | Demo-only iOS keyboard geometry, key states, accessibility focus treatment, and home-indicator styling. |
+| `demo-web/src/demo/components/motion.tsx` | Demo-only Journal-row adapter that removes Reanimated's web remount entrance while leaving every other production motion module untouched. |
+| `demo-web/src/demo/providers/` | Local authenticated/premium/AI-consented app state adapters; the journal adapter wraps the IndexedDB workspace. |
+| `demo-web/src/demo/hooks/use-search.ts` | Ask Finn proxy hook with configurable local delay, predetermined answers, source entries, and failure state. |
+| `demo-web/src/demo/demo-web.css` | Narrow browser-only compatibility rules for the production app surface, including the journal paper's caret-without-box focus treatment. |
+| `demo-web/src/react-dom.d.ts` | Minimal demo-workspace type declaration for rendering the keyboard portal outside the production root. |
+| `demo-web/src/demo/services/` | No-op analytics/observability adapters plus local receipt and summary services. |
+| `demo-web/src/demo/database.ts` | Browser IndexedDB workspace persistence and cross-frame synchronization. |
+| `demo-web/src/demo/backend.ts` | Deterministic local journal parsing rules and configurable artificial latency. |
+| `demo-web/src/demo/network-guard.ts` | Rejects cross-origin runtime requests from the demo app. |
+| `demo-web/src/demo/default-workspace.ts` | Seed entries, scripted Ask Finn answers, journal rules, receipt output, and timing defaults. |
+| `demo-web/metro.config.js` | Imports production source/assets and redirects only data-facing module boundaries to demo adapters. |
+| `demo-web/package.json` | Separate demo-only dependencies and development/export/clean-preview commands; it is not referenced by the production package. |
+| `demo-web/README.md` | Run, recording, persistence, and isolation instructions for the product-video rig. |
+
 ## iOS-first motion — September 19, 2026
 
 Consult `docs/decisions/motion-platform-support.md` for the persistent per-effect iOS/Android support matrix and verification status. Apple page zoom and SF Symbol effects are iOS-only; shared Reanimated animations also run on Android. No automated or device validation was performed for this motion pass, per user instruction.
