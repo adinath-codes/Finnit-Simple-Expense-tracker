@@ -53,7 +53,7 @@
 <p>
   <a href="assets/marketing/readme/showcase/iphone-mockup.mp4"><b>▶ Watch the iPhone app preview</b></a>
   &nbsp;·&nbsp;
-  <a href="https://youtube.com/shorts/HuKhMvzzIoA?feature=share"><b>Watch the talking-head demo</b></a>
+  <a href="https://youtube.com/shorts/kLCVqp05Qbg?feature=share"><b>Watch the talking-head demo</b></a>
 </p>
 
 </div>
@@ -103,18 +103,18 @@ personal-finance intelligence** than a spreadsheet with AI bolted on.
 
 > [!NOTE]
 > TestFlight builds expire 90 days after upload. If the public beta has expired, use the
-> [website](https://www.finn-it.app/) and [talking-head demo](https://youtube.com/shorts/HuKhMvzzIoA?feature=share),
+> [website](https://www.finn-it.app/) and [talking-head demo](https://youtube.com/shorts/kLCVqp05Qbg?feature=share),
 > or contact the repository owner for a refreshed build.
 
 ## Demo video
 
 <div align="center">
 
-<a href="https://youtube.com/shorts/HuKhMvzzIoA?feature=share">
-  <img src="https://img.youtube.com/vi/HuKhMvzzIoA/maxresdefault.jpg" width="720" alt="Watch the Finnit talking-head demo on YouTube" />
+<a href="https://youtube.com/shorts/kLCVqp05Qbg?feature=share">
+  <img src="https://img.youtube.com/vi/kLCVqp05Qbg/maxresdefault.jpg" width="720" alt="Watch the Finnit talking-head demo on YouTube" />
 </a>
 
-<p><a href="https://youtube.com/shorts/HuKhMvzzIoA?feature=share"><b>Watch the talking-head YouTube Short</b></a></p>
+<p><a href="https://youtube.com/shorts/kLCVqp05Qbg?feature=share"><b>Watch the talking-head YouTube Short</b></a></p>
 
 </div>
 
@@ -289,7 +289,7 @@ YouTube or Vimeo demo that is under two minutes and shows the app running on its
 | Detectable open-source license | [`LICENSE`](LICENSE) — MIT |
 | Clear description of what was built and why it matters | This README |
 | Working mobile application | iOS 1.0.0 builds 6 and 7 are processed in TestFlight |
-| Public demo video under two minutes | [Talking-head YouTube Short](https://youtube.com/shorts/HuKhMvzzIoA?feature=share) and [iPhone app preview](assets/marketing/readme/showcase/iphone-mockup.mp4) |
+| Public demo video under two minutes | [Talking-head YouTube Short](https://youtube.com/shorts/kLCVqp05Qbg?feature=share) and [iPhone app preview](assets/marketing/readme/showcase/iphone-mockup.mp4) |
 | RevenueCat-powered purchase | `react-native-purchases`, one Premium entitlement, three App Store subscription durations |
 
 Read the [Next Gen Award category page](https://www.shipaton.com/categories/next-gen-award)
