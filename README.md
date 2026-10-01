@@ -4,6 +4,14 @@
 
 <img src="assets/marketing/readme/money-header.svg" alt="Finnit — Apple Notes for your money, surrounded by animated coins and dollar marks" width="100%" />
 
+<h2>Public TestFlight beta <sub>(under review)</sub></h2>
+
+<a href="https://testflight.apple.com/join/eTgsnaHB">
+  <img src="https://img.shields.io/badge/Install%20Finnit-Open%20in%20TestFlight-0D96F6?style=for-the-badge&logo=apple&logoColor=white" alt="Install Finnit using the public TestFlight link" />
+</a>
+
+<p><sub>Open this link on an iPhone or iPad with TestFlight installed.</sub></p>
+
 <img src="assets/logo/app-icon.png" width="112" alt="Finnit app icon" />
 <br />
 <a href="#what-finnit-does">
@@ -27,8 +35,10 @@
 </p>
 
 <p>
-  <a href="#try-finnit"><kbd>&nbsp;Try the app&nbsp;</kbd></a>&nbsp;
+  <a href="https://testflight.apple.com/join/eTgsnaHB"><kbd>&nbsp;Install with TestFlight&nbsp;</kbd></a>&nbsp;
+  <a href="https://www.finn-it.app/"><kbd>&nbsp;Website&nbsp;</kbd></a>&nbsp;
   <a href="#demo-video"><kbd>&nbsp;Demo&nbsp;</kbd></a>&nbsp;
+  <a href="#screenshots"><kbd>&nbsp;Screenshots&nbsp;</kbd></a>&nbsp;
   <a href="#what-finnit-does"><kbd>&nbsp;Features&nbsp;</kbd></a>&nbsp;
   <a href="#the-paywall"><kbd>&nbsp;Paywall&nbsp;</kbd></a>&nbsp;
   <a href="#revenuecat"><kbd>&nbsp;RevenueCat&nbsp;</kbd></a>&nbsp;
@@ -36,7 +46,15 @@
   <a href="#run-it-locally"><kbd>&nbsp;Setup&nbsp;</kbd></a>
 </p>
 
-<img src="assets/marketing/social/finnit-x-launch-source-screens.png" width="560" alt="Finnit product screens showing the journal, receipt capture, Ask Finn, and spending insights" />
+<a href="assets/marketing/readme/showcase/iphone-mockup.mp4">
+  <img src="assets/marketing/readme/showcase/landing.png" width="720" alt="Watch Finnit running in an iPhone mockup" />
+</a>
+
+<p>
+  <a href="assets/marketing/readme/showcase/iphone-mockup.mp4"><b>▶ Watch the iPhone app preview</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://youtube.com/shorts/HuKhMvzzIoA?feature=share"><b>Watch the talking-head demo</b></a>
+</p>
 
 </div>
 
@@ -78,33 +96,96 @@ personal-finance intelligence** than a spreadsheet with AI bolted on.
 
 | Access | Current status | Link |
 | :-- | :-- | :-- |
-| **TestFlight public beta** | Build 6 is awaiting Apple Beta App Review. The external `Paywall QA` group exists, but Apple has not created a public invitation URL yet. | **Public link pending review** |
+| **TestFlight public beta** | Version 1.0.0, build 6 is approved for external testing in the `Judges` group. | [Install Finnit with TestFlight](https://testflight.apple.com/join/eTgsnaHB) |
+| **Website** | Product overview and public web presence. | [finn-it.app](https://www.finn-it.app/) |
 | **Latest iOS build** | Version 1.0.0, build 7 is processed and available to the internal TestFlight group. | [TestFlight console](https://appstoreconnect.apple.com/apps/6816385439/testflight) *(authorized reviewers/team)* |
 | **Source** | Complete public source, assets, setup instructions, and MIT license. | [GitHub repository](https://github.com/adinath-codes/Finn) |
 
 > [!NOTE]
-> This section deliberately does not invent a `testflight.apple.com/join/...` URL. Replace
-> **Public link pending review** with the public invitation as soon as Apple approves the
-> external build and the link is enabled.
+> TestFlight builds expire 90 days after upload. If the public beta has expired, use the
+> [website](https://www.finn-it.app/) and [talking-head demo](https://youtube.com/shorts/HuKhMvzzIoA?feature=share),
+> or contact the repository owner for a refreshed build.
 
 ## Demo video
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=rect&height=230&color=0:05083D,100:3246D3&text=Demo%20video%20coming%20here&fontColor=F7FAF8&fontSize=34&desc=Add%20the%20public%20YouTube%20link%20before%20submission&descAlignY=68&descSize=16&animation=fadeIn" alt="Reserved space for the Finnit demo video" width="86%" />
-
-<!--
-When the video is uploaded, replace the placeholder image above with:
-
-<a href="https://www.youtube.com/watch?v=YOUR_VIDEO_ID">
-  <img src="https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg" width="86%" alt="Watch the Finnit demo video on YouTube" />
+<a href="https://youtube.com/shorts/HuKhMvzzIoA?feature=share">
+  <img src="https://img.youtube.com/vi/HuKhMvzzIoA/maxresdefault.jpg" width="720" alt="Watch the Finnit talking-head demo on YouTube" />
 </a>
 
-Shipaton requires the public demo video to be under two minutes and to show the app working
-on its target device.
--->
+<p><a href="https://youtube.com/shorts/HuKhMvzzIoA?feature=share"><b>Watch the talking-head YouTube Short</b></a></p>
 
 </div>
+
+## Screenshots
+
+### Product story
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="assets/marketing/readme/showcase/01-track-like-notes.png" alt="Track expenses by writing naturally" width="100%" /></td>
+    <td align="center" width="33%"><img src="assets/marketing/readme/showcase/02-expense-details.png" alt="Calculated expense details and item breakdown" width="100%" /></td>
+    <td align="center" width="33%"><img src="assets/marketing/readme/showcase/03-spending-glance.png" alt="Monthly spending overview and simple charts" width="100%" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Write expenses naturally</b></sub></td>
+    <td align="center"><sub><b>Keep the calculation visible</b></sub></td>
+    <td align="center"><sub><b>See spending at a glance</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/marketing/readme/showcase/04-receipt-scan.png" alt="Receipt scanning and item extraction" width="100%" /></td>
+    <td align="center"><img src="assets/marketing/readme/showcase/05-ask-finn.png" alt="Ask Finn about monthly spending" width="100%" /></td>
+    <td align="center"><img src="assets/marketing/readme/showcase/06-category-breakdown.png" alt="Ask Finn category breakdown" width="100%" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Scan a receipt</b></sub></td>
+    <td align="center"><sub><b>Ask about the journal</b></sub></td>
+    <td align="center"><sub><b>Break down a result</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/marketing/readme/showcase/07-saved-entries.png" alt="Reusable saved expense entries" width="100%" /></td>
+    <td align="center"><img src="assets/marketing/readme/showcase/08-expense-calendar.png" alt="Daily expense calendar" width="100%" /></td>
+    <td align="center"><img src="assets/marketing/readme/showcase/09-journal-search.png" alt="Search the expense journal" width="100%" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Reuse common entries</b></sub></td>
+    <td align="center"><sub><b>Browse the calendar</b></sub></td>
+    <td align="center"><sub><b>Search by context</b></sub></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>See all 17 app captures</b></summary>
+<br />
+<table>
+  <tr>
+    <td width="20%"><img src="assets/marketing/readme/product-captures/01-journal-overview.png" alt="Journal overview" width="100%" /></td>
+    <td width="20%"><img src="assets/marketing/readme/product-captures/02-entry-common-detail.png" alt="Simple entry details" width="100%" /></td>
+    <td width="20%"><img src="assets/marketing/readme/product-captures/03-entry-complex-overview.png" alt="Complex entry overview" width="100%" /></td>
+    <td width="20%"><img src="assets/marketing/readme/product-captures/04-entry-complex-breakdown.png" alt="Complex amount breakdown" width="100%" /></td>
+    <td width="20%"><img src="assets/marketing/readme/product-captures/05-entry-complex-itemization.png" alt="Complex entry itemization" width="100%" /></td>
+  </tr>
+  <tr>
+    <td><img src="assets/marketing/readme/product-captures/06-calendar-month-overview.png" alt="Calendar month overview" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/07-calendar-category-breakdown.png" alt="Calendar category breakdown" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/08-ask-finn-landing.png" alt="Ask Finn landing screen" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/09-ask-finn-common-result.png" alt="Ask Finn monthly result" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/10-ask-finn-complex-breakdown.png" alt="Ask Finn category result" width="100%" /></td>
+  </tr>
+  <tr>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_185445_Finn.jpg" alt="Finnit receipt camera" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_190915_Finn.jpg" alt="Parsed receipt details" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_190931_Finn.jpg" alt="Parsed receipt item list" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_190944_Finn.jpg" alt="Journal entries after receipt capture" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_195903_Finn.jpg" alt="Spending category summary card" width="100%" /></td>
+  </tr>
+  <tr>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_195922_Finn.jpg" alt="Shopping category journal" width="100%" /></td>
+    <td><img src="assets/marketing/readme/product-captures/Screenshot_20260927_202411_Finn.jpg" alt="Saved entries screen" width="100%" /></td>
+  </tr>
+</table>
+</details>
 
 ## What Finnit does
 
@@ -208,7 +289,7 @@ YouTube or Vimeo demo that is under two minutes and shows the app running on its
 | Detectable open-source license | [`LICENSE`](LICENSE) — MIT |
 | Clear description of what was built and why it matters | This README |
 | Working mobile application | iOS 1.0.0 builds 6 and 7 are processed in TestFlight |
-| Public demo video under two minutes | Reserved [demo section](#demo-video); add the final YouTube URL before submission |
+| Public demo video under two minutes | [Talking-head YouTube Short](https://youtube.com/shorts/HuKhMvzzIoA?feature=share) and [iPhone app preview](assets/marketing/readme/showcase/iphone-mockup.mp4) |
 | RevenueCat-powered purchase | `react-native-purchases`, one Premium entitlement, three App Store subscription durations |
 
 Read the [Next Gen Award category page](https://www.shipaton.com/categories/next-gen-award)
